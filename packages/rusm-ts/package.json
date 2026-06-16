@@ -7,7 +7,7 @@
   "homepage": "https://archan937.github.io/rusm",
   "repository": {
     "type": "git",
-    "url": "https://github.com/archan937/rusm"
+    "url": "git+https://github.com/archan937/rusm.git"
   },
   "bugs": {
     "url": "https://github.com/archan937/rusm/issues"
