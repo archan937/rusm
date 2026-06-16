@@ -24,9 +24,9 @@ pub const LEVEL: &str = "36";
 pub const ERROR: &str = "31";
 /// Yellow — a kill / warning.
 pub const WARN: &str = "33";
-/// Yellow — a process-group **tag**: the census's `tag=n` entries and a `kill-tag` target.
-/// Shares the kill/warn hue (tags are the cancellation surface), but named for intent.
-pub const TAG: &str = "33";
+/// Green — a process-group **tag**: the census's `tag=n` entries and a `kill-tag` target.
+/// Distinct from the bold component names and the cyan counts beside it.
+pub const TAG: &str = "32";
 /// Green — a clean exit / info.
 pub const OK: &str = "32";
 /// Bold — a name/label (not a colour, an attribute).
