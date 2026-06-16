@@ -9,6 +9,13 @@
 - **Comments only for critical info.** No comments restating obvious code.
 - **Senior, idiomatic, DRY, well-separated.** Self-review every change.
 
+## Platform
+
+Developed and tested on **macOS and Linux**. The workspace also **builds on
+Windows** — the connection benchmarks fall back to a 256-fd ceiling there, since
+the `rlimit::Resource` soft-limit lookup is unix-only. Windows is not yet a
+verified runtime target.
+
 ## Commands
 
 ```sh
