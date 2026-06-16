@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 /// The guest language for the scaffolded component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,58 +53,42 @@ pub struct NewApp {
 /// name plus optional `--rust`/`--lang <ts|rust>` and `--protocol <http|sse|ws>`
 /// (`-p`, `--protocol=…` also accepted). Unknown flags, bad values, and a missing or
 /// duplicate name are hard errors — a typo never silently scaffolds the wrong thing.
-pub fn parse_new_args(mut parser: pico_args::Arguments) -> Result<NewApp> {
-    // Parse flags and options first
-    let rust_flag = parser.contains("--rust");
-    let lang: Result<Option<String>, _> = parser.opt_value_from_str("--lang");
-    // Try to parse --protocol or -p
-    let protocol1: Result<Option<String>, _> = parser.opt_value_from_str("--protocol");
-    let protocol: Result<Option<String>, _> = match protocol1 {
-        Ok(Some(val)) => Ok(Some(val)),
-        Ok(None) => parser.opt_value_from_str("-p"),
-        Err(e) => Err(e),
+pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
+    // Options first — pico-args consumes named options before free arguments. `--lang`
+    // takes precedence over the `--rust` shorthand; `-p` is an alias for `--protocol`.
+    let rust = args.contains("--rust");
+    let lang = args.opt_value_from_str::<_, String>("--lang")?;
+    let protocol = match args.opt_value_from_str::<_, String>("--protocol")? {
+        Some(value) => Some(value),
+        None => args.opt_value_from_str("-p")?,
     };
 
-    // Then parse the free argument (name)
-    let name: Result<String, _> = parser.free_from_str();
+    // Then the one positional: the app name. A missing name is the usage error.
+    let name: String = args.free_from_str().map_err(|_| {
+        anyhow!("usage: rusm new <name> [--rust] [--lang ts|rust] [--protocol http|sse|ws]")
+    })?;
+    validate_name(&name)?;
 
-    // Check for remaining arguments which would indicate duplicate names
-    // Note: picoargs consumes arguments as it parses them, so remaining should only
-    // contain unexpected free arguments
-    let remaining = parser.finish();
-    if !remaining.is_empty() {
-        // The first remaining argument is the duplicate name
-        anyhow::bail!(
-            "unexpected argument `{}`, the app name is already `{}`",
-            remaining[0].to_string_lossy(),
-            name.as_ref().map_or("", |n| n.as_str())
+    // Anything left after one name and the known options is a stray argument (an
+    // unknown flag or a second name) — a typo never silently scaffolds the wrong thing.
+    if let Some(extra) = args.finish().first() {
+        bail!(
+            "unexpected argument `{}` (the app name is already `{name}`)",
+            extra.to_string_lossy()
         );
     }
 
-    let name_str = name.map_err(|e| anyhow::anyhow!(e))?;
-    let lang_opt = lang.map_err(|e| anyhow::anyhow!(e))?;
-    let protocol_opt = protocol.map_err(|e| anyhow::anyhow!(e))?;
-
-    // Apply the parsed values to create the NewApp
-    let mut lang = if rust_flag {
-        Lang::Rust
-    } else {
-        Lang::TypeScript
+    let lang = match lang {
+        Some(value) => parse_lang(&value)?,
+        None if rust => Lang::Rust,
+        None => Lang::TypeScript,
     };
-
-    let mut protocol = Protocol::Http;
-
-    if let Some(lang_str) = lang_opt {
-        lang = parse_lang(&lang_str)?;
-    }
-
-    if let Some(proto_str) = protocol_opt {
-        protocol = parse_protocol(&proto_str)?;
-    }
-
-    validate_name(&name_str)?;
+    let protocol = match protocol {
+        Some(value) => parse_protocol(&value)?,
+        None => Protocol::Http,
+    };
     Ok(NewApp {
-        name: name_str,
+        name,
         lang,
         protocol,
     })
@@ -441,7 +425,13 @@ fn readme(app: &NewApp) -> String {
 /// A project name must be a single safe path segment (no separators, no `..`), so
 /// scaffolding can never escape the target directory.
 fn validate_name(name: &str) -> Result<()> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+    if name.is_empty()
+        || name.starts_with('-')
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+    {
         bail!("invalid app name `{name}` — use a simple directory name like `my-app`");
     }
     Ok(())
@@ -626,7 +616,10 @@ mod tests {
             p(&["hello", "--protocol"]).is_err(),
             "missing protocol value"
         );
-        for bad in ["..", ".", "a/b", "", "a\\b"] {
+        assert!(p(&["--rust"]).is_err(), "options but no name");
+        assert!(p(&["-p", "ws"]).is_err(), "options but no name");
+        assert!(p(&["--frobnicate"]).is_err(), "a lone flag is not a name");
+        for bad in ["..", ".", "a/b", "", "a\\b", "-x", "--name"] {
             assert!(p(&[bad]).is_err(), "{bad:?} should be rejected");
         }
     }
