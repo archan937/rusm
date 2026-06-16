@@ -17,7 +17,7 @@ struct CommandSpec {
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "new",
-        usage: "rusm new <name> [--rust] [--lang ts|rust] [--protocol http|sse|ws]",
+        usage: "rusm new <name> [--rust] [--lang ts|rust|generic] [--protocol http|sse|ws]",
         summary: "scaffold a new RUSM app in ./<name>",
     },
     CommandSpec {

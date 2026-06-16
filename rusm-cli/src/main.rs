@@ -1,13 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
-    command_help, node_overrides, normalize_target, parse, parse_new_args, render_message,
-    scaffold, serve_apps, spawn_components, usage, wants_help, Hosted, Protocol, ReplInput,
-    DEFAULT_HOST, HELP,
+    command_help, node_overrides, normalize_target, parse, parse_new_args, prebuilt_wasm,
+    render_message, scaffold, serve_apps, spawn_components, usage, wants_help, Hosted, Protocol,
+    ReplInput, DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -381,9 +381,9 @@ fn build_components(dir: &Path) -> anyhow::Result<Vec<String>> {
         } else if let Some(ts_entry) = ts_entrypoint(&crate_dir) {
             build_ts_component(&ts_entry, &name, &wasm_dir)?;
             built.push(name);
-        } else if let Some(wasm_file) = find_prebuilt_wasm(&crate_dir, &name) {
-            // Generic pre-built wasip2 wasm component: RUSM actor (exports "run") or
-            // wasi:cli command (exports "wasi:cli/run"). The runtime detects which at load.
+        } else if let Some(wasm_file) = prebuilt_wasm(&crate_dir, &name)? {
+            // A user-supplied, pre-built wasip2 component (the `generic` scaffold) —
+            // copied into wasm/ as-is; its interface is the operator's contract.
             copy_prebuilt_wasm(&wasm_file, &name, &wasm_dir)?;
             built.push(name);
         }
@@ -420,29 +420,7 @@ fn ts_entrypoint(crate_dir: &Path) -> Option<std::path::PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Looks for a pre-built .wasm file in a component directory.
-/// Tries `<component-name>.wasm` first (e.g. `my-component/my-component.wasm`),
-/// then falls back to any `.wasm` file in the directory.
-fn find_prebuilt_wasm(crate_dir: &Path, component_name: &str) -> Option<PathBuf> {
-    // Try component-name.wasm first (explicit naming)
-    let named_wasm = crate_dir.join(format!("{component_name}.wasm"));
-    if named_wasm.is_file() {
-        return Some(named_wasm);
-    }
-    // Then try any .wasm file in the directory
-    std::fs::read_dir(crate_dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .find(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "wasm")
-                .unwrap_or(false)
-        })
-        .map(|e| e.path())
-}
-
-/// Copies a pre-built .wasm file to the `wasm/` output directory as `<name>.wasm`.
+/// Copies a pre-built `.wasm` into the `wasm/` output directory as `<name>.wasm`.
 fn copy_prebuilt_wasm(wasm_file: &Path, name: &str, wasm_dir: &Path) -> anyhow::Result<()> {
     let dest = wasm_dir.join(format!("{name}.wasm"));
     std::fs::copy(wasm_file, &dest)

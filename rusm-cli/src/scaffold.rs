@@ -1,10 +1,12 @@
-//! `rusm new <name> [--rust] [--protocol http|sse|ws]` — scaffold a new RUSM app.
+//! `rusm new <name> [--rust|--lang ts|rust|generic] [--protocol http|sse|ws]` —
+//! scaffold a new RUSM app.
 //!
 //! Produces a project whose component source is **pure developer logic** — no
 //! `wit-bindgen`/`export!` boilerplate (Rust hides it behind `#[rusm_rs::main]`) and
 //! no `Process`/frame plumbing (TS uses web standards and the `rusm-ts` package). Pick a
-//! language (`--rust`, default TypeScript) and a protocol (`--protocol`, default
-//! `http`); from nothing to a live server in three commands:
+//! language (`--rust`/`--lang`, default TypeScript; `generic` for a pre-built wasm you
+//! supply yourself) and a protocol (`--protocol`, default `http`); from nothing to a
+//! live server in three commands:
 //!
 //! ```text
 //! rusm new hello && cd hello
@@ -52,7 +54,7 @@ pub struct NewApp {
 }
 
 /// Parse the arguments following `rusm new` into a [`NewApp`]: a single positional
-/// name plus optional `--rust`/`--lang <ts|rust>` and `--protocol <http|sse|ws>`
+/// name plus optional `--rust`/`--lang <ts|rust|generic>` and `--protocol <http|sse|ws>`
 /// (`-p`, `--protocol=…` also accepted). Unknown flags, bad values, and a missing or
 /// duplicate name are hard errors — a typo never silently scaffolds the wrong thing.
 pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
@@ -67,7 +69,7 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
 
     // Then the one positional: the app name. A missing name is the usage error.
     let name: String = args.free_from_str().map_err(|_| {
-        anyhow!("usage: rusm new <name> [--rust] [--lang ts|rust] [--protocol http|sse|ws]")
+        anyhow!("usage: rusm new <name> [--rust] [--lang ts|rust|generic] [--protocol http|sse|ws]")
     })?;
     validate_name(&name)?;
 
@@ -173,11 +175,11 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
             ));
         }
         Lang::Generic => {
-            // Generic: create a placeholder directory with instructions.
-            // The user will provide their own pre-built .wasm file.
+            // No source is generated — the user drops in a pre-built `.wasm`. A README
+            // (not an empty `.gitkeep`) documents the interface RUSM expects.
             out.push((
-                PathBuf::from("components/api/.gitkeep"),
-                GENERIC_COMPONENTREADME.to_string(),
+                PathBuf::from("components/api/README.md"),
+                GENERIC_COMPONENT_README.to_string(),
             ));
         }
     }
@@ -189,8 +191,7 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
 /// `wasi:http` `export default`) and WebSocket (per-connection) are a single named
 /// handler component with no routes.
 fn has_routes(app: &NewApp) -> bool {
-    matches!(app.protocol, Protocol::Http | Protocol::Sse)
-        && matches!(app.lang, Lang::Rust | Lang::Generic)
+    app.lang == Lang::Rust && matches!(app.protocol, Protocol::Http | Protocol::Sse)
 }
 
 const TOML_HEADER: &str =
@@ -255,35 +256,31 @@ fn package_json(name: &str) -> String {
     )
 }
 
-/// Instructions for a generic (pre-built wasm) component directory.
-const GENERIC_COMPONENTREADME: &str = "\
-# Generic WASM Component
+/// The placeholder README scaffolded for a generic (bring-your-own-wasm) component.
+const GENERIC_COMPONENT_README: &str = "\
+# Generic WASM component
 
-Place your pre-built wasip2 .wasm file here as `api.wasm` (or any .wasm file).
+Drop a pre-built **wasip2** component here as `api.wasm` — `rusm build` copies it
+into `wasm/`, then `rusm serve` / `rusm run` hosts it. No source is generated: this
+is the bring-your-own-component path for any toolchain (`cargo component`, `wstd`,
+TinyGo, …). If you ship more than one `.wasm`, name the one to use `api.wasm`.
 
-## Required Interface
+The interface RUSM expects depends on how `rusm.toml` hosts it:
 
-The component must export one of the following, depending on how it will be used:
+- **HTTP / SSE** (`[[serve]] protocol = \"http\"|\"sse\"`): a standard `wasi:http`
+  component exporting `wasi:http/incoming-handler` — the same contract a TypeScript
+  `export default { fetch }` compiles to. One fresh instance per request.
+- **WebSocket** (`protocol = \"ws\"`): a `rusm:runtime` actor component, one process
+  per connection.
+- **CLI command** (`rusm run`): a standard command component exporting `wasi:cli/run`.
 
-### For HTTP/SSE (routed serving)
-- Export `run` (RUSM actor component)
-- Implement handler functions matching your `[serve.routes]` entries
-  (e.g., `home` for `\"GET /\" = \"api#home\"`)
-- The host dispatches HTTP requests to these handlers
+To dispatch by route instead, add a `[serve.routes]` table mapping
+`\"METHOD /path\" = \"api#action\"` — your component then implements those actions.
 
-### For WebSocket
-- Export `run` (RUSM actor component)
-- Implement WebSocket handler (open, message, close)
-
-### For CLI commands
-- Export `wasi:cli/run` (standard WASI CLI entrypoint)
-- Runs once to completion as a command
-
-## Next Steps
-
-1. Place your .wasm file in this directory
-2. Run `rusm build` to copy it to the wasm/ directory
-3. Run `rusm serve` or `rusm run` to start the component
+```sh
+rusm build      # copies api.wasm -> wasm/api.wasm
+rusm serve      # http://127.0.0.1:8080
+```
 
 See https://github.com/archan937/rusm for more.
 ";
@@ -504,6 +501,8 @@ mod tests {
         (Lang::Rust, Protocol::Http, ServeProtocol::Http),
         (Lang::Rust, Protocol::Sse, ServeProtocol::Sse),
         (Lang::Rust, Protocol::Ws, ServeProtocol::Ws),
+        (Lang::Generic, Protocol::Http, ServeProtocol::Http),
+        (Lang::Generic, Protocol::Ws, ServeProtocol::Ws),
     ];
 
     #[test]
@@ -522,28 +521,42 @@ mod tests {
                 );
             }
 
-            // The right component source exists for the language, and no boilerplate
-            // leaks into it.
-            let (src, forbidden): (PathBuf, &[&str]) = match lang {
-                Lang::TypeScript => (
+            // For TS/Rust, the right component source exists with no leaked
+            // boilerplate. Generic scaffolds no source — a README documents the
+            // interface, never an empty `.gitkeep`.
+            let source_check: Option<(PathBuf, &[&str])> = match lang {
+                Lang::TypeScript => Some((
                     "components/api/index.ts".into(),
                     &["declare const Process", "Process.receive", "wit_bindgen"],
-                ),
-                Lang::Rust => (
+                )),
+                Lang::Rust => Some((
                     "components/api/src/lib.rs".into(),
                     &["wit_bindgen::generate", "export!(", "impl Guest"],
-                ),
-                Lang::Generic => {
-                    // Generic uses .gitkeep placeholder - no source to check
-                    continue;
-                }
+                )),
+                Lang::Generic => None,
             };
-            let source = std::fs::read_to_string(root.join(&src)).unwrap();
-            for needle in forbidden {
-                assert!(
-                    !source.contains(needle),
-                    "{lang:?}/{protocol:?}: leaked boilerplate `{needle}`"
-                );
+            match source_check {
+                Some((src, forbidden)) => {
+                    let source = std::fs::read_to_string(root.join(&src)).unwrap();
+                    for needle in forbidden {
+                        assert!(
+                            !source.contains(needle),
+                            "{lang:?}/{protocol:?}: leaked boilerplate `{needle}`"
+                        );
+                    }
+                }
+                None => {
+                    let readme =
+                        std::fs::read_to_string(root.join("components/api/README.md")).unwrap();
+                    assert!(
+                        readme.contains("wasi:http"),
+                        "generic README names the interface"
+                    );
+                    assert!(
+                        !root.join("components/api/.gitkeep").exists(),
+                        "generic scaffolds a README, not an empty .gitkeep"
+                    );
+                }
             }
 
             // The generated rusm.toml parses through the real config and declares the
@@ -641,6 +654,11 @@ mod tests {
             Protocol::Sse
         );
         assert_eq!(p(&["hello", "-p", "ws"]).unwrap().protocol, Protocol::Ws);
+        assert_eq!(
+            p(&["hello", "--lang", "generic"]).unwrap().lang,
+            Lang::Generic
+        );
+        assert_eq!(p(&["hello", "--lang", "wasm"]).unwrap().lang, Lang::Generic);
         // Order-independent.
         let mixed = p(&["--rust", "-p", "sse", "hello"]).unwrap();
         assert_eq!(

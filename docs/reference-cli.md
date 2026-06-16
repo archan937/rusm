@@ -30,7 +30,7 @@ code* (no `wit-bindgen`/`export!`, no `Process` frame plumbing):
 
 | Flag | Default | Choices |
 | --- | --- | --- |
-| `--rust` / `--lang <ts\|rust>` | TypeScript | `ts`, `rust` |
+| `--rust` / `--lang <ts\|rust\|generic>` | TypeScript | `ts`, `rust`, `generic` |
 | `--protocol <p>` / `-p <p>` | `http` | `http`, `sse`, `ws` |
 
 ```sh
@@ -53,6 +53,10 @@ What each cell scaffolds:
   `export default function handle(request): Response` (a `wasi:http` per-request
   component); it does its own dispatch, so no `[serve.routes]`.
 - **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message })` helper.
+- **Generic (`--lang generic`)** — no source is generated; you drop a pre-built
+  **wasip2** component into `components/api/` (a scaffolded `README.md` states the
+  expected interface: `wasi:http/incoming-handler` for HTTP/SSE, a `rusm:runtime`
+  actor for WS, or `wasi:cli/run` for a command). `rusm build` copies it into `wasm/`.
 
 ## `rusm build`
 
@@ -63,6 +67,9 @@ jco, no cargo-component:
 - a **TypeScript** component (`index.ts`) → `bun build --minify` → `wasm/<name>.js`,
   then **precompiled to QuickJS bytecode** → `wasm/<name>.qjsbc` (the runner skips
   parsing). See [guests: Rust & TypeScript](./concepts/guests-rust-and-typescript).
+- a **generic** component (a pre-built `.wasm`, no `Cargo.toml`/`index.ts`) → copied
+  into `wasm/<name>.wasm` as-is. Prefers `<name>.wasm`; a lone `.wasm` also works, and
+  several `.wasm` files are an error (name the one to ship `<name>.wasm`).
 
 Emits a clear error if Bun / the `wasm32-wasip2` target is missing.
 
