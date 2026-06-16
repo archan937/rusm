@@ -6,6 +6,23 @@ release lists the versions it shipped. Format follows
 [Keep a Changelog](https://keepachangelog.com/); the project is pre-1.0, so minor/patch
 numbers don't yet imply SemVer guarantees.
 
+## [0.1.5] — 2026-06-16
+
+Observability for the process-group tags shipped in 0.1.4 — no API changes, runtime-only.
+
+### Added
+- **The lifecycle census reports process-group tag counts** — alongside the per-component
+  line it now shows per-tag membership: `rusm census  pages-agent=4  plan:bfb8b1ed=4`,
+  with tag names in green. So a node at `Info`+ shows how many live processes hold each
+  tag (e.g. one `plan:<id>` group per in-flight unit of work).
+- **Kill logging** — a `kill(pid)` logs `rusm kill  #<pid>`; a `kill_tag(tag)` logs one
+  summary `rusm kill  <tag> → <n>` (the cause line ahead of each member's `exit`).
+
+### Versions
+rusm-otp 0.1.3 · rusm-logfmt 0.1.1 · rusm-cli 0.1.5. (rusm-wasm/node/cluster/kv/wire and
+the guest SDKs are unchanged — their caret deps resolve the new otp/logfmt, so they are
+not republished.)
+
 ## [0.1.4] — 2026-06-16
 
 ### Added
@@ -117,6 +134,7 @@ Initial crates.io release — the RUSM runtime, guest SDKs, and CLI, built throu
 rusm-otp · rusm-wasm · rusm-node · rusm-cluster · rusm-rs · rusm-rs-macros · rusm-wire ·
 rusm-cli. (rusm-kv and rusm-logfmt were first published in 0.1.3.)
 
+[0.1.5]: https://github.com/archan937/rusm/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/archan937/rusm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/archan937/rusm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/archan937/rusm/compare/v0.1.1...v0.1.2
