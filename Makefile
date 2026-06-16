@@ -2,6 +2,8 @@
 
 DASHBOARD := bench/dashboard
 DOCS := docs
+DIST := $(DOCS)/.vitepress/dist
+GH_PAGES := gh-pages
 SCENARIO ?= connection-storm
 SECONDS ?= 5
 EX ?= headless_run
@@ -78,8 +80,22 @@ docs-build: ## Build the static documentation site
 	cd $(DOCS) && { test -d node_modules || bun install; } && bun run build
 
 .PHONY: docs-deploy
-docs-deploy: ## Build the docs and publish them to the gh-pages branch
-	cargo xtask deploy-docs
+docs-deploy: docs-build ## Build the docs and force-push them to the gh-pages branch
+	@test -d $(DIST) || { echo "no docs build output at $(DIST)"; exit 1; }
+	@# `.nojekyll` stops GitHub Pages from dropping VitePress's _-prefixed asset dirs.
+	@touch $(DIST)/.nojekyll
+	@# Publish from a throwaway repo inside the build output, so the working tree is
+	@# untouched and gh-pages stays a single-commit, source-free artifact branch.
+	@origin=$$(git remote get-url origin); \
+		echo "==> publishing $(DIST) -> $$origin ($(GH_PAGES))"; \
+		rm -rf $(DIST)/.git; \
+		git -C $(DIST) init -q && \
+		git -C $(DIST) checkout -q -b $(GH_PAGES) && \
+		git -C $(DIST) add -A && \
+		git -C $(DIST) commit -q -m "deploy docs" && \
+		git -C $(DIST) push -f "$$origin" HEAD:$(GH_PAGES); \
+		status=$$?; rm -rf $(DIST)/.git; \
+		[ $$status -eq 0 ] && echo "==> done: https://archan937.github.io/rusm/" || exit $$status
 
 .PHONY: clean
 clean: ## Remove Rust build artifacts
