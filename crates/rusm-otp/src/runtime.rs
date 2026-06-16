@@ -684,8 +684,22 @@ impl Runtime {
     }
 
     /// Stops `pid` at its next suspension point. Returns `false` if there is no
-    /// such live process. Equivalent to `exit(pid, ExitReason::Killed)`.
+    /// such live process. Equivalent to `exit(pid, ExitReason::Killed)`. Logs the
+    /// kill (yellow, at `Info`+) — the cause line ahead of the `exit` it triggers.
     pub fn kill(&self, pid: Pid) -> bool {
+        if !self.terminate(pid) {
+            return false;
+        }
+        if self.inner.wants(crate::LogLevel::Info) {
+            crate::lifecycle::log_kill(pid);
+        }
+        true
+    }
+
+    /// Abort `pid` at its next suspension point **without logging** — the shared core
+    /// of [`kill`](Self::kill) and [`kill_tag`](Self::kill_tag), which log at their own
+    /// granularity (one `kill` line, or one `kill-tag` summary). `false` if not live.
+    fn terminate(&self, pid: Pid) -> bool {
         match self.inner.table.get(&pid.0) {
             Some(entry) => {
                 entry.abort.abort();
@@ -915,10 +929,17 @@ impl Runtime {
     /// — Erlang's "kill the whole `pg`". Members are snapshotted first, so one that dies
     /// concurrently is simply not counted, never double-killed.
     pub fn kill_tag(&self, tag: &str) -> usize {
-        self.whereis_tag(tag)
+        // `terminate` (not `kill`) per member → one `kill-tag` summary line, not N `kill`
+        // lines (each member still logs its own `exit`).
+        let killed = self
+            .whereis_tag(tag)
             .into_iter()
-            .filter(|&pid| self.kill(pid))
-            .count()
+            .filter(|&pid| self.terminate(pid))
+            .count();
+        if self.inner.wants(crate::LogLevel::Info) {
+            crate::lifecycle::log_kill_tag(tag, killed);
+        }
+        killed
     }
 
     /// Sends to a registered `name`. Returns `false` if the name is unknown (or

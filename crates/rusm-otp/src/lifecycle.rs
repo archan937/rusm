@@ -119,24 +119,52 @@ pub fn log_exit(pid: Pid, label: &str, reason: ExitReason) {
 /// (Erlang `pg`) membership. Emitted debounced after process state settles. Bold names,
 /// cyan counts; an idle node reads `(none)`.
 pub fn log_census(components: &BTreeMap<String, u64>, tags: &BTreeMap<String, u64>) {
-    let entries: Vec<String> = components
+    // `<name>=<n>`: component names bold (white), tag names yellow, counts cyan.
+    let entry = |name: &str, n: &u64, name_colour: &str| {
+        format!(
+            "{}{}{}",
+            fmt::paint(name_colour, name),
+            fmt::paint(fmt::DIM, "="),
+            fmt::paint(fmt::LEVEL, &n.to_string())
+        )
+    };
+    let mut entries: Vec<String> = components
         .iter()
-        .chain(tags.iter())
-        .map(|(name, n)| {
-            format!(
-                "{}{}{}",
-                fmt::paint(fmt::BOLD, name),
-                fmt::paint(fmt::DIM, "="),
-                fmt::paint(fmt::LEVEL, &n.to_string())
-            )
-        })
+        .map(|(name, n)| entry(name, n, fmt::BOLD))
         .collect();
+    entries.extend(tags.iter().map(|(name, n)| entry(name, n, fmt::TAG)));
     let body = if entries.is_empty() {
         fmt::paint(fmt::DIM, "(none)")
     } else {
         entries.join("  ")
     };
     eprintln!("{}", fmt::platform_line(fmt::LEVEL, "census", &body));
+}
+
+/// Log a forced **kill** of one process: `<time> rusm kill  #<pid>` (yellow, like the
+/// `exit` it triggers). Emitted when `kill(pid)` actually terminates a live process.
+pub fn log_kill(pid: Pid) {
+    eprintln!(
+        "{}",
+        fmt::platform_line(
+            fmt::WARN,
+            "kill",
+            &fmt::paint(fmt::DIM, &format!("#{}", pid.0)),
+        )
+    );
+}
+
+/// Log a **kill-tag**: terminating a whole process group — `<time> rusm kill  <tag> → <n>`
+/// (the tag in yellow, the killed count in cyan). One line per `kill_tag`, regardless of
+/// group size (the members' own `exit` lines follow).
+pub fn log_kill_tag(tag: &str, killed: usize) {
+    let body = format!(
+        "{} {} {}",
+        fmt::paint(fmt::TAG, tag),
+        fmt::paint(fmt::DIM, "→"),
+        fmt::paint(fmt::LEVEL, &killed.to_string()),
+    );
+    eprintln!("{}", fmt::platform_line(fmt::WARN, "kill", &body));
 }
 
 // A supervisor **restart** intentionally has no dedicated event: it reads as the
