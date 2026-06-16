@@ -21,6 +21,8 @@ use anyhow::{anyhow, bail, Context, Result};
 pub enum Lang {
     TypeScript,
     Rust,
+    /// Generic: no source files scaffolded; user provides a pre-built .wasm file.
+    Generic,
 }
 
 /// The protocol the component is served over.
@@ -98,7 +100,8 @@ fn parse_lang(value: &str) -> Result<Lang> {
     match value {
         "ts" | "typescript" => Ok(Lang::TypeScript),
         "rust" | "rs" => Ok(Lang::Rust),
-        other => bail!("unknown language `{other}` — use `ts` or `rust`"),
+        "generic" | "wasm" => Ok(Lang::Generic),
+        other => bail!("unknown language `{other}` — use `ts`, `rust`, or `generic`"),
     }
 }
 
@@ -169,6 +172,14 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
                 rust_component(app.protocol).to_string(),
             ));
         }
+        Lang::Generic => {
+            // Generic: create a placeholder directory with instructions.
+            // The user will provide their own pre-built .wasm file.
+            out.push((
+                PathBuf::from("components/api/.gitkeep"),
+                GENERIC_COMPONENTREADME.to_string(),
+            ));
+        }
     }
     out
 }
@@ -178,7 +189,8 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
 /// `wasi:http` `export default`) and WebSocket (per-connection) are a single named
 /// handler component with no routes.
 fn has_routes(app: &NewApp) -> bool {
-    app.lang == Lang::Rust && matches!(app.protocol, Protocol::Http | Protocol::Sse)
+    matches!(app.protocol, Protocol::Http | Protocol::Sse)
+        && matches!(app.lang, Lang::Rust | Lang::Generic)
 }
 
 const TOML_HEADER: &str =
@@ -201,10 +213,10 @@ fn rusm_toml(app: &NewApp) -> String {
              capability = \"sandboxed\"    # default-deny; see [capabilities.<name>] for more\n"
         )
     } else {
-        // A single named handler component (TS `export default`, or a WebSocket worker).
+        // A single named handler component (TS `export default`, a WebSocket worker, or a generic wasm).
         let artifact = match app.lang {
             Lang::TypeScript => "wasm/api.js",
-            Lang::Rust => "wasm/api.wasm",
+            Lang::Rust | Lang::Generic => "wasm/api.wasm",
         };
         format!(
             "{TOML_HEADER}\
@@ -242,6 +254,39 @@ fn package_json(name: &str) -> String {
         "{{\n  \"name\": \"{name}\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {{\n    \"rusm-ts\": \"^0.1.0\"\n  }}\n}}\n"
     )
 }
+
+/// Instructions for a generic (pre-built wasm) component directory.
+const GENERIC_COMPONENTREADME: &str = "\
+# Generic WASM Component
+
+Place your pre-built wasip2 .wasm file here as `api.wasm` (or any .wasm file).
+
+## Required Interface
+
+The component must export one of the following, depending on how it will be used:
+
+### For HTTP/SSE (routed serving)
+- Export `run` (RUSM actor component)
+- Implement handler functions matching your `[serve.routes]` entries
+  (e.g., `home` for `\"GET /\" = \"api#home\"`)
+- The host dispatches HTTP requests to these handlers
+
+### For WebSocket
+- Export `run` (RUSM actor component)
+- Implement WebSocket handler (open, message, close)
+
+### For CLI commands
+- Export `wasi:cli/run` (standard WASI CLI entrypoint)
+- Runs once to completion as a command
+
+## Next Steps
+
+1. Place your .wasm file in this directory
+2. Run `rusm build` to copy it to the wasm/ directory
+3. Run `rusm serve` or `rusm run` to start the component
+
+See https://github.com/archan937/rusm for more.
+";
 
 /// The Rust component crate — one `cdylib`, the `rusm-rs` guest crate, and
 /// `wit-bindgen` (which `#[rusm_rs::main]` drives so the source carries no `wit/`).
@@ -390,10 +435,12 @@ fn readme(app: &NewApp) -> String {
     let lang = match app.lang {
         Lang::TypeScript => "TypeScript",
         Lang::Rust => "Rust",
+        Lang::Generic => "Generic (pre-built wasm)",
     };
     let source = match app.lang {
         Lang::TypeScript => "components/api/index.ts",
         Lang::Rust => "components/api/src/lib.rs",
+        Lang::Generic => "components/api/api.wasm",
     };
     let probe = match app.protocol {
         Protocol::Http => "curl http://127.0.0.1:8080/",
@@ -486,6 +533,10 @@ mod tests {
                     "components/api/src/lib.rs".into(),
                     &["wit_bindgen::generate", "export!(", "impl Guest"],
                 ),
+                Lang::Generic => {
+                    // Generic uses .gitkeep placeholder - no source to check
+                    continue;
+                }
             };
             let source = std::fs::read_to_string(root.join(&src)).unwrap();
             for needle in forbidden {
