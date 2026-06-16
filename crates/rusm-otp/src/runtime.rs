@@ -620,6 +620,18 @@ impl Runtime {
         counts
     }
 
+    /// The **census of process groups**: each tag → how many live processes hold it (the
+    /// tag-side companion to [`census_counts`](Self::census_counts)). Emptied groups are
+    /// reaped on their last member's exit, so they never appear.
+    pub(crate) fn tag_counts(&self) -> BTreeMap<String, u64> {
+        self.inner
+            .tags
+            .iter()
+            .filter(|members| !members.is_empty())
+            .map(|members| (members.key().clone(), members.len() as u64))
+            .collect()
+    }
+
     /// One census step: emit a line iff a labeled-process change has happened **since the
     /// last emission** — tracked by the change generation, not by comparing counts, so a
     /// real spawn+exit (gen advanced, counts net-same) still logs, while a quiet stretch
@@ -631,7 +643,7 @@ impl Runtime {
         if gen == *printed {
             return false; // nothing happened since the last line — no duplicate
         }
-        crate::lifecycle::log_census(&self.census_counts());
+        crate::lifecycle::log_census(&self.census_counts(), &self.tag_counts());
         *printed = gen;
         true
     }
@@ -857,6 +869,11 @@ impl Runtime {
             .insert(pid.0)
         {
             entry.tags.push(tag);
+            drop(entry); // release the table lock before waking the census task
+                         // A new group membership changes the tag census.
+            if self.inner.wants(crate::LogLevel::Info) {
+                self.inner.note_census();
+            }
         }
         true
     }
@@ -885,6 +902,10 @@ impl Runtime {
             self.inner
                 .tags
                 .remove_if(tag, |_, members| members.is_empty());
+            // Leaving a group changes the tag census.
+            if self.inner.wants(crate::LogLevel::Info) {
+                self.inner.note_census();
+            }
         }
         removed
     }
@@ -1077,6 +1098,66 @@ mod tests {
         assert!(
             rt.census_step(&mut printed),
             "a net-zero spawn+exit is real activity → emits"
+        );
+        assert!(!rt.census_step(&mut printed), "and then stays quiet");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn census_tag_counts_reflect_group_membership() {
+        let rt = Runtime::new();
+        let procs: Vec<_> = (0..3)
+            .map(|_| {
+                rt.spawn(|mut ctx| async move {
+                    loop {
+                        ctx.recv().await;
+                    }
+                })
+            })
+            .collect();
+        // Three processes in `plan:abc123`; one of them also in `plan:def456`.
+        for p in &procs {
+            assert!(rt.register_tag("plan:abc123", p.pid()));
+        }
+        assert!(rt.register_tag("plan:def456", procs[0].pid()));
+
+        let tags = rt.tag_counts();
+        assert_eq!(tags.get("plan:abc123"), Some(&3));
+        assert_eq!(tags.get("plan:def456"), Some(&1));
+
+        // kill_tag terminates the whole group; as each member drains it leaves both its
+        // groups, so the emptied tags drop out of the census entirely.
+        assert_eq!(rt.kill_tag("plan:abc123"), 3);
+        for p in procs {
+            p.join().await;
+        }
+        let tags = rt.tag_counts();
+        assert_eq!(tags.get("plan:abc123"), None, "an emptied group drops out");
+        assert_eq!(
+            tags.get("plan:def456"),
+            None,
+            "its lone member died too, so it's gone as well"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn joining_or_leaving_a_group_is_census_activity() {
+        let rt = Runtime::new();
+        rt.set_log_level(crate::LogLevel::Info); // the census gen only advances at Info+
+        let p = rt.spawn(|mut ctx| async move {
+            loop {
+                ctx.recv().await;
+            }
+        });
+        let mut printed = 0u64;
+        assert!(rt.register_tag("plan:x", p.pid()));
+        assert!(
+            rt.census_step(&mut printed),
+            "joining a group is census activity → emits"
+        );
+        assert!(rt.unregister_tag("plan:x", p.pid()));
+        assert!(
+            rt.census_step(&mut printed),
+            "leaving a group is census activity → emits"
         );
         assert!(!rt.census_step(&mut printed), "and then stays quiet");
     }

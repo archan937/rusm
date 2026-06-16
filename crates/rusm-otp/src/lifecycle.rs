@@ -114,25 +114,27 @@ pub fn log_exit(pid: Pid, label: &str, reason: ExitReason) {
     );
 }
 
-/// Log a process **census**: `<time> rusm census  <comp>=<n>  …` — the count of live
-/// processes per component (by label), emitted debounced after process state settles.
-/// Bold names, cyan counts; an idle node reads `(none)`.
-pub fn log_census(counts: &BTreeMap<String, u64>) {
-    let body = if counts.is_empty() {
+/// Log a process **census**: `<time> rusm census  <comp>=<n>  …  <tag>=<n>  …` — the
+/// count of live processes per component (by label), then per process-group **tag**
+/// (Erlang `pg`) membership. Emitted debounced after process state settles. Bold names,
+/// cyan counts; an idle node reads `(none)`.
+pub fn log_census(components: &BTreeMap<String, u64>, tags: &BTreeMap<String, u64>) {
+    let entries: Vec<String> = components
+        .iter()
+        .chain(tags.iter())
+        .map(|(name, n)| {
+            format!(
+                "{}{}{}",
+                fmt::paint(fmt::BOLD, name),
+                fmt::paint(fmt::DIM, "="),
+                fmt::paint(fmt::LEVEL, &n.to_string())
+            )
+        })
+        .collect();
+    let body = if entries.is_empty() {
         fmt::paint(fmt::DIM, "(none)")
     } else {
-        counts
-            .iter()
-            .map(|(name, n)| {
-                format!(
-                    "{}{}{}",
-                    fmt::paint(fmt::BOLD, name),
-                    fmt::paint(fmt::DIM, "="),
-                    fmt::paint(fmt::LEVEL, &n.to_string())
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("  ")
+        entries.join("  ")
     };
     eprintln!("{}", fmt::platform_line(fmt::LEVEL, "census", &body));
 }
