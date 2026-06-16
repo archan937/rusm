@@ -23,6 +23,7 @@ rusm-jsc = { path = "../crates/rusm-jsc", version = "0.1.0" }
 rusm-kv = { path = "../crates/rusm-kv", version = "0.1.0" }
 anyhow = { workspace = true }
 dotenvy = "0.15"
+pico-args = { version = "0.5", features = ["eq-separator", "short-space-opt"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "io-util", "signal"] }
 # Fetching a URL-sourced component bundle (rustls — the cluster transport already
 # pulls it, so no native-tls/openssl); a one-shot GET at load/reload time.
