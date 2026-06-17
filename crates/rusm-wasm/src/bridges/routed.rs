@@ -484,6 +484,71 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dispatches_requests_to_a_go_handler_component() {
+        // The same per-request serving path, but the handler is a Go component built on
+        // the rusm-go `web` package (web.Handlers / Handle / HandleSSE). Proves a Go
+        // handler speaks the host's fetch/reply + SSE-stream wire end-to-end over real
+        // HTTP — buffered responses, a captured path param, a request body, and a
+        // chunked text/event-stream.
+        const GO_HANDLERS: &[u8] = include_bytes!("../../tests/fixtures/go_handlers.wasm");
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_HANDLERS).unwrap(), "run")
+            .unwrap();
+        wr.register_component("demo", prepared);
+
+        let table = RouteTable::from_map(&HashMap::from([
+            ("GET /hello/:name".to_string(), "demo#hello".to_string()),
+            ("POST /echo".to_string(), "demo#echo".to_string()),
+            ("GET /ticks".to_string(), "demo#ticks".to_string()),
+        ]))
+        .unwrap();
+        let caps = HashMap::from([(
+            "demo".to_string(),
+            CapabilityProfile::Sandboxed.capabilities(),
+        )]);
+        let addr = serve_on(wr.routed_http_server(resolver(table), caps)).await;
+
+        let hello = request(addr, "GET", "/hello/alice", "").await;
+        assert!(
+            hello.starts_with("HTTP/1.1 200") && hello.contains("hi alice"),
+            "param dispatched to the Go handler: {hello}"
+        );
+        let echo = request(addr, "POST", "/echo", "ping").await;
+        assert!(
+            echo.starts_with("HTTP/1.1 200") && echo.trim_end().ends_with("ping"),
+            "Go handler echoed the request body: {echo}"
+        );
+        let ticks = request(addr, "GET", "/ticks", "").await;
+        let lower = ticks.to_lowercase();
+        assert!(
+            ticks.starts_with("HTTP/1.1 200")
+                && lower.contains("text/event-stream")
+                && lower.contains("transfer-encoding: chunked"),
+            "Go handler streamed a chunked SSE body: {ticks}"
+        );
+        for n in 0..3 {
+            assert!(
+                ticks.contains(&format!("data: tick {n}")),
+                "event {n}: {ticks}"
+            );
+        }
+
+        assert!(
+            request(addr, "GET", "/nope", "")
+                .await
+                .starts_with("HTTP/1.1 404"),
+            "unmatched path is 404"
+        );
+        assert!(
+            request(addr, "DELETE", "/echo", "")
+                .await
+                .starts_with("HTTP/1.1 405"),
+            "matched path + wrong method is 405"
+        );
+    }
+
     /// Robustness guard: an **endless** SSE handler must be torn down the moment the
     /// client disconnects — never leaked, never left spinning. The byte stream is a
     /// bounded channel, so the producer parks under back-pressure (no busy loop) and

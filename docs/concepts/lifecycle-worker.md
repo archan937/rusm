@@ -30,10 +30,27 @@ export default async function () {
 }
 ```
 
+```go [Go]
+package main
+
+import rusm "github.com/archan937/rusm/packages/rusm-go"
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	job, _ := rusm.Receive[Job]() // the work item (blocks; the fiber parks)
+	result := doWork(job)         // your logic
+	rusm.Send(job.ReplyTo, result) // reply to the caller
+	// returning ends the process — it exits Normal
+}
+```
+
 :::
 
 A worker is spawned on demand by another process (`rusm_rs::spawn("worker")` in Rust,
-`spawn("worker")` in TypeScript), does its job — optionally streaming results back over
+`spawn("worker")` in TypeScript, `rusm.Spawn("worker")` in Go), does its job —
+optionally streaming results back over
 a [byte stream](./byte-streams.md) or messages — and returns. The dispatch-from-
 `commander` pattern in the [app model](./app-model.md) is exactly this.
 

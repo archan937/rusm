@@ -42,12 +42,40 @@ export default function handle(_request: Request): Response {
 }
 ```
 
+```go [Go]
+package main
+
+import (
+	"fmt"
+
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	// routed from `[serve.routes]`:  "GET /feed" = "api#feed"
+	h.HandleSSE("feed", func(_ web.Request, _ web.Params, sse web.Sse) {
+		for n := 0; ; n++ {
+			if !sse.Data([]byte(fmt.Sprintf("tick %d", n))) {
+				break // the client disconnected — stop cleanly
+			}
+		}
+	})
+	h.Serve()
+}
+```
+
 :::
 
 In Rust, `sse.data(bytes)` writes one `data:` event and `sse.run(heartbeat_ms, map)`
 live-tails a source (e.g. a pub/sub topic) with idle heartbeats — the loop ends when a
-write returns `false`. In TypeScript the runtime drives the `ReadableStream`'s `pull`,
-parking it on back-pressure and ending it on disconnect — the same lifecycle.
+write returns `false`. Go's `web.Sse` mirrors this — `sse.Data(bytes)` and
+`sse.Run(heartbeatMs, mapFn)`. In TypeScript the runtime drives the `ReadableStream`'s
+`pull`, parking it on back-pressure and ending it on disconnect — the same lifecycle.
 
 ## Platform owns / you write
 

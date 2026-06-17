@@ -967,15 +967,16 @@ mod tests {
         let caps = CapabilityProfile::Sandboxed
             .capabilities()
             .preopen(dir.clone(), "/out", false);
-        wr.spawn_command_with(&component, caps).unwrap();
+        // Wait for the command process to *finish* rather than polling a deadline: it
+        // writes the marker during its run, so once it has exited the marker is present.
+        // This is deterministic — no timing race even when the whole wasm suite runs in
+        // parallel and the command is heavily CPU-starved.
+        wr.spawn_command_with(&component, caps)
+            .unwrap()
+            .join()
+            .await;
 
         let marker = dir.join("ran.txt");
-        for _ in 0..300 {
-            if marker.is_file() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
         let got = std::fs::read(&marker).expect("command component wrote its marker");
         assert_eq!(got, b"command component ran");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1508,6 +1509,251 @@ mod tests {
             String::from_utf8(rx.await.unwrap()).unwrap(),
             format!("hello from {}", guest.pid().raw()),
             "the Rust guest drove the actor API through rusm-rs"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_guest_uses_the_actor_world() {
+        // A component written in Go (TinyGo → wasm32-wasip2 component) over the same
+        // `rusm:runtime` actor world: it receives a reply-to pid, labels itself, and
+        // answers — proving TinyGo's component output links the host actor imports and
+        // that a synchronous import blocking on the host fiber (`receive`) works.
+        const GO_GUEST: &[u8] = include_bytes!("../../tests/fixtures/go_guest.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(GO_GUEST).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let guest = wr.spawn_component(&pre);
+        rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            format!("hello from {}", guest.pid().raw()),
+            "the Go guest drove the actor API through the wit-bindgen-go bindings"
+        );
+    }
+
+    #[test]
+    fn the_go_sdk_vendors_the_canonical_actor_wit() {
+        // The rusm-go SDK vendors the actor WIT so TinyGo / wit-bindgen-go can bind it;
+        // it must stay byte-identical to the canonical rusm-rs world (the single source
+        // of truth). If this fails, re-copy crates/rusm-rs/wit/world.wit over the SDK's
+        // copy. (The SDK adds the WASI-embedding `component` world in a separate file.)
+        assert_eq!(
+            include_str!("../../../../packages/rusm-go/wit/world.wit"),
+            include_str!("../../../rusm-rs/wit/world.wit"),
+            "packages/rusm-go/wit/world.wit drifted from rusm-rs/wit/world.wit",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_guest_logs_via_slog_and_the_standard_log_package() {
+        // The Go guest logs the normal way — log/slog (with attrs and a group) and the
+        // standard log package — and the SDK routes all of it to the host log op. If any
+        // path trapped (the slog handler, WithGroup/WithAttrs, or the log writer) the
+        // guest would never reply; the reply proves the whole guest → host log bridge
+        // ran. (The host gates output on the node's [log] level; the bridge runs either
+        // way. Mirrors the TS console test.)
+        const GO_LOG: &[u8] = include_bytes!("../../tests/fixtures/go_log.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(GO_LOG).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let guest = wr.spawn_component(&pre);
+        rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
+        assert_eq!(String::from_utf8(rx.await.unwrap()).unwrap(), "logged ok");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_service_speaks_the_cross_language_wire() {
+        // A Go service (Fn2 / Fn1 over rusm.Service) answers requests whose bytes are
+        // exactly what a rusm-rs / rusm-ts client emits — {op,args,from,ref} →
+        // {ref,ok} | {ref,err} — proving Go's serve loop and wire codec are byte-
+        // compatible across languages (so RS/TS clients interoperate with a Go service).
+        const GO_SERVICE: &[u8] = include_bytes!("../../tests/fixtures/go_service.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(GO_SERVICE).unwrap(), "run")
+            .unwrap();
+        let service = wr.spawn_component(&pre);
+        let service_pid = service.pid();
+
+        // Send exactly the wire a typed client emits and collect the service's reply.
+        let exchange = |op: &'static str, args: &'static str, reference: u64| {
+            let rt = &rt;
+            async move {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let collector = rt.spawn(move |mut ctx| async move {
+                    let _ = tx.send(ctx.recv().await.message().unwrap());
+                });
+                let req = format!(
+                    r#"{{"op":"{op}","args":{args},"from":"{}","ref":{reference}}}"#,
+                    collector.pid().raw()
+                );
+                rt.send(service_pid, req.into_bytes());
+                String::from_utf8(rx.await.unwrap()).unwrap()
+            }
+        };
+
+        assert_eq!(
+            exchange("add", "[2,3]", 1).await,
+            r#"{"ref":1,"ok":5}"#,
+            "the Fn2 handler decoded positional args and returned the canonical reply"
+        );
+        assert_eq!(
+            exchange("greet", r#"["ada"]"#, 2).await,
+            r#"{"ref":2,"ok":"hi ada"}"#,
+            "the Fn1 handler returned the canonical reply"
+        );
+        assert_eq!(
+            exchange("nope", "[]", 3).await,
+            r#"{"ref":3,"err":"no such function: nope"}"#,
+            "an unknown op is reported as an error reply"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_client_calls_a_go_service_via_the_typed_call() {
+        // A Go client (Call[int] / Call[string]) drives a Go service over the same wire
+        // the cross-language test pins — closing the loop on the typed client: it encodes
+        // requests, matches the reply by id, and decodes typed results.
+        const GO_SERVICE: &[u8] = include_bytes!("../../tests/fixtures/go_service.wasm");
+        const GO_CLIENT: &[u8] = include_bytes!("../../tests/fixtures/go_client.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let svc = wr
+            .prepare_component(&wr.compile_component(GO_SERVICE).unwrap(), "run")
+            .unwrap();
+        let cli = wr
+            .prepare_component(&wr.compile_component(GO_CLIENT).unwrap(), "run")
+            .unwrap();
+        let service = wr.spawn_component(&svc);
+        let client = wr.spawn_component(&cli);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        // The client expects the service pid, then the reply-to pid.
+        rt.send(client.pid(), service.pid().raw().to_string().into_bytes());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            "sum=5 greet=hi ada count=[1 2 3] countup=done ticks=[1 2 3]",
+            "the Go client called methods, ranged the stream, and ran a callback"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_supervisor_restarts_a_dead_child() {
+        // rusm.Supervisor (one-for-one) over the host's native supervise ABI: it spawns
+        // + monitors the `flaky` Go child, which announces its pid to the registered
+        // collector. Killing the child makes the supervisor restart it as a fresh process.
+        const FLAKY: &[u8] = include_bytes!("../../tests/fixtures/go_flaky.wasm");
+        const SUP: &[u8] = include_bytes!("../../tests/fixtures/go_sup.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let flaky = wr
+            .prepare_component(&wr.compile_component(FLAKY).unwrap(), "run")
+            .unwrap();
+        let sup = wr
+            .prepare_component(&wr.compile_component(SUP).unwrap(), "run")
+            .unwrap();
+        wr.register_component("flaky", flaky);
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let rusm_otp::Received::Message(b) = ctx.recv().await {
+                    let _ = tx.send(String::from_utf8(b).unwrap());
+                }
+            }
+        });
+        rt.register("collector", collector.pid());
+
+        // The supervisor needs spawn + monitor (Trusted grants both).
+        let _sup = wr.spawn_component_with(&sup, CapabilityProfile::Trusted.capabilities());
+
+        let parse = |m: String| -> u64 { m.strip_prefix("started:").unwrap().parse().unwrap() };
+        let pid_a = parse(rx.recv().await.unwrap());
+        rt.kill(rusm_otp::Pid::from_raw(pid_a)); // the supervisor should restart it
+        let pid_b = parse(rx.recv().await.unwrap());
+        assert_ne!(
+            pid_a, pid_b,
+            "the Go supervisor restarted the dead child as a fresh process"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_supervisor_gives_up_past_its_restart_intensity() {
+        // go-sup allows 2 restarts within an hour. A rapid burst of kills exceeds that
+        // intensity, so the supervisor gives up and its own process exits (the failure
+        // escalates instead of restart-looping) — proving the MaxRestarts/Within fields
+        // flow from the Go struct into the host's supervise ABI.
+        const FLAKY: &[u8] = include_bytes!("../../tests/fixtures/go_flaky.wasm");
+        const SUP: &[u8] = include_bytes!("../../tests/fixtures/go_sup.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let flaky = wr
+            .prepare_component(&wr.compile_component(FLAKY).unwrap(), "run")
+            .unwrap();
+        let sup = wr
+            .prepare_component(&wr.compile_component(SUP).unwrap(), "run")
+            .unwrap();
+        wr.register_component("flaky", flaky);
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let rusm_otp::Received::Message(b) = ctx.recv().await {
+                    let _ = tx.send(String::from_utf8(b).unwrap());
+                }
+            }
+        });
+        rt.register("collector", collector.pid());
+
+        let sup_handle = wr.spawn_component_with(&sup, CapabilityProfile::Trusted.capabilities());
+        let sup_pid = sup_handle.pid();
+
+        // Initial start + 2 restarts = 3 starts; kill the child each time it appears.
+        let parse = |m: String| -> u64 { m.strip_prefix("started:").unwrap().parse().unwrap() };
+        let mut starts = Vec::new();
+        for _ in 0..3 {
+            let pid = parse(rx.recv().await.unwrap());
+            starts.push(pid);
+            rt.kill(rusm_otp::Pid::from_raw(pid));
+        }
+
+        // Past its restart intensity, the supervisor gives up — its own process ends.
+        let mut gave_up = false;
+        for _ in 0..400 {
+            if !rt.is_alive(sup_pid) {
+                gave_up = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            gave_up,
+            "the Go supervisor exited after exceeding restart intensity"
+        );
+        assert_eq!(
+            starts
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            3,
+            "each restart was a fresh process"
         );
     }
 
@@ -2060,6 +2306,183 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_guest_spawns_dynamic_js_via_spawn_from() {
+        // A Go guest (rusm.SpawnFrom) loads runtime JS into the "runner" template with an
+        // inline source; the JS runs under the template's profile and messages back —
+        // proving the guest-callable spawn-from path end to end (any guest language can
+        // drive it; here Go).
+        const GUEST: &[u8] = include_bytes!("../../tests/fixtures/go_spawn_from.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_js_template("runner", CapabilityProfile::Trusted.capabilities());
+        let pre = wr
+            .prepare_component(&wr.compile_component(GUEST).unwrap(), "run")
+            .unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        rt.register("collector", collector.pid());
+
+        // The guest needs `spawn` to call SpawnFrom; inline JS needs no extra I/O cap.
+        wr.spawn_component_with(&pre, CapabilityProfile::Trusted.capabilities());
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            "ran from go",
+            "the Go guest spawned runtime inline JS that ran under the template profile"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_typescript_guest_spawns_dynamic_js_via_spawn_from() {
+        // A TS guest calls Process.spawn(name, source) — the spawn-from path — to load an
+        // inline JS bundle into the "runner" template; the loaded JS runs under the
+        // template profile and messages back. Proves the third language (TS) drives it.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_js_template("runner", CapabilityProfile::Trusted.capabilities());
+
+        const BUNDLE: &str = r#"
+            module.exports.default = async function () {
+                const inner = 'module.exports.default = async function () { Process.send(Process.whereis("collector"), "ran from ts"); };';
+                Process.spawn("runner", "inline:" + inner);
+            };
+        "#;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        rt.register("collector", collector.pid());
+
+        let _guest = wr.spawn_js_with(
+            BUNDLE.as_bytes().to_vec(),
+            CapabilityProfile::Trusted.capabilities(),
+        );
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            "ran from ts",
+            "the TS guest spawned runtime inline JS that ran under the template profile"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_rust_guest_spawns_dynamic_js_via_spawn_from() {
+        // A Rust guest (rusm_rs::spawn_from) loads inline JS into the "runner" template;
+        // the loaded JS runs under the template profile and messages back. Completes the
+        // set: all three guest languages (Go, TS, Rust) drive spawn-from.
+        const GUEST: &[u8] = include_bytes!("../../tests/fixtures/rs_spawn_from.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_js_template("runner", CapabilityProfile::Trusted.capabilities());
+        let pre = wr
+            .prepare_component(&wr.compile_component(GUEST).unwrap(), "run")
+            .unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        rt.register("collector", collector.pid());
+
+        wr.spawn_component_with(&pre, CapabilityProfile::Trusted.capabilities());
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            "ran from rs",
+            "the Rust guest spawned runtime inline JS that ran under the template profile"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_from_runs_dynamic_js_under_the_template_profile() {
+        // A node declares a JS runner *template* (a capability profile, no fixed bundle);
+        // a guest spawns an instance of it with a runtime-chosen source. Here the JS is
+        // staged in the node store and spawned via `kv:` — it runs under the template's
+        // declared profile and reports back, proving the dynamic-source path end to end.
+        use crate::actor::rusm::runtime::actor::Host;
+        let rt = Runtime::new();
+        let path = kv_test_path("spawn-from");
+        let wr = WasmRuntime::with_store(rt.clone(), &path).unwrap();
+        wr.register_js_template("runner", CapabilityProfile::Trusted.capabilities());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        rt.register("collector", collector.pid());
+
+        // The spawner (Trusted → spawn + storage): stage the bundle, then spawn-from it.
+        const BUNDLE: &[u8] = br#"module.exports.default = async function () {
+            Process.send(Process.whereis("collector"), "ran from kv");
+        };"#;
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        host.kv_set("bundles".into(), "app".into(), BUNDLE.to_vec())
+            .await
+            .unwrap();
+        host.spawn_from("runner".into(), "kv:bundles/app".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            "ran from kv",
+            "the dynamic JS, sourced from kv at runtime, ran on the template"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_from_fetches_a_url_bundle_via_the_injected_resolver() {
+        // A `url:` source is fetched by the node-injected resolver (rusm-wasm stays
+        // HTTP-free). The fetched JS runs under the template profile; the fetch is gated
+        // by the spawner's own network capability.
+        use crate::actor::rusm::runtime::actor::Host;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_js_template("runner", CapabilityProfile::Trusted.capabilities());
+
+        // Stand-in resolver: serve a known JS bundle for any URL (the real one is reqwest,
+        // wired by rusm-cli).
+        let resolver: crate::BundleResolver = std::sync::Arc::new(|_url: String| {
+            Box::pin(async move {
+                Ok(br#"module.exports.default = async function () {
+                    Process.send(Process.whereis("collector"), "ran from url");
+                };"#
+                .to_vec())
+            })
+        });
+        wr.set_bundle_resolver(resolver);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        rt.register("collector", collector.pid());
+
+        // A spawn-but-no-network spawner is denied the url fetch (the network gate).
+        let mut sandboxed = test_host(&wr, &rt, Capabilities::nothing().allow_spawn(true));
+        let denied = sandboxed
+            .spawn_from("runner".into(), "url:http://somesite.com/x.js".into())
+            .await
+            .unwrap_err();
+        assert!(
+            denied.contains("network"),
+            "url fetch needs the network cap: {denied}"
+        );
+
+        // A networked spawner fetches + runs it.
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        host.spawn_from("runner".into(), "url:http://somesite.com/x.js".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            "ran from url",
+            "the resolver-fetched JS ran on the template"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn kv_is_denied_without_the_storage_capability() {
         // A store is configured, but a sandboxed guest lacks the storage grant, so
         // even `kv-set` is refused — no bit is set.
@@ -2229,6 +2652,56 @@ mod tests {
         let caps = Capabilities::nothing().max_memory(256 << 10);
         let guest = wr.spawn_component_with(&pre, caps);
         assert_eq!(exit_reason_of(&rt, &guest).await, ExitReason::Normal);
+    }
+
+    // Deliberately heavy (128 instances committing ~256 MiB) — a scale *proof*, not a
+    // routine check. `#[ignore]` keeps its footprint out of the default parallel suite (so
+    // it doesn't pressure neighbours); run it on demand: `cargo test -- --ignored`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "heavy scale proof; run with --ignored"]
+    async fn one_engine_grows_many_instances() {
+        // The PROPER guarantee behind the pool: a *single* engine backs memory growth for
+        // *many* instances reliably — what a production node does (one engine per process).
+        // Run an explicit 256-slot pool (NOT the cfg(test) default) and spawn 128 instances
+        // that each force a 2 MiB grow, then **report success**; every one must report.
+        // (Counting reports, not exit reasons: these exit so fast that a monitor set up
+        // afterwards races to `NoProc`.) The earlier intermittent failure was a *test-
+        // harness* artifact — ~100 full pools coexisting in one test process exhausting its
+        // VM map entries — not a per-engine limit. This proves the engine itself scales, so
+        // the cfg(test) pool size is an accommodation, not a cap on the product.
+        const RS_GROW: &[u8] = include_bytes!("../../tests/fixtures/rs_grow.wasm");
+        const N: usize = 128;
+        let rt = Runtime::new();
+        // One engine, 128 slots of 8 MiB each (a 1 GiB reservation — kept modest so this
+        // proof doesn't itself add the multi-engine pressure it's characterising). 8 MiB is
+        // ample for the grower's ~3.5 MiB footprint.
+        let wr = WasmRuntime::with_limits(rt.clone(), N as u32, 8 << 20).unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(RS_GROW).unwrap(), "run")
+            .unwrap();
+
+        // The collector counts "grew" reports; a failed grow would trap before reporting.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let rusm_otp::Received::Message(b) = ctx.recv().await {
+                    let _ = tx.send(b);
+                }
+            }
+        });
+        rt.register("collector", collector.pid());
+
+        let caps = Capabilities::nothing().max_memory(8 << 20);
+        for _ in 0..N {
+            wr.spawn_component_with(&pre, caps.clone());
+        }
+        for i in 0..N {
+            let msg = tokio::time::timeout(std::time::Duration::from_secs(15), rx.recv())
+                .await
+                .unwrap_or_else(|_| panic!("only {i}/{N} instances reported a successful grow"))
+                .expect("collector channel stays open");
+            assert_eq!(msg, b"grew", "an instance grew on the single engine");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

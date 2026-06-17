@@ -1,0 +1,13 @@
+package rusm:runtime@0.1.0;
+
+/// Embedding world for compiled guests (TinyGo). It is the `process` world — the
+/// `actor` import and the `run` export — plus the WASI imports the Go runtime needs,
+/// so `wasm-tools` can resolve them when forming the component. Used *only* for
+/// component embedding (`tinygo -wit-world component`); Go bindings are generated from
+/// the lean `process` world (in `world.wit`) so they stay actor-only. The host already
+/// satisfies these WASI imports for actor components (Rust guests import them too).
+world component {
+    include wasi:cli/imports@0.2.0;
+    import actor;
+    export run: func();
+}

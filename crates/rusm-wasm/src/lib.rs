@@ -10,8 +10,10 @@
 //! Wasm lives *only* here; `rusm-otp` never references Wasmtime.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -88,7 +90,19 @@ pub(crate) struct Registered {
     /// policy — what the manifest declares is what runs), instead of inheriting the
     /// spawner's caps. `None` → inherit the spawner's caps (ad-hoc registration / tests).
     pub(crate) caps: Option<Capabilities>,
+    /// A **dynamic JS runner template**: the prepared component is the js-runner and the
+    /// bundle is supplied per spawn from a runtime source (`spawn-from`), not fixed here.
+    /// `spawn`-by-name is rejected for these (there's no bundle); only `spawn-from` runs
+    /// them, under `caps` (the operator's declared profile).
+    pub(crate) dynamic: bool,
 }
+
+/// Resolves a `url:` `spawn-from` source to JS bundle bytes. **Injected by the
+/// orchestrator** (the node owns network egress + policy), so `rusm-wasm` needs no HTTP
+/// client. Async — a one-shot fetch returning the bundle or a human-readable error.
+pub type BundleResolver = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send>> + Send + Sync,
+>;
 
 pub(crate) struct Spawner {
     pub(crate) engine: Engine,
@@ -112,6 +126,10 @@ pub(crate) struct Spawner {
     /// [`WasmRuntime::with_store`]). Shared with every guest; the `kv-*` actor ABI
     /// reaches it, gated by the `storage` capability.
     pub(crate) store: Option<Arc<rusm_kv::Store>>,
+    /// Resolver for `url:` `spawn-from` sources, set once by the orchestrator (see
+    /// [`WasmRuntime::set_bundle_resolver`]). Empty by default → a `url:` source errors
+    /// ("not configured"); `inline:`/`kv:` never need it.
+    pub(crate) bundle_resolver: OnceLock<BundleResolver>,
 }
 
 impl Spawner {
@@ -186,10 +204,7 @@ impl WasmRuntime {
     /// today, so it's deliberately not offered (add a variant if it ever is).
     pub fn with_store(rt: Runtime, path: impl AsRef<std::path::Path>) -> Result<Self> {
         let store = Arc::new(rusm_kv::Store::open(path)?);
-        let engine = Engine::new(&Self::pooled_config(
-            DEFAULT_MAX_INSTANCES,
-            DEFAULT_MAX_MEMORY,
-        ))?;
+        let engine = Engine::new(&Self::pooled_config(DEFAULT_MAX_INSTANCES, DEFAULT_MAX_MEMORY))?;
         Self::assemble(rt, engine, None, DEFAULT_MAX_INSTANCES, Some(store))
     }
 
@@ -280,6 +295,7 @@ impl WasmRuntime {
                 pooled_live: AtomicU32::new(0),
                 pooled_cap: max_instances,
                 store,
+                bundle_resolver: OnceLock::new(),
             }),
             linker,
             component_linker,
@@ -312,6 +328,7 @@ impl WasmRuntime {
                 prepared,
                 bundle: None,
                 caps: None,
+                dynamic: false,
             },
         );
     }
@@ -333,6 +350,7 @@ impl WasmRuntime {
                 prepared,
                 bundle: None,
                 caps: Some(caps),
+                dynamic: false,
             },
         );
     }
@@ -349,6 +367,7 @@ impl WasmRuntime {
                 prepared,
                 bundle: Some(Arc::new(bundle.into())),
                 caps: None,
+                dynamic: false,
             },
         );
     }
@@ -369,8 +388,35 @@ impl WasmRuntime {
                 prepared,
                 bundle: Some(Arc::new(bundle.into())),
                 caps: Some(caps),
+                dynamic: false,
             },
         );
+    }
+
+    /// Registers a **dynamic JS runner template** under `name`: a capability profile with
+    /// no fixed bundle. A guest cannot `spawn` it (there's nothing to run); it runs only
+    /// via `spawn-from(name, source)`, which fetches a JS bundle from a runtime source and
+    /// runs it on the js-runner under `caps` — the operator's declared profile (the guest
+    /// chooses the code, never the capabilities). The app loader registers these for a
+    /// `[components.<name>]` marked `dynamic = "js"`.
+    pub fn register_js_template(&self, name: impl Into<String>, caps: Capabilities) {
+        let prepared = self.js_runner().clone();
+        self.spawner.register(
+            name,
+            Registered {
+                prepared,
+                bundle: None,
+                caps: Some(caps),
+                dynamic: true,
+            },
+        );
+    }
+
+    /// Set the resolver for `url:` `spawn-from` sources — a network fetch the orchestrator
+    /// owns, so `rusm-wasm` stays HTTP-free. Set-once (later calls are ignored); `inline:`
+    /// and `kv:` sources never need it.
+    pub fn set_bundle_resolver(&self, resolver: BundleResolver) {
+        let _ = self.spawner.bundle_resolver.set(resolver);
     }
 
     /// Record a **named** component the app loader spawned directly (not via the

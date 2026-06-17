@@ -42,10 +42,35 @@ export default websocket({
 });
 ```
 
+```go [Go]
+package main
+
+import (
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	// One process per connection; reply with c.Send(…).
+	web.WebSocket{
+		Open: func(c web.Conn) {
+			c.Send([]byte("welcome\n"))
+		},
+		Message: func(c web.Conn, data []byte) {
+			c.Send(data) // echo this connection's frame
+		},
+	}.Serve()
+}
+```
+
 :::
 
-There is **one handler instance per connection**, so its state (Rust `&mut self`, or a
-TypeScript closure) is *this connection's* state — no cross-connection sharing.
+There is **one handler instance per connection**, so its state (Rust `&mut self`, a
+TypeScript closure, or a Go closure) is *this connection's* state — no cross-connection
+sharing.
 
 ## Platform owns / you write
 

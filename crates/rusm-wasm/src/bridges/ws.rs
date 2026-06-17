@@ -293,6 +293,33 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_component_handles_a_websocket() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // The reply comes from a sandboxed Go (TinyGo) component built on the rusm-go
+        // `web.WebSocket` API — one process per connection, echoing each frame.
+        const WS_ECHO: &[u8] = include_bytes!("../../tests/fixtures/go_ws_echo.wasm");
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_ECHO).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        ws.send(Message::text("hi go")).await.unwrap();
+        let reply = ws.next().await.unwrap().unwrap();
+        assert_eq!(&reply.into_data()[..], b"hi go");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_reclaims_every_held_process() {
         // The control USP: components parked on `receive` (here, handlers awaiting a
         // writer pid that never comes) must not leak — `shutdown` aborts them all and

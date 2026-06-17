@@ -1,7 +1,8 @@
 # Lifecycle — HTTP component
 
-A per-request HTTP handler: a `#[rusm_rs::handlers]` action (Rust) or a `wasi:http`
-`export default { fetch }` (TypeScript). **A fresh sandboxed instance per request**,
+A per-request HTTP handler: a `#[rusm_rs::handlers]` action (Rust), a `web.Handlers`
+action (Go), or a `wasi:http` `export default { fetch }` (TypeScript). **A fresh
+sandboxed instance per request**,
 which handles exactly one request and exits. See the
 [overview](./component-lifecycle.md) for the shared two-domain model and failure
 vocabulary this chapter builds on.
@@ -34,12 +35,37 @@ export default function handle(request: Request): Response {
 }
 ```
 
+```go [Go]
+package main
+
+import (
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	// routed from `[serve.routes]`:  "GET /users/:id" = "api#show"
+	h.Handle("show", func(_ web.Request, p web.Params) web.Response {
+		id := p.Get("id")
+		if id == "" {
+			id = "?"
+		}
+		return web.Text("user " + id)
+	})
+	h.Serve()
+}
+```
+
 :::
 
 That's the **application domain** in full — a function from a request to a response. No
-`main`, no router, no request/response wire. (The Rust `#[handlers]` form is routed by
-`[serve.routes]` to a named action; the TypeScript `export default` form is a
-`wasi:http` component that dispatches itself.)
+`main`, no router, no request/response wire. (The Rust `#[handlers]` and Go
+`web.Handlers` forms are routed by `[serve.routes]` to a named action; the TypeScript
+`export default` form is a `wasi:http` component that dispatches itself.)
 
 ## Platform owns / you write
 
@@ -71,7 +97,7 @@ That's the **application domain** in full — a function from a request to a res
 - **Where state goes.** A handler is stateless and disposable. Cross-request state
   lives in a [service component](./lifecycle-service.md) (reached via `whereis` +
   `call`) or in durable `kv` — never in the handler.
-- **Same lifecycle, both languages.** The Rust and TypeScript forms above share the
-  exact per-request lifecycle in the table — a fresh instance, one request, then exit.
+- **Same lifecycle, every language.** The Rust, TypeScript, and Go forms above share
+  the exact per-request lifecycle in the table — a fresh instance, one request, then exit.
 
 Next: [SSE component](./lifecycle-sse.md) · [WebSocket component](./lifecycle-websocket.md)

@@ -48,6 +48,11 @@ impl actor::Host for WasiHost {
         let entry = spawner
             .lookup(&component)
             .ok_or_else(|| format!("unknown component `{component}`"))?;
+        if entry.dynamic {
+            return Err(format!(
+                "`{component}` is a dynamic JS template — spawn it with spawn-from(component, source)"
+            ));
+        }
         // A node-registered component runs under its **declared** profile (the manifest's
         // explicit per-component policy — what's declared is what runs); an ad-hoc
         // registration with no declared profile inherits this process's caps
@@ -59,6 +64,54 @@ impl actor::Host for WasiHost {
             self.rt
                 .send(Pid::from_raw(child.pid().raw()), (**bundle).clone());
         }
+        Ok(child.pid().raw())
+    }
+
+    /// Spawn a **dynamic JS** instance of a registered runner template, with the JS bundle
+    /// supplied at runtime by `source`. The loaded JS runs under the template's *declared*
+    /// profile (operator policy — the guest picks the code, never the capabilities).
+    /// `source` is `inline:<js>` (the bundle itself), `kv:<bucket>/<key>` (the node store),
+    /// or `url:`/`http(s)://…` (fetched). Capability-gated: `spawn` always, plus the
+    /// spawner's own `storage` (kv) / `network` (url); `inline` needs no extra I/O cap.
+    async fn spawn_from(&mut self, component: String, source: String) -> Result<u64, String> {
+        if !self.caps.can_spawn() {
+            return Err("spawn denied: missing the spawn capability".to_string());
+        }
+        let bundle = match self.resolve_local(&source)? {
+            Some(bytes) => bytes,
+            None => {
+                // `url:` source: gate on the spawner's own network capability, then fetch
+                // via the node-injected resolver. Extract the resolver (an owned Arc) first
+                // so no `&self` borrow is held across the await (keeps the future `Send`).
+                if !self.caps.network_allowed() {
+                    return Err("spawn-from url denied: missing the network capability".to_string());
+                }
+                let resolver = self
+                    .spawner
+                    .as_ref()
+                    .and_then(|s| s.bundle_resolver.get().cloned())
+                    .ok_or("url: bundle sources are not configured on this node")?;
+                let url = source
+                    .trim()
+                    .strip_prefix("url:")
+                    .unwrap_or(source.trim())
+                    .to_string();
+                resolver(url).await?
+            }
+        };
+        let spawner = self.spawner.as_ref().ok_or("spawn unavailable here")?;
+        let entry = spawner
+            .lookup(&component)
+            .ok_or_else(|| format!("unknown component `{component}`"))?;
+        if !entry.dynamic {
+            return Err(format!(
+                "`{component}` is not a dynamic JS template (use spawn for a fixed component)"
+            ));
+        }
+        let caps = entry.caps.clone().unwrap_or_else(|| self.caps.clone());
+        let child = spawner.spawn_component(&entry.prepared, caps, Some(&component));
+        // The js-runner takes its bundle as message 1 (the runner's protocol).
+        self.rt.send(Pid::from_raw(child.pid().raw()), bundle);
         Ok(child.pid().raw())
     }
 
@@ -371,6 +424,37 @@ impl WasiHost {
             .and_then(|s| s.store.as_ref())
             .ok_or("kv unavailable: no store configured on this node")?;
         Ok(store.bucket(bucket))
+    }
+
+    /// Resolve a `spawn-from` source that needs no network fetch — `inline:<js>` (the
+    /// bundle verbatim) or `kv:<bucket>/<key>` (the node store, enforcing `storage` via
+    /// `kv_bucket`). `Ok(None)` signals a `url:`/`http(s)://` source, which `spawn-from`
+    /// fetches via the node-injected resolver (enforcing `network`); `Err` is an
+    /// unrecognised source.
+    fn resolve_local(&self, source: &str) -> Result<Option<Vec<u8>>, String> {
+        let source = source.trim();
+        if let Some(js) = source.strip_prefix("inline:") {
+            return Ok(Some(js.as_bytes().to_vec()));
+        }
+        if let Some(rest) = source.strip_prefix("kv:") {
+            let (bucket, key) = rest
+                .split_once('/')
+                .ok_or_else(|| format!("kv source must be `kv:<bucket>/<key>`, got {source:?}"))?;
+            let bytes = self
+                .kv_bucket(bucket)?
+                .get(key)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("bundle not found at {source}"))?;
+            return Ok(Some(bytes));
+        }
+        let url = source.strip_prefix("url:").unwrap_or(source);
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Ok(None); // fetched by spawn-from via the injected resolver
+        }
+        Err(format!(
+            "unrecognised bundle source {source:?} \
+             (expected `inline:<js>`, `kv:<bucket>/<key>`, or `http(s)://…`)"
+        ))
     }
 }
 

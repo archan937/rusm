@@ -248,6 +248,7 @@ boots an instance:
 | `capability` | string | `"sandboxed"` | A built-in profile or a `[capabilities.<name>]` id. |
 | `resident` | bool | `false` | `true` = boot-spawned at startup and supervised (auto-restarted on crash). Default = registered for spawn-by-name only, not boot-spawned. |
 | `source` | string? | none | Load the (JS) bundle from a `url:`/`http(s)://` URL or `kv:<bucket>/<key>` instead of the local `./wasm/<name>` artifact — deploy JS live, no node rebuild (re-fetched on each spawn / `rusm dev` reload). See [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
+| `dynamic` | string? | none | `"js"` marks a **dynamic JS runner template**: a capability profile with no fixed bundle. A guest can't `spawn` it; it runs only via `spawn-from(name, source)`, which loads a runtime-chosen JS bundle and runs it under this profile. Mutually exclusive with `source`; can't be `resident`. See [dynamic JS at runtime](#dynamic-js-at-runtime-spawn-from). |
 
 ## A complete manifest
 
@@ -325,6 +326,52 @@ source = "kv:bundles/worker"            # publish to kv, then re-spawn
 
 A remote source is always a **JS** bundle (UTF-8). When `source` is omitted the
 loader behaves exactly as before, resolving `./wasm/<name>.{qjsbc,js,wasm}`.
+
+## Dynamic JS at runtime (`spawn-from`)
+
+`source` (above) is **config-time** — the operator fixes where a bundle comes from. When
+the bundle is only known **at runtime** (generated in-process, or a URL/key a guest
+computes), declare a **runner template** and let a guest spawn instances of it with a
+runtime source:
+
+```toml
+[node]
+store = "data/app.redb"            # for kv: sources
+
+# A runner template: a capability profile with no fixed bundle. Guests reach it via
+# spawn-from; the loaded JS runs under THIS profile (operator policy), whatever code runs.
+[components.sandbox-runner]
+capability = "sandboxed"           # the box; the guest picks the code, not the caps
+dynamic = "js"
+```
+
+A guest then spawns a fresh instance with the JS to run — `inline:<js>` (a plain string,
+e.g. code it just generated), `kv:<bucket>/<key>`, or `url:`/`http(s)://…`:
+
+::: code-group
+
+```ts [TypeScript]
+const pid = Process.spawn("sandbox-runner", "url:https://cdn.example/job.js");
+// or "inline:" + generatedJs, or "kv:jobs/" + id
+```
+
+```rust [Rust]
+let pid = rusm_rs::spawn_from("sandbox-runner", &format!("inline:{generated_js}"))?;
+```
+
+```go [Go]
+pid, err := rusm.SpawnFrom("sandbox-runner", "kv:jobs/"+id)
+```
+
+:::
+
+The loaded JS always runs under the template's **declared** profile — so untrusted or
+generated code is boxed by the operator, never by the caller. Capability-gated: the
+spawner needs `spawn`, plus its own `storage` for a `kv:` source or `network` for a `url:`
+(an `inline:` bundle needs no extra I/O). The fetch for `url:` is a host action (the node
+owns egress), so `rusm-wasm` stays HTTP-free. `dynamic = "js"` is the only kind today; the
+string anticipates other **interpreted** runners (Python, Ruby) — compiled `.wasm`
+components ship via `rusm build`, not this path.
 
 ## Environment variables
 

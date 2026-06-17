@@ -156,6 +156,13 @@ pub struct ComponentSpec {
     /// change the bundle at the source and re-`spawn`/reload, no node rebuild.
     #[serde(default)]
     pub source: Option<String>,
+    /// Marks this as a **dynamic JS runner template** (`dynamic = "js"`): a capability
+    /// profile with no fixed bundle. A guest can't `spawn` it; it runs only via
+    /// `spawn-from(name, source)`, which loads a runtime-chosen JS bundle and runs it
+    /// under this profile (operator policy — the guest picks the code, never the caps).
+    /// Mutually exclusive with `source` (a template has no fixed bundle).
+    #[serde(default)]
+    pub dynamic: Option<String>,
 }
 
 /// Where a component's JS bundle is fetched from when a [`ComponentSpec`]/[`ServeSpec`]
@@ -442,6 +449,25 @@ mod tests {
             .unwrap()
             .components["x"]
             .source
+            .is_none());
+    }
+
+    #[test]
+    fn parses_a_dynamic_js_runner_template() {
+        // `dynamic = "js"` marks a runner template (a profile, no fixed bundle) a guest
+        // reaches via spawn-from; absent by default.
+        let cfg = NodeConfig::from_toml(
+            "[components.sandbox-runner]\ncapability = \"network-client\"\ndynamic = \"js\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.components["sandbox-runner"].dynamic.as_deref(),
+            Some("js")
+        );
+        assert!(NodeConfig::from_toml("[components.x]\n")
+            .unwrap()
+            .components["x"]
+            .dynamic
             .is_none());
     }
 

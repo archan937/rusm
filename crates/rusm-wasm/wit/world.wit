@@ -29,6 +29,16 @@ interface actor {
     /// more. `err` with a message if spawn is denied or the name is unknown.
     spawn: func(component: string) -> result<pid, string>;
 
+    /// Spawn a **dynamic JS** instance of `component` — a node-declared *runner template*
+    /// (a capability profile with no fixed bundle) — whose JS bundle is fetched at runtime
+    /// from `source`: `url:<u>` / `http(s)://…`, or `kv:<bucket>/<key>` (the node's store).
+    /// The instance runs under `component`'s **declared** profile (operator policy — the
+    /// guest chooses the code, never the capabilities). Capability-gated: `spawn`, plus the
+    /// spawner's own `network` (for a `url:` source) or `storage` (for `kv:`) — so a
+    /// sandboxed guest can't drive arbitrary host fetches. `err` if denied, if `component`
+    /// is not a dynamic template, or if the source can't be loaded.
+    spawn-from: func(component: string, source: string) -> result<pid, string>;
+
     /// Monitor a process: when `target` dies, this process receives a `__down`
     /// message (Erlang's `monitor`) — the basis for a guest Supervisor.
     monitor: func(target: pid);

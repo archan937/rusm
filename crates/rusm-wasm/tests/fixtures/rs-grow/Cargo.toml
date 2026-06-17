@@ -1,0 +1,25 @@
+# A guest that forces its wasm linear memory to grow (a multi-MiB heap alloc), then
+# reports success to the registered `collector` — so a test can count successful grows
+# across many instances on one engine without racing exit reasons. Built for
+# wasm32-wasip2, checked in as rs_grow.wasm. Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/rs_grow.wasm ../rs_grow.wasm
+[workspace]
+
+[package]
+name = "rs-grow"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "rs_grow"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"

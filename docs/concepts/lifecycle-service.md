@@ -28,13 +28,31 @@ export function bump(by: number): number { count += by; return count; }
 export function total(): number { return count; }
 ```
 
+```go [Go]
+package main
+
+import rusm "github.com/archan937/rusm/packages/rusm-go"
+
+func init() { rusm.Run(run) }
+func main() {}
+
+var count int // state the loop owns
+
+func run() {
+	svc := rusm.NewService()
+	svc.Handle("bump", rusm.Fn1(func(by int) (int, error) { count += by; return count, nil }))
+	svc.Handle("total", rusm.Fn0(func() (int, error) { return count, nil }))
+	svc.Serve() // the dispatch loop: receive → call → reply
+}
+```
+
 :::
 
 Declared as a `[components.<name>]` entry (with `resident = true` to be boot-spawned and
 supervised), spawned when the node starts, and addressed by name. A sibling calls it through the generated
-typed client — `spawn<Counter>("counter")` then `await counter.bump(1)` — and the
-cross-process round-trip reads like a local call (Rust and TypeScript interoperate over
-one wire).
+typed client — `spawn<Counter>("counter")` then `await counter.bump(1)` (or, in Go,
+`rusm.Call[int](counter, "bump", 1)`) — and the cross-process round-trip reads like a
+local call (Rust, TypeScript, and Go interoperate over one wire).
 
 ## Platform owns / you write
 

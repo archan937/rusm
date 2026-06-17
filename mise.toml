@@ -1,0 +1,18 @@
+# Toolchain for building RUSM Go (TinyGo) guest components.
+#
+# RUSM's Rust/TS guests build with cargo/bun (already pinned by their own
+# toolchains); this file pins the *Go* guest toolchain so `rusm build` can compile
+# `components/*` written in Go reproducibly. `wasm-tools` + `wizer` are assumed on
+# PATH (host build deps); add them here too if you want everything in one place.
+#
+# Setup:  mise install
+[tools]
+# Go toolchain — TinyGo requires a Go install present to compile.
+go = "latest"
+# TinyGo: compiles Go -> wasm32-wasip2 components.
+"aqua:tinygo-org/tinygo" = "0.41.1"
+# Binaryen (wasm-opt): TinyGo's wasm optimizer pass — a required TinyGo build dep.
+"aqua:WebAssembly/binaryen" = "130"
+# wit-bindgen-go: generates Go bindings from the rusm:runtime WIT (installed via the
+# go backend, so it resolves only after `go` above is available).
+"go:go.bytecodealliance.org/cmd/wit-bindgen-go" = "latest"

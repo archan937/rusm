@@ -1,9 +1,10 @@
-# Concept — guests: Rust & TypeScript
+# Concept — guests: Rust, TypeScript & Go
 
-A RUSM process body can be written in **Rust** (`rusm-rs`) or **TypeScript**
-(`rusm-ts`). Both compile/bundle to a sandboxed Wasm process with the same actor API
-and the same JSON wire — so a Rust client and a TypeScript service interoperate
-transparently.
+A RUSM process body can be written in **Rust** (`rusm-rs`), **TypeScript** (`rusm-ts`),
+or **Go** (`rusm-go`). All compile/bundle to a sandboxed Wasm process with the same
+actor API and the same JSON wire — so a Rust client, a TypeScript service, and a Go
+worker interoperate transparently. Each SDK speaks its language's *own* idioms — the
+concepts are shared, the surface is native.
 
 ## Rust guests (`rusm-rs`)
 
@@ -102,14 +103,76 @@ export default websocket({
 });
 ```
 
+## Go guests (`rusm-go`)
+
+Write **normal Go**: the `rusm` package gives `Self` / `Send` / `Receive` / `Spawn` /
+the registry / `Stream`, plus a `Service` with typed `Fn0`–`Fn3` handlers and a generic
+`Call[R]` / `CallStream[R]` client; the `web` subpackage gives the serving surface.
+Logging is the standard library (`log` / `log/slog`). There are no macros — the
+component shell is a three-line `init` + `main` + `run`; the bindings live in the SDK.
+`rusm build` compiles each `components/<name>/` with **TinyGo** to a `wasm32-wasip2`
+component (no `wit/` dir, no bindings boilerplate in your source).
+
+Serving mirrors Rust: HTTP/SSE are routed by `[serve.routes]` to named actions
+registered on a `web.Handlers`; WebSocket is one process per connection. A 2-arg-style
+`Handle` is buffered; `HandleSSE` streams SSE:
+
+```go
+package main
+
+import (
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	// GET /users/:id  ->  "api#show"
+	h.Handle("show", func(_ web.Request, p web.Params) web.Response {
+		return web.Text("user " + p.Get("id") + "\n")
+	})
+	// GET /events/:room  ->  "api#events"  (HandleSSE → SSE)
+	h.HandleSSE("events", func(_ web.Request, p web.Params, sse web.Sse) {
+		room := p.Get("room")
+		for n := 0; ; n++ {
+			if !sse.Data([]byte(fmt.Sprintf("%s tick %d", room, n))) {
+				break // disconnected
+			}
+		}
+	})
+	h.Serve()
+}
+```
+
+WebSocket is `web.WebSocket{ Open, Message }.Serve()` — the host runs one isolated
+process per connection, hands each inbound frame to `Message`, and you reply through the
+`Conn` (the process simply exits on disconnect; no `close` callback):
+
+```go
+func run() {
+	web.WebSocket{
+		Open:    func(c web.Conn) { c.Send([]byte("welcome\n")) },
+		Message: func(c web.Conn, data []byte) { c.Send(data) }, // echo
+	}.Serve()
+}
+```
+
+As with the other guests, shared state lives in a long-lived `[components.<name>]`
+service or in durable `kv`, never in the serving instance.
+
 ## Beyond messaging — timers, storage, pub/sub, crypto
 
-Both guests get more than `send`/`receive`, all over the same capability-gated ABI:
+All guests get more than `send`/`receive`, all over the same capability-gated ABI:
 
-- **Timed receive** — `receive_timeout(ms)` (RS) / `Process.receive(ms)` (TS):
-  Erlang's `receive … after` — the next message, or `null`/`None` on the deadline.
-  The basis for heartbeats and any time-bound wait, with no busy loop.
-- **Durable storage** — `rusm_rs::kv` (RS) / the `kv` global (TS): bucketed
+- **Timed receive** — `receive_timeout(ms)` (RS) / `Process.receive(ms)` (TS) /
+  `rusm.ReceiveBytesTimeout(ms)` (Go): Erlang's `receive … after` — the next message,
+  or `null`/`None`/`ok=false` on the deadline. The basis for heartbeats and any
+  time-bound wait, with no busy loop.
+- **Durable storage** — `rusm_rs::kv` (RS) / the `kv` global (TS) /
+  `rusm.OpenBucket(...)` (Go): bucketed
   `get`/`set`/`delete`/`exists`/`list` over the node's embedded store
   (`rusm-kv`/redb), gated by the **storage** capability. Survives a restart, no
   external daemon. (TS bundles can also `import` npm — `@noble/*`, etc.)
@@ -125,27 +188,38 @@ Both guests get more than `send`/`receive`, all over the same capability-gated A
 
 ## Logging from a component
 
-There's nothing new to learn — **use each language's standard output**, and the host
-shows it. A component logs only when its profile grants the **`allow-stdio`** capability
-(`[capabilities.<name>] allow-stdio = true`, included in `trusted`); a sandboxed guest's
-output is simply discarded.
+There's nothing new to learn — **use each language's standard logging**, and the host
+routes it to the node's log stream. The `log` crate (Rust), `console.*` (TS), and `log` /
+`log/slog` (Go) all flow to the platform **`log` op**, which stamps the timestamp, this
+process's `component#pid`, and the severity. There's no init to call and nothing to wire —
+name, pid, and format are the platform's. Output is gated by the node's `[log] level`
+([configuration](../reference-configuration.md#log--platform-lifecycle-logging)), the
+single source of truth (not a capability) — a record below the threshold is dropped.
 
 ::: code-group
 
 ```rust [Rust]
-// Plain std macros → the node's stdout / stderr (when `allow-stdio` is granted).
-println!("handled {} in {}ms", id, elapsed);
-eprintln!("warning: retrying ({attempt})");
-// For levelled/tagged app logs, write a thin helper over eprintln! (no framework
-// needed) — or wire the `log`/`tracing` crates to a stderr backend if you prefer.
+// The standard `log` crate facade → the node's log stream (the entry-point macros
+// install the platform logger; no init). The host adds time, component#pid, and level.
+log::info!("handled {} in {}ms", id, elapsed);
+log::warn!("retrying ({attempt})");
+log::error!("gave up");
 ```
 
 ```ts [TypeScript]
-// The web-standard console → the node's stderr (warn/error are prefixed).
+// The web-standard console → the node's log stream (the runner routes it; no setup).
 console.log("handled", id, "in", elapsed, "ms");
 console.warn("retrying", attempt);   // → [warn] retrying 2
 console.error("gave up");            // → [error] gave up
 // Pids (bigint) and objects are stringified/JSON'd for you.
+```
+
+```go [Go]
+// The standard log / log/slog packages — the rusm-go SDK routes them to the node's
+// log stream (the host stamps time, component#pid, and severity). No setup, no wiring.
+slog.Info("handled", "id", id, "ms", elapsed)
+slog.Warn("retrying", "attempt", attempt)
+log.Printf("gave up after %d attempts", attempt)
 ```
 
 :::

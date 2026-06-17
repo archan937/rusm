@@ -107,6 +107,30 @@ export type Calc = typeof import(".");
 // caller:  const calc = spawn<Calc>("calc");  await calc.add(2, 3);
 ```
 
+```go [Go]
+// A Go service — register typed handlers; a generic Call[R] client speaks the wire:
+func run() {
+	svc := rusm.NewService()
+	svc.Handle("add", rusm.Fn2(func(a, b int) (int, error) { return a + b, nil }))
+	svc.HandleStream("countTo", func(req rusm.Request, out rusm.Sink) error { // streaming
+		n, _ := rusm.Arg[int](req, 0)
+		for i := 1; i <= n; i++ {
+			out.Send(i)
+		}
+		return nil
+	})
+	svc.Handle("work", func(req rusm.Request) (any, error) { // callback
+		progress := rusm.CallbackArg(req, 0)
+		for _, pct := range []int{25, 50, 100} {
+			progress.Call(pct)
+		}
+		return "done", nil
+	})
+	svc.Serve()
+}
+// caller:  sum, _ := rusm.Call[int](calc, "add", 2, 3)
+```
+
 :::
 
 ## Verification

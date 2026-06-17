@@ -94,6 +94,15 @@ pub fn spawn(component: &str) -> Result<Pid, String> {
     actor::spawn(component).map(Pid)
 }
 
+/// Spawn a **dynamic JS** instance of a registered runner template `component`, loading
+/// its bundle at runtime from `source` — `inline:<js>` (the bundle itself),
+/// `kv:<bucket>/<key>` (the node store), or `url:`/`http(s)://…` (fetched). The JS runs
+/// under the template's *declared* profile (the guest chooses the code, never the
+/// capabilities). Gated by `spawn` plus the source's I/O capability (`storage`/`network`).
+pub fn spawn_from(component: &str, source: &str) -> Result<Pid, String> {
+    actor::spawn_from(component, source).map(Pid)
+}
+
 /// Monitor a process: when it dies, this process receives a `__down` message
 /// (see [`supervisor`]). Capability-gated like spawn.
 pub fn monitor(target: Pid) {

@@ -1,12 +1,13 @@
-//! `rusm new <name> [--rust|--lang ts|rust|generic] [--protocol http|sse|ws]` —
+//! `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws]` —
 //! scaffold a new RUSM app.
 //!
 //! Produces a project whose component source is **pure developer logic** — no
-//! `wit-bindgen`/`export!` boilerplate (Rust hides it behind `#[rusm_rs::main]`) and
-//! no `Process`/frame plumbing (TS uses web standards and the `rusm-ts` package). Pick a
-//! language (`--rust`/`--lang`, default TypeScript; `generic` for a pre-built wasm you
-//! supply yourself) and a protocol (`--protocol`, default `http`); from nothing to a
-//! live server in three commands:
+//! `wit-bindgen`/`export!` boilerplate (Rust hides it behind `#[rusm_rs::main]`, Go
+//! behind the `rusm-go` SDK) and no `Process`/frame plumbing (TS uses web standards and
+//! the `rusm-ts` package). Pick a language (`--rust`/`--lang`, default TypeScript; `go`
+//! for TinyGo; `generic` for a pre-built wasm you supply yourself) and a
+//! protocol (`--protocol`, default `http`); from nothing to a live server in three
+//! commands:
 //!
 //! ```text
 //! rusm new hello && cd hello
@@ -23,6 +24,7 @@ use anyhow::{anyhow, bail, Context, Result};
 pub enum Lang {
     TypeScript,
     Rust,
+    Go,
     /// Generic: no source files scaffolded; user provides a pre-built .wasm file.
     Generic,
 }
@@ -69,7 +71,9 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
 
     // Then the one positional: the app name. A missing name is the usage error.
     let name: String = args.free_from_str().map_err(|_| {
-        anyhow!("usage: rusm new <name> [--rust] [--lang ts|rust|generic] [--protocol http|sse|ws]")
+        anyhow!(
+            "usage: rusm new <name> [--rust] [--lang ts|rust|go|generic] [--protocol http|sse|ws]"
+        )
     })?;
     validate_name(&name)?;
 
@@ -102,8 +106,9 @@ fn parse_lang(value: &str) -> Result<Lang> {
     match value {
         "ts" | "typescript" => Ok(Lang::TypeScript),
         "rust" | "rs" => Ok(Lang::Rust),
+        "go" | "golang" => Ok(Lang::Go),
         "generic" | "wasm" => Ok(Lang::Generic),
-        other => bail!("unknown language `{other}` — use `ts`, `rust`, or `generic`"),
+        other => bail!("unknown language `{other}` — use `ts`, `rust`, `go`, or `generic`"),
     }
 }
 
@@ -174,6 +179,13 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
                 rust_component(app.protocol).to_string(),
             ));
         }
+        Lang::Go => {
+            out.push((PathBuf::from("components/api/go.mod"), GO_MOD.to_string()));
+            out.push((
+                PathBuf::from("components/api/main.go"),
+                go_component(app.protocol).to_string(),
+            ));
+        }
         Lang::Generic => {
             // No source is generated — the user drops in a pre-built `.wasm`. A README
             // (not an empty `.gitkeep`) documents the interface RUSM expects.
@@ -186,12 +198,13 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
     out
 }
 
-/// A Rust HTTP/SSE app uses the `#[rusm_rs::handlers]` model — named actions reached
-/// through a `[serve.routes]` table to a `[components.<name>]` handler. TS HTTP/SSE (a
-/// `wasi:http` `export default`) and WebSocket (per-connection) are a single named
-/// handler component with no routes.
+/// A Rust or Go HTTP/SSE app uses the named-action model — Rust's `#[rusm_rs::handlers]`
+/// / Go's `web.Handlers` — reached through a `[serve.routes]` table to a
+/// `[components.<name>]` handler. TS HTTP/SSE (a `wasi:http` `export default`) and
+/// WebSocket (per-connection) are a single named handler component with no routes.
 fn has_routes(app: &NewApp) -> bool {
-    app.lang == Lang::Rust && matches!(app.protocol, Protocol::Http | Protocol::Sse)
+    matches!(app.lang, Lang::Rust | Lang::Go)
+        && matches!(app.protocol, Protocol::Http | Protocol::Sse)
 }
 
 const TOML_HEADER: &str =
@@ -217,7 +230,7 @@ fn rusm_toml(app: &NewApp) -> String {
         // A single named handler component (TS `export default`, a WebSocket worker, or a generic wasm).
         let artifact = match app.lang {
             Lang::TypeScript => "wasm/api.js",
-            Lang::Rust | Lang::Generic => "wasm/api.wasm",
+            Lang::Rust | Lang::Go | Lang::Generic => "wasm/api.wasm",
         };
         format!(
             "{TOML_HEADER}\
@@ -357,6 +370,104 @@ export default websocket({
     }
 }
 
+/// The Go component module: the rusm-go guest SDK (its `web` subpackage provides the
+/// HTTP/SSE/WebSocket handler surface). TinyGo + wit-bindgen-go are driven by `rusm
+/// build`, so the source carries no bindings boilerplate and no `wit/` dir.
+const GO_MOD: &str = "\
+module api
+
+go 1.24
+
+require github.com/archan937/rusm/packages/rusm-go v0.1.0
+";
+
+fn go_component(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::Http => {
+            "\
+// A RUSM HTTP component in Go: register handler actions and Serve. rusm.toml's
+// [serve.routes] maps `METHOD /path` to `api#<action>`; the host spawns a fresh
+// sandboxed instance per request and dispatches the matched action here — no main,
+// no router, no request/reply plumbing, just normal Go.
+package main
+
+import (
+	rusm \"github.com/archan937/rusm/packages/rusm-go\"
+	\"github.com/archan937/rusm/packages/rusm-go/web\"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	h.Handle(\"home\", func(req web.Request, _ web.Params) web.Response {
+		return web.Text(\"Hello from RUSM \u{1F44B}  (you asked for \" + req.URL + \")\\n\")
+	})
+	h.Serve()
+}
+"
+        }
+        Protocol::Sse => {
+            "\
+// A RUSM SSE component in Go: a streaming handler action writes a text/event-stream
+// body. Each request is its own process, so it may block here for the whole
+// connection — write events as they occur. [serve.routes] maps `GET /` to `api#home`.
+package main
+
+import (
+	\"fmt\"
+
+	rusm \"github.com/archan937/rusm/packages/rusm-go\"
+	\"github.com/archan937/rusm/packages/rusm-go/web\"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	h.HandleSSE(\"home\", func(_ web.Request, _ web.Params, sse web.Sse) {
+		for n := 0; n < 5; n++ {
+			if !sse.Data([]byte(fmt.Sprintf(\"tick %d\", n))) {
+				break // the client disconnected
+			}
+		}
+	})
+	h.Serve()
+}
+"
+        }
+        Protocol::Ws => {
+            "\
+// A RUSM WebSocket component in Go: the host runs one instance **per connection**, so
+// the handler is naturally isolated. Reply with conn.Send(...); keep shared state in a
+// resident [components.<name>] service or kv (not in this per-connection process).
+package main
+
+import (
+	rusm \"github.com/archan937/rusm/packages/rusm-go\"
+	\"github.com/archan937/rusm/packages/rusm-go/web\"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	web.WebSocket{
+		Open: func(c web.Conn) {
+			c.Send([]byte(\"welcome to RUSM\\n\"))
+		},
+		Message: func(c web.Conn, data []byte) {
+			c.Send(data) // echo the frame back to the sender
+		},
+	}.Serve()
+}
+"
+        }
+    }
+}
+
 fn rust_component(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Http => {
@@ -432,11 +543,13 @@ fn readme(app: &NewApp) -> String {
     let lang = match app.lang {
         Lang::TypeScript => "TypeScript",
         Lang::Rust => "Rust",
+        Lang::Go => "Go",
         Lang::Generic => "Generic (pre-built wasm)",
     };
     let source = match app.lang {
         Lang::TypeScript => "components/api/index.ts",
         Lang::Rust => "components/api/src/lib.rs",
+        Lang::Go => "components/api/main.go",
         Lang::Generic => "components/api/api.wasm",
     };
     let probe = match app.protocol {
@@ -501,6 +614,9 @@ mod tests {
         (Lang::Rust, Protocol::Http, ServeProtocol::Http),
         (Lang::Rust, Protocol::Sse, ServeProtocol::Sse),
         (Lang::Rust, Protocol::Ws, ServeProtocol::Ws),
+        (Lang::Go, Protocol::Http, ServeProtocol::Http),
+        (Lang::Go, Protocol::Sse, ServeProtocol::Sse),
+        (Lang::Go, Protocol::Ws, ServeProtocol::Ws),
         (Lang::Generic, Protocol::Http, ServeProtocol::Http),
         (Lang::Generic, Protocol::Ws, ServeProtocol::Ws),
     ];
@@ -532,6 +648,12 @@ mod tests {
                 Lang::Rust => Some((
                     "components/api/src/lib.rs".into(),
                     &["wit_bindgen::generate", "export!(", "impl Guest"],
+                )),
+                // Go's bindings live in the SDK, so the component carries none of the
+                // wit-bindgen-go / component-export boilerplate.
+                Lang::Go => Some((
+                    "components/api/main.go".into(),
+                    &["wit-bindgen", "//go:wasmexport", "process.Exports"],
                 )),
                 Lang::Generic => None,
             };
@@ -566,12 +688,13 @@ mod tests {
             let cfg = NodeConfig::from_toml(&toml).expect("scaffolded rusm.toml must parse");
             assert_eq!(cfg.serve.len(), 1);
             assert_eq!(cfg.serve[0].protocol, want_proto, "{lang:?}/{protocol:?}");
-            let routed = lang == Lang::Rust && matches!(protocol, Protocol::Http | Protocol::Sse);
+            let routed = matches!(lang, Lang::Rust | Lang::Go)
+                && matches!(protocol, Protocol::Http | Protocol::Sse);
             let table = cfg.serve[0].route_table().expect("routes compile");
             assert_eq!(
                 table.is_empty(),
                 !routed,
-                "{lang:?}/{protocol:?}: routes present iff Rust HTTP/SSE"
+                "{lang:?}/{protocol:?}: routes present iff Rust/Go HTTP/SSE"
             );
             if routed {
                 // Routes name the `[components.api]` handler; the listener has no `name`.
@@ -659,6 +782,8 @@ mod tests {
             Lang::Generic
         );
         assert_eq!(p(&["hello", "--lang", "wasm"]).unwrap().lang, Lang::Generic);
+        assert_eq!(p(&["hello", "--lang", "go"]).unwrap().lang, Lang::Go);
+        assert_eq!(p(&["hello", "--lang", "golang"]).unwrap().lang, Lang::Go);
         // Order-independent.
         let mixed = p(&["--rust", "-p", "sse", "hello"]).unwrap();
         assert_eq!(
@@ -679,7 +804,7 @@ mod tests {
         assert!(p(&[]).is_err(), "missing name");
         assert!(p(&["a", "b"]).is_err(), "two names");
         assert!(p(&["hello", "--protocol", "grpc"]).is_err(), "bad protocol");
-        assert!(p(&["hello", "--lang", "go"]).is_err(), "bad language");
+        assert!(p(&["hello", "--lang", "cobol"]).is_err(), "bad language");
         assert!(p(&["hello", "--frobnicate"]).is_err(), "unknown flag");
         assert!(
             p(&["hello", "--protocol"]).is_err(),

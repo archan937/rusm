@@ -120,6 +120,15 @@ async fn fetch_url(url: &str) -> Result<Vec<u8>> {
         .to_vec())
 }
 
+/// Build the resolver for guest `spawn-from` `url:` sources — a one-shot HTTP(S) GET,
+/// injected into the [`WasmRuntime`] so the engine crate needs no HTTP client of its own.
+/// `inline:`/`kv:` sources are resolved in the engine and never reach this.
+fn url_bundle_resolver() -> rusm_wasm::BundleResolver {
+    std::sync::Arc::new(|url: String| {
+        Box::pin(async move { fetch_url(&url).await.map_err(|e| e.to_string()) })
+    })
+}
+
 /// The app's hosted components after [`spawn_components`]: every entry is
 /// registered for spawn-by-name, and the `resident` subset is boot-spawned under a
 /// single supervisor. Hold this for the node's lifetime (the `supervisor` keeps the
@@ -179,7 +188,24 @@ async fn register_component(
     name: &str,
     caps: &Capabilities,
     source: Option<&str>,
+    dynamic: Option<&str>,
 ) -> Result<Registration> {
+    // A dynamic JS runner template (`dynamic = "js"`): a capability profile with no fixed
+    // bundle. A guest reaches it via spawn-from(name, runtime-source); nothing loads here.
+    if let Some(kind) = dynamic {
+        if kind != "js" {
+            return Err(anyhow!(
+                "component `{name}`: dynamic = {kind:?} is not supported (use \"js\")"
+            ));
+        }
+        if source.is_some() {
+            return Err(anyhow!(
+                "component `{name}`: `dynamic` and `source` are mutually exclusive (a template has no fixed bundle)"
+            ));
+        }
+        wasm.register_js_template(name.to_string(), caps.clone());
+        return Ok(Registration::Service);
+    }
     // A configured `source` (url/kv) supplies a JS bundle directly — the
     // dynamic-deploy path, no local artifact needed.
     if let Some(bundle) = remote_bundle(source, wasm).await? {
@@ -235,13 +261,30 @@ pub async fn spawn_components(
     profiles: &HashMap<String, CapabilitySpec>,
 ) -> Result<Hosted> {
     let wasm_dir = dir.join("wasm");
+    // Wire the resolver for guest `spawn-from` `url:` sources (rusm-wasm stays HTTP-free;
+    // the node owns egress). `inline:`/`kv:` sources need no resolver.
+    wasm.set_bundle_resolver(url_bundle_resolver());
     let mut names = Vec::with_capacity(specs.len());
     let mut resident = Vec::new();
     let mut commands = Vec::new();
     for (name, spec) in specs {
         let caps = capabilities_for(&spec.capability, profiles);
         names.push(name.clone());
-        match register_component(&wasm_dir, wasm, name, &caps, spec.source.as_deref()).await? {
+        if spec.dynamic.is_some() && spec.resident {
+            return Err(anyhow!(
+                "component `{name}`: a dynamic template can't be `resident` (it has no bundle to boot-spawn)"
+            ));
+        }
+        match register_component(
+            &wasm_dir,
+            wasm,
+            name,
+            &caps,
+            spec.source.as_deref(),
+            spec.dynamic.as_deref(),
+        )
+        .await?
+        {
             Registration::Service if spec.resident => resident.push(name.clone()),
             Registration::Service => {}
             Registration::Command(handle) => {
@@ -452,6 +495,7 @@ mod tests {
             capability: capability.to_string(),
             resident,
             source: None,
+            dynamic: None,
         }
     }
 

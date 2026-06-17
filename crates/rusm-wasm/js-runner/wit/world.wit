@@ -27,6 +27,12 @@ interface actor {
     /// Capability-gated and non-escalating; `err` if denied or the name is unknown.
     spawn: func(component: string) -> result<pid, string>;
 
+    /// Spawn a dynamic JS instance of a runner template `component`, loading its bundle at
+    /// runtime from `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`).
+    /// The loaded JS runs under the template's declared profile. Capability-gated: `spawn`
+    /// plus the spawner's `storage` (kv) / `network` (url); `err` if denied or unloadable.
+    spawn-from: func(component: string, source: string) -> result<pid, string>;
+
     /// Monitor a process: when `target` dies, this process receives a `__down`
     /// message (Erlang's `monitor`) — the basis for a guest Supervisor.
     monitor: func(target: pid);

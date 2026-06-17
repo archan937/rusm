@@ -37,8 +37,15 @@ class Stream {
 globalThis.Process = {
   self() { return BigInt(__own_pid()); },
   list() { return __list().map(BigInt); },
-  // Spawn a registered component by name (capability-gated); returns its pid.
-  spawn(name) { return BigInt(__spawn(name)); },
+  // Spawn a registered component by name (capability-gated); returns its pid. With a
+  // runtime `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`), spawns
+  // a dynamic JS instance of a runner template, running the loaded JS under the template's
+  // declared profile.
+  spawn(name, source) {
+    return source === undefined
+      ? BigInt(__spawn(name))
+      : BigInt(__spawnFrom(name, source));
+  },
   // Monitor a process: its death arrives as a `{ __down, reason }` message.
   monitor(pid) { __monitor(String(pid)); },
   send(to, msg) {

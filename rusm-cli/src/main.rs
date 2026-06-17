@@ -378,6 +378,9 @@ fn build_components(dir: &Path) -> anyhow::Result<Vec<String>> {
         if crate_dir.join("Cargo.toml").is_file() {
             build_rust_component(&crate_dir, &name, &wasm_dir)?;
             built.push(name);
+        } else if crate_dir.join("go.mod").is_file() {
+            build_go_component(&crate_dir, &name, &wasm_dir)?;
+            built.push(name);
         } else if let Some(ts_entry) = ts_entrypoint(&crate_dir) {
             build_ts_component(&ts_entry, &name, &wasm_dir)?;
             built.push(name);
@@ -411,6 +414,74 @@ fn build_rust_component(crate_dir: &Path, name: &str, wasm_dir: &Path) -> anyhow
     std::fs::copy(&artifact, &dest)
         .with_context(|| format!("copying {} -> {}", artifact.display(), dest.display()))?;
     Ok(())
+}
+
+/// The Go module path of the rusm-go guest SDK — its `wit/` (the `component` world plus
+/// vendored WASI) is what TinyGo embeds. Resolved at build time wherever the module
+/// lives (a `replace` path in dev, the module cache in a published app).
+const RUSM_GO_SDK: &str = "github.com/archan937/rusm/packages/rusm-go";
+
+/// Builds one Go component (a dir with `go.mod`) to `wasm/<name>.wasm` with TinyGo.
+/// TinyGo compiles straight to a `wasm32-wasip2` component, embedding the rusm-go SDK's
+/// `component` world. `-no-debug` strips DWARF, `-panic=trap` makes a Go panic a wasm
+/// trap (→ process Crashed, RUSM's crash model), `-opt=z` optimizes for size.
+fn build_go_component(crate_dir: &Path, name: &str, wasm_dir: &Path) -> anyhow::Result<()> {
+    // Resolve the component's module deps (the rusm-go SDK + its transitive cm) so
+    // `go list` below and TinyGo build on a fresh checkout — the Go analog of the
+    // `bun install` the TS path runs. `tidy` (not just `download`) is needed to populate
+    // go.sum for transitive deps reached through a local `replace`.
+    let status = Command::new("go")
+        .args(["mod", "tidy"])
+        .current_dir(crate_dir)
+        .status()
+        .with_context(|| "running go (is Go installed? https://go.dev)")?;
+    if !status.success() {
+        return Err(anyhow!("`go mod tidy` failed for component `{name}`"));
+    }
+    let wit = go_sdk_wit(crate_dir)?;
+    // TinyGo runs in crate_dir, so its `-o` path must be absolute to land in the app's
+    // wasm/ (canonicalize is safe — build_components already created wasm_dir).
+    let dest = std::fs::canonicalize(wasm_dir)
+        .with_context(|| format!("resolving {}", wasm_dir.display()))?
+        .join(format!("{name}.wasm"));
+    let status = Command::new("tinygo")
+        .args([
+            "build",
+            "-target=wasip2",
+            "-no-debug",
+            "-panic=trap",
+            "-opt=z",
+        ])
+        .arg("-wit-package")
+        .arg(&wit)
+        .args(["-wit-world", "component", "-o"])
+        .arg(&dest)
+        .arg(".")
+        .current_dir(crate_dir)
+        .status()
+        .with_context(|| "running tinygo (is TinyGo installed? https://tinygo.org)")?;
+    if !status.success() {
+        return Err(anyhow!("`tinygo build` failed for component `{name}`"));
+    }
+    Ok(())
+}
+
+/// Locates the rusm-go SDK's `wit/` directory via `go list -m`, so TinyGo's
+/// `-wit-package` points at it regardless of where the module resolves.
+fn go_sdk_wit(crate_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let out = Command::new("go")
+        .args(["list", "-m", "-f", "{{.Dir}}", RUSM_GO_SDK])
+        .current_dir(crate_dir)
+        .output()
+        .with_context(|| "running go (is Go installed? https://go.dev)")?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "could not locate the rusm-go SDK ({RUSM_GO_SDK}) — is it required in go.mod? \
+             try `go mod download` in the component dir"
+        ));
+    }
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(std::path::PathBuf::from(dir).join("wit"))
 }
 
 /// The TS entrypoint of a component dir, if any: `index.ts` or `src/index.ts`.

@@ -23,8 +23,11 @@ export interface Stream {
 export interface ProcessApi {
   self(): bigint;
   list(): bigint[];
-  /** Spawn a registered component by name → its pid (capability-gated). */
-  spawn(name: string): bigint;
+  /** Spawn a registered component by name → its pid (capability-gated). With a runtime
+   *  `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`), spawns a
+   *  dynamic JS instance of a runner template — the loaded JS runs under the template's
+   *  declared profile (you choose the code, the operator the capabilities). */
+  spawn(name: string, source?: string): bigint;
   /** Monitor a process: its death arrives as a `{ __down }` message. */
   monitor(pid: bigint | string): void;
   send(to: bigint | string, msg: string | Uint8Array): void;

@@ -497,6 +497,35 @@ export default function handle(request: Request): Response {
 }
 ```
 
+```go [components/api/main.go]
+// A routed Go HTTP component: each handler is an action named in `[serve.routes]`.
+// No main, no router — routing is declarative config; the bindings live in the SDK.
+package main
+
+import (
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	h.Handle("home", func(_ web.Request, _ web.Params) web.Response {
+		return web.Text("Hello from RUSM 👋\n")
+	})
+	h.Handle("show", func(_ web.Request, p web.Params) web.Response {
+		id := p.Get("id")
+		if id == "" {
+			id = "?"
+		}
+		return web.Text("user " + id + "\n")
+	})
+	h.Serve()
+}
+```
+
 :::
 
 Build and serve:
@@ -514,7 +543,8 @@ To adapt: add more `[serve.routes]` entries and matching `pub fn`s; stream **SSE
 3-arg action `fn(Request, Params, Sse)` (set `protocol = "sse"`); or serve
 **WebSocket** with `protocol = "ws"` and a `rusm_rs::ws::serve({ open, message })`
 handler — one sandboxed process per connection (the TS twin is
-`export default websocket({ open, message })` from `rusm-ts`). See
+`export default websocket({ open, message })` from `rusm-ts`; the Go twin is
+`web.WebSocket{ Open, Message }.Serve()`). See
 [the serving model](./concepts/serving-model.md).
 
 ## Process management from inside a component
@@ -554,6 +584,22 @@ const incoming = await Process.receive();   // await the next message
 Process.kill(somePid);                      // terminate another process
 Process.unregister("worker");
 Process.setLabel("worker#1");               // a human label for the observer
+```
+
+```go [Go]
+import rusm "github.com/archan937/rusm/packages/rusm-go"
+
+me := rusm.Self()                  // self()
+rusm.Register("worker")            // name yourself in the registry
+who, ok := rusm.Whereis("worker")  // look a name up → (Pid, bool)
+all := rusm.List()                 // every live pid (find all)
+info, ok := rusm.Info(me)          // (ProcessInfo, bool): links, label, mailbox depth…
+alive := rusm.IsAlive(somePid)
+rusm.SendBytes(somePid, bytes)     // message-pass (bytes)
+incoming := rusm.ReceiveBytes()    // block for the next message
+rusm.Kill(somePid)                 // terminate another process
+rusm.Unregister("worker")
+rusm.SetLabel("worker#1")          // a human label for the observer
 ```
 
 :::
@@ -617,6 +663,26 @@ const inc = Process.acceptStream();
 let chunk;
 while ((chunk = await inc.read()) !== null) {         // read() is async; null == EOF
   // …handle chunk (Uint8Array)…
+}
+```
+
+```go [Go]
+import rusm "github.com/archan937/rusm/packages/rusm-go"
+
+// Producer: open a stream to `peer`, write chunks, then close.
+if out, ok := rusm.OpenStream(peer); ok { // ok == false if `peer` is gone
+	out.Write([]byte("hello!"))           // false once the reader is gone
+	out.Close()                           // signals end-of-stream
+}
+
+// Consumer: accept the next incoming stream, read to EOF.
+inc := rusm.AcceptStream() // blocks until a stream arrives
+for {
+	chunk, ok := inc.Read() // ok == false at end-of-stream
+	if !ok {
+		break
+	}
+	_ = chunk // …handle chunk ([]byte)…
 }
 ```
 

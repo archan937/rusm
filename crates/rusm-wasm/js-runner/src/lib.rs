@@ -272,6 +272,15 @@ fn js_spawn(ctx: Ctx<'_>, name: String) -> rquickjs::Result<String> {
         Err(e) => Err(Exception::throw_message(&ctx, &e)),
     }
 }
+// Spawn a dynamic JS instance of a runner template `name`, loading its bundle at runtime
+// from `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`). The JS runs
+// under the template's declared profile; a denial/failure throws the host's message.
+fn js_spawn_from(ctx: Ctx<'_>, name: String, source: String) -> rquickjs::Result<String> {
+    match actor::spawn_from(&name, &source) {
+        Ok(pid) => Ok(pid.to_string()),
+        Err(e) => Err(Exception::throw_message(&ctx, &e)),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // crypto.subtle — native (RustCrypto) digest / HMAC / AES-GCM, backing the
@@ -552,6 +561,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
         .collect::<Vec<_>>());
     def!("__kill_tag", |t: String| actor::kill_tag(&t) as f64);
     def!("__spawn", js_spawn);
+    def!("__spawnFrom", js_spawn_from);
     def!("__monitor", |p: String| actor::monitor(
         p.parse().unwrap_or(0)
     ));
