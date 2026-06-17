@@ -45,14 +45,15 @@ that teaches it.
 - **Durable key-value storage** — an embedded, transactional store (`rusm-kv`/redb,
   no daemon) behind the default-deny `allow-storage` capability; the `kv` API is the same
   in Rust and TS. → [permissions & sandboxing](./concepts/permissions-and-sandboxing)
-- **Guests in Rust *or* TypeScript** — the `#[service]` macro, the concealed typed
+- **Guests in Rust, TypeScript, *or* Go** — the `#[service]` macro, the concealed typed
   client, the **shared rquickjs runner** (tiny TS components vs jco baking an engine
   into every one) + bytecode precompile, plus native `fetch` and **`crypto.subtle`**
-  (SHA/HMAC/AES-GCM) for TS. → [guests: Rust & TypeScript](./concepts/guests-rust-and-typescript)
+  (SHA/HMAC/AES-GCM) for TS; Go compiles via TinyGo to `wasm32-wasip2`, same actor world
+  and wire. → [guests: Rust, TypeScript & Go](./concepts/guests)
 
 ## Serving & streaming
 
-- **HTTP / WebSocket / SSE serving** — from a Rust *or* TypeScript component, always
+- **HTTP / WebSocket / SSE serving** — from a Rust, TypeScript, or Go component, always
   **process-per-unit-of-work**: a fresh sandboxed instance per HTTP/SSE request, one
   sandboxed process per WS connection. No head-of-line blocking, crash containment, and
   full isolation by construction; cheap on the pooled spawn path (~440k spawns/sec). →

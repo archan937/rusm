@@ -104,7 +104,7 @@ const sections = [
         items: [
           { text: 'Components & the actor world', link: '/concepts/components-and-the-actor-world' },
           { text: 'Permissions & sandboxing', link: '/concepts/permissions-and-sandboxing' },
-          { text: 'Guests: Rust & TypeScript', link: '/concepts/guests-rust-and-typescript' },
+          { text: 'Guests: Rust, TypeScript & Go', link: '/concepts/guests' },
         ],
       },
       {

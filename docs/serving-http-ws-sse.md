@@ -366,9 +366,9 @@ export default websocket({
 writer pid as message 1, then echoes frames — is also available; `websocket({…})` is
 the ergonomic wrapper over it.)
 
-Both guests stay sandboxed (a serving component gets only the capabilities its profile
+Every guest stays sandboxed (a serving component gets only the capabilities its profile
 grants) and supervised (a crash restarts the handler, never the listener). See the
-[guests guide](./concepts/guests-rust-and-typescript).
+[guests guide](./concepts/guests).
 
 ## How the host gateway works (platform code)
 

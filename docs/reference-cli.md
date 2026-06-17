@@ -25,12 +25,12 @@ rusm build
 rusm serve              # → http://127.0.0.1:8080
 ```
 
-Pick the **language** and **protocol** — a 2×3 matrix, all generating *pure handler
+Pick the **language** and **protocol** — a 3×3 matrix, all generating *pure handler
 code* (no `wit-bindgen`/`export!`, no `Process` frame plumbing):
 
 | Flag | Default | Choices |
 | --- | --- | --- |
-| `--rust` / `--lang <ts\|rust\|generic>` | TypeScript | `ts`, `rust`, `generic` |
+| `--rust` / `--lang <ts\|rust\|go\|generic>` | TypeScript | `ts`, `rust`, `go`, `generic` |
 | `--protocol <p>` / `-p <p>` | `http` | `http`, `sse`, `ws` |
 
 ```sh
@@ -38,6 +38,8 @@ rusm new chat --protocol ws            # a TypeScript WebSocket echo
 rusm new feed --protocol sse           # a TypeScript SSE stream
 rusm new api  --rust                   # a Rust HTTP handler
 rusm new api  --rust --protocol ws     # a Rust WebSocket handler
+rusm new api  --lang go                # a Go HTTP handler
+rusm new api  --lang go --protocol ws  # a Go WebSocket handler
 ```
 
 What each cell scaffolds:
@@ -53,6 +55,11 @@ What each cell scaffolds:
   `export default function handle(request): Response` (a `wasi:http` per-request
   component); it does its own dispatch, so no `[serve.routes]`.
 - **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message })` helper.
+- **Go HTTP/SSE** — a `web.NewHandlers()` component (each `h.Handle("name", …)` /
+  `h.HandleSSE("name", …)` is a routable action; normal Go, no bindings boilerplate)
+  **plus a `[serve.routes]` subtable**, exactly like Rust — compiled via TinyGo.
+- **Go WS** — a `web.WebSocket{ Open, Message }.Serve()` handler (one sandboxed process
+  per connection); no `[serve.routes]`.
 - **Generic (`--lang generic`)** — no source is generated; you drop a pre-built
   **wasip2** component into `components/api/` (a scaffolded `README.md` states the
   expected interface: `wasi:http/incoming-handler` for HTTP/SSE, a `rusm:runtime`
@@ -65,8 +72,9 @@ jco, no cargo-component:
 
 - a **Rust** component (`Cargo.toml`) → `cargo build --target wasm32-wasip2` → `wasm/<name>.wasm`;
 - a **TypeScript** component (`index.ts`) → `bun build --minify` → `wasm/<name>.js`,
-  then **precompiled to QuickJS bytecode** → `wasm/<name>.qjsbc` (the runner skips
-  parsing). See [guests: Rust & TypeScript](./concepts/guests-rust-and-typescript).
+  then **precompiled to QuickJS bytecode** → `wasm/<name>.qjsbc` (the runner skips parsing);
+- a **Go** component (`go.mod`) → `tinygo build -target=wasip2 …` → `wasm/<name>.wasm`.
+  See [guests: Rust, TypeScript & Go](./concepts/guests).
 - a **generic** component (a pre-built `.wasm`, no `Cargo.toml`/`index.ts`) → copied
   into `wasm/<name>.wasm` as-is. Prefers `<name>.wasm`; a lone `.wasm` also works, and
   several `.wasm` files are an error (name the one to ship `<name>.wasm`).

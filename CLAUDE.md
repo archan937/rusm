@@ -24,8 +24,9 @@ high-throughput **HTTP / WS / SSE** server, all in `rusm-wasm` (hyper +
 sandboxed **component process per connection** — inbound frame → mailbox message,
 replies via a Wasm-free writer process that owns the socket sink; ~192k echo
 round-trips/s, sandbox cost inside noise), and **SSE** (a `wasi:http` streaming body).
-**Both guest languages serve all three**:
-RS compiles to `wasi:http`/the actor world; **TS** runs on embedded rquickjs runners —
+**All three guest languages serve all three**:
+RS and **Go** compile to `wasi:http`/the actor world (Go via TinyGo → `wasm32-wasip2`);
+**TS** runs on embedded rquickjs runners —
 `http_server_js` + the raw-`wasi:http` **js-http-runner** (runs `export default { fetch }`,
 pull-based streaming for SSE; **wizer-pre-initialized** — the QuickJS engine + bridge are
 booted once at build time and snapshotted into the image, so each per-request instance
@@ -112,7 +113,7 @@ component calls `self`/`send`/`receive`/`receive-timeout` (Erlang's `receive …
 after`)/`list`/`info`/`kill`/`register`/`whereis`/`set-label`/`register-tag`/`kill-tag`
 (Erlang `pg` process groups — self-tag + capability-gated group kill)/`spawn`/`monitor`/
 `supervise`/`stream-*`/`kv-*`/`log` — the Erlang `Process` API + durable storage +
-platform logging, callable from Rust or TS guests — backed by thin calls into `rusm-otp`
+platform logging, callable from Rust, TS, or Go guests — backed by thin calls into `rusm-otp`
 (and `rusm-kv` for `kv-*`). **Logging is a platform primitive**: a guest's `console.*`
 (TS) / `log` crate (Rust) routes to the host `log` op, which stamps the time,
 `component#pid`, and severity colour via `rusm-logfmt` and writes to the node's log
@@ -182,8 +183,10 @@ importable **`rusm-ts` npm package** for `Process`/`spawn`/types; custom capabil
 profiles) and **rusm-rs** (the Rust twin — `Pid`/`send`/`receive` (serde JSON) /
 `spawn` / registry / `Stream` over the wit-bindgen library/binary split, plus a
 `#[rusm_rs::service]` macro → dispatch loop + typed `Client` with
-call/cast/streaming/callbacks, same JSON wire — Rust and TS guests interoperate).
-Both guests get an in-guest **`Supervisor`** (one-for-one / one-for-all /
+call/cast/streaming/callbacks, same JSON wire) and **rusm-go** (the Go peer — TinyGo →
+`wasm32-wasip2`, an idiomatic `Pid`/`Send`/`Receive`/`Spawn`/`Service`+typed client/`web`
+serving API over the same JSON wire; `rusm new --lang go`, `rusm build` drives TinyGo).
+Rust, TS, and Go guests interoperate. All three guests get an in-guest **`Supervisor`** (one-for-one / one-for-all /
 rest-for-one over a `monitor` ABI; a dead child arrives as a `__down` message — no
 polling), and **`rusm dev`** watches `./components` and rebuilds + reloads on edit.
 Spawn-from-guest is a capability-gated actor-ABI op: the `spawn` capability gates

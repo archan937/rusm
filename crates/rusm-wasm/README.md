@@ -19,6 +19,7 @@ lightweight process, so a guest crash stays contained and the OTP core stays Was
   with a capability-gated streaming outbound **`fetch`**.
 - **Embedded guest runtimes** — the wizer-pre-initialized rquickjs **js-runner** (TS/JS
   guests as first-class processes) and **js-http-runner** (TS `fetch` handlers), shipped in-crate.
+  Rust and Go (TinyGo) guests compile directly to `wasm32-wasip2` components — same actor world.
 - **An optimized spawn path** — pooling allocator + copy-on-write + per-module `InstancePre`
   + precomputed export index — sustaining ~440k component spawns/sec.
 

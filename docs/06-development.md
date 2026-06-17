@@ -16,6 +16,11 @@ Windows** — the connection benchmarks fall back to a 256-fd ceiling there, sin
 the `rlimit::Resource` soft-limit lookup is unix-only. Windows is not yet a
 verified runtime target.
 
+**Guest build toolchains.** Rust guests need the `wasm32-wasip2` target (`rustup target
+add wasm32-wasip2`); TypeScript guests need **Bun**; **Go** guests need Go + **TinyGo**
+0.41+ plus `wit-bindgen-go`, **binaryen** (`wasm-opt`), and `wasm-tools`. `mise install`
+pins the full Go toolchain reproducibly — see `mise.toml`.
+
 ## Commands
 
 ```sh

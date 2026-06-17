@@ -38,8 +38,8 @@ rusm serve                   # → http://127.0.0.1:8080
 curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 ```
 
-`rusm new --rust` scaffolds a Rust component; `--protocol ws|sse` a WebSocket or SSE
-handler.
+`rusm new --rust` (or `--lang go`) scaffolds a Rust or Go component; `--protocol ws|sse`
+a WebSocket or SSE handler.
 
 The scaffolded `rusm.toml` is the app manifest — see the
 [configuration reference](./reference-configuration.md) for every table and field
@@ -401,7 +401,7 @@ pub mod calc {
 Same JSON wire as rusm-ts, so a Rust client and a TS service interoperate. See the
 `rusm-rs` crate README and the `rs-service` fixture.
 
-**Logging — zero setup, both languages.** A guest just uses the native idiom; the
+**Logging — zero setup, all three languages.** A guest just uses the native idiom; the
 platform does the rest. The host stamps each line with the time, the calling
 `component#pid`, and a severity colour, and gates it by the node `[log] level` — so a
 guest never wires a name, pid, or logger object:
@@ -421,7 +421,7 @@ methods are also typed by the standard `DOM` lib, and the `log` crate's sink is 
 for you by `#[rusm_rs::main]` / `#[handlers]`. Both feed the same stream as the runtime's
 own lifecycle lines; see the [`[log]` reference](./reference-configuration).
 
-## 6. Serve a component over HTTP (TypeScript or Rust)
+## 6. Serve a component over HTTP (Rust, TypeScript, or Go)
 
 Any component can be a high-throughput **HTTP / WS / SSE** server — declare a
 `[[serve]]` entry and run `rusm serve`. Serving is always **ephemeral**: HTTP/SSE run

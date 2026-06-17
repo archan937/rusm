@@ -31,9 +31,9 @@ application writes only two calls — self-tag on start, gated `kill_tag` to can
 the platform owns the group registry, the reaping, and the gate. No cancel topics, no
 polling, no pid bookkeeping in app code.
 
-Same surface from both guests: `register_tag`/`kill_tag`/`whereis_tag` in `rusm-rs`,
-`Process.registerTag`/`killTag`/`whereisTag` in `rusm-ts` — backed, like everything here,
-by the Wasm-free `rusm-otp` core.
+Same surface from all three guests: `register_tag`/`kill_tag`/`whereis_tag` in `rusm-rs`,
+`Process.registerTag`/`killTag`/`whereisTag` in `rusm-ts`, `RegisterTag`/`KillTag`/`WhereisTag`
+in `rusm-go` — backed, like everything here, by the Wasm-free `rusm-otp` core.
 
 ## Timers
 

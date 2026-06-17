@@ -36,9 +36,11 @@ curl http://127.0.0.1:8080/
 
 An app is described by **`rusm.toml`**: `[[serve]]` listeners (with declarative
 `[serve.routes]`), `[components.<name>]` services (resident or per-call), `[capabilities.*]`
-profiles (default-deny), and an embedded `store`. Components are written in **TypeScript**
-(via the [`rusm-ts`](https://crates.io/crates/rusm-rs) npm package) or **Rust** (via the
-[`rusm-rs`](https://crates.io/crates/rusm-rs) crate) — the two share one wire and interoperate.
+profiles (default-deny), and an embedded `store`. Components are written in **Rust**
+(via the [`rusm-rs`](https://crates.io/crates/rusm-rs) crate), **TypeScript** (via the
+[`rusm-ts`](https://www.npmjs.com/package/rusm-ts) npm package), or **Go** (via the
+[`rusm-go`](https://github.com/archan937/rusm/tree/main/packages/rusm-go) SDK, compiled
+with TinyGo) — all three share one wire and interoperate.
 
 Part of [RUSM](https://github.com/archan937/rusm). See the
 [repo README](https://github.com/archan937/rusm#readme), the

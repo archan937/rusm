@@ -17,6 +17,8 @@ Wasmtime does the isolation.
 
 - **Rust** 1.94+ — [rustup](https://rustup.rs).
 - **Bun** 1.3+ — [bun.sh](https://bun.sh) (builds TypeScript components; runs the dashboard).
+- **Go + TinyGo** 0.41+ — *optional*, only to build **Go** components; `mise install` pins
+  the full toolchain (TinyGo, wit-bindgen-go, binaryen, wasm-tools — see `mise.toml`).
 
 ## Quick start
 
@@ -111,11 +113,11 @@ beat the runtime that inspired this.
   component model + the `rusm:runtime` WIT actor world — the Erlang `Process` API in
   any language), and **wasip3** (`@0.3.0` async WASI). Default-deny capabilities
   (fs / net / env / memory / spawn) and epoch preemption.
-- **Guests in TypeScript or Rust** — a *service* is just exported functions, called
+- **Guests in Rust, TypeScript, or Go** — a *service* is just exported functions, called
   through a concealed typed client (`spawn<Svc>("svc")` → `await svc.method(…)`, with
   streaming + callbacks), an in-guest `Supervisor`, and `rusm dev` watch + reload. The
-  [`rusm-ts`](packages/rusm-ts) npm package and [`rusm-rs`](crates/rusm-rs) crate share
-  one wire and interoperate.
+  [`rusm-rs`](crates/rusm-rs) crate, [`rusm-ts`](packages/rusm-ts) npm package, and
+  [`rusm-go`](packages/rusm-go) SDK share one wire and interoperate.
 - **An app model** — `rusm.toml [components.<name>]`, source under `components/`, built to
   `./wasm/`, spawned under their capabilities; env the Rust way (process env, then
   `.env`).
@@ -224,7 +226,8 @@ by construction** — Wasm lives only in the `rusm-wasm` backend.
 | `rusm-rs-macros` | proc-macro | The `#[rusm_rs::service]` macro behind `rusm-rs`. |
 
 Not crates: the dashboard at `bench/dashboard` (Bun/React); docs under `docs/`. The
-**rusm-ts** guest (TS/Bun) ships as the embedded js-runner in `rusm-wasm/js-runner`.
+**rusm-ts** guest (TS/Bun) ships as the embedded js-runner in `rusm-wasm/js-runner`; the
+**rusm-go** guest SDK (Go, compiled via TinyGo) lives at `packages/rusm-go`.
 
 ## Examples
 

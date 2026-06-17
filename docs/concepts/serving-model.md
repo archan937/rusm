@@ -1,8 +1,8 @@
 # Concept — the serving model (process-per-unit-of-work)
 
 A RUSM component can be a high-throughput **HTTP / WebSocket / SSE** server. The host
-owns the socket and the protocol; the guest just produces responses — in Rust or
-[TypeScript](./guests-rust-and-typescript.md). `rusm-otp` stays Wasm-free; all the
+owns the socket and the protocol; the guest just produces responses — in Rust,
+[TypeScript](./guests.md), or Go. `rusm-otp` stays Wasm-free; all the
 serving machinery (hyper, tungstenite, `wasi:http`) lives only in `rusm-wasm`.
 
 ## One shape, by design
