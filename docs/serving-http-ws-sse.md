@@ -80,7 +80,18 @@ service or `kv` is the durable back. Clean separation, no compromise on isolatio
 ## Declarative routing — `[serve.routes]`
 
 Routing lives in a per-listener TOML **`[serve.routes]`** subtable — never in handler
-code. Each `[[serve]]` HTTP/SSE listener has its own `[serve.routes]`, so multiple
+code.
+
+**It applies to `http` and `sse` listeners only.** Both match each incoming request by
+**method + path** and dispatch to a `component#action` — **SSE is routed *exactly* like
+HTTP**; it differs only in the handler (a 3-arg streaming action — see the `Sse` API
+below), not in how it's routed. **WebSocket does not path-route.** A `ws` listener binds **one**
+component and spawns a fresh process of it **per connection** (each frame → that process's
+mailbox), so there is no path → action table; to serve different WS endpoints, bind a
+separate `[[serve]]` listener (port/path) per endpoint. A `[serve.routes]` table on a `ws`
+listener is ignored.
+
+Each `[[serve]]` HTTP/SSE listener has its own `[serve.routes]`, so multiple
 listeners (e.g. a public API on `:8080` and an admin port on `:9090`) route
 independently. A key is `"METHOD /path/pattern"`; a value is `"component#action"`:
 
