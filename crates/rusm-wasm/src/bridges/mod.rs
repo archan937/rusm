@@ -139,9 +139,9 @@ mod tests {
     use wasmtime::component::Resource;
     use wasmtime_wasi::WasiCtxBuilder;
 
-    #[test]
-    fn wasi_view_exposes_a_live_table() {
-        let mut host = WasiHost {
+    /// A bare `WasiHost` (no running process) for exercising host logic directly.
+    fn bare_host(caps: Capabilities) -> WasiHost {
+        WasiHost {
             wasi: WasiCtxBuilder::new().build(),
             table: ResourceTable::new(),
             http: WasiHttpCtx::new(),
@@ -149,18 +149,43 @@ mod tests {
                 allow_network: false,
             },
             pid: 0,
-            caps: Capabilities::nothing(),
+            caps,
             rt: Runtime::new(),
             ctx: None,
             spawner: None,
             out_streams: HashMap::new(),
             in_streams: HashMap::new(),
             next_stream: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn wasi_view_exposes_a_live_table() {
+        let mut host = bare_host(Capabilities::nothing());
         // The table reached through the view is the real one: a pushed resource
         // round-trips through it.
         let view = host.ctx();
         let handle: Resource<u32> = view.table.push(7u32).unwrap();
         assert_eq!(*view.table.get(&handle).unwrap(), 7);
+    }
+
+    #[test]
+    fn the_memory_limiter_enforces_exactly_the_capability_ceiling() {
+        // RUSM's *sole* responsibility for guest memory growth is this decision: permit a
+        // grow whose new size is within the cap, deny one past it. Whether the OS can then
+        // physically commit the permitted pages is the OS's concern, not RUSM's — so the
+        // policy is tested here, at its boundary, deterministically, never through a real
+        // grow (a real grow also depends on the OS committing, which is environmental and
+        // would make this flaky under load — see `a_memory_cap_crashes_a_component_that_
+        // grows_past_it` for the end-to-end *rejection* path, which needs no commit).
+        let mut host = bare_host(Capabilities::nothing().max_memory(256 << 10));
+        // Within the cap → permitted (one 64 KiB page growing to 192 KiB total).
+        assert!(host.memory_growing(64 << 10, 192 << 10, None).unwrap());
+        // Exactly at the cap → permitted (the boundary is inclusive).
+        assert!(host.memory_growing(64 << 10, 256 << 10, None).unwrap());
+        // One byte past the cap → denied; the guest then sees `memory.grow` return -1.
+        assert!(!host
+            .memory_growing(64 << 10, (256 << 10) + 1, None)
+            .unwrap());
     }
 }

@@ -204,7 +204,10 @@ impl WasmRuntime {
     /// today, so it's deliberately not offered (add a variant if it ever is).
     pub fn with_store(rt: Runtime, path: impl AsRef<std::path::Path>) -> Result<Self> {
         let store = Arc::new(rusm_kv::Store::open(path)?);
-        let engine = Engine::new(&Self::pooled_config(DEFAULT_MAX_INSTANCES, DEFAULT_MAX_MEMORY))?;
+        let engine = Engine::new(&Self::pooled_config(
+            DEFAULT_MAX_INSTANCES,
+            DEFAULT_MAX_MEMORY,
+        ))?;
         Self::assemble(rt, engine, None, DEFAULT_MAX_INSTANCES, Some(store))
     }
 
