@@ -559,10 +559,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dispatches_requests_to_a_go_handler_component() {
         // The same per-request serving path, but the handler is a Go component built on
-        // the rusm-go `web` package (web.Handlers / Handle / HandleSSE). Proves a Go
-        // handler speaks the host's fetch/reply + SSE-stream wire end-to-end over real
-        // HTTP — buffered responses, a captured path param, a request body, and a
-        // chunked text/event-stream.
+        // the rusm-go `web` package (web.Handlers / Handle). Proves a Go handler speaks
+        // the host's fetch/reply wire end-to-end over real HTTP — buffered responses, a
+        // captured path param, and a request body. (SSE is a per-connection handler now;
+        // see the Go SSE test in `bridges::sse`.)
         const GO_HANDLERS: &[u8] = include_bytes!("../../tests/fixtures/go_handlers.wasm");
         let wr = WasmRuntime::new(Runtime::new()).unwrap();
         let prepared = wr
@@ -573,7 +573,6 @@ mod tests {
         let table = RouteTable::from_map(&HashMap::from([
             ("GET /hello/:name".to_string(), "demo#hello".to_string()),
             ("POST /echo".to_string(), "demo#echo".to_string()),
-            ("GET /ticks".to_string(), "demo#ticks".to_string()),
         ]))
         .unwrap();
         let caps = HashMap::from([(
@@ -592,21 +591,6 @@ mod tests {
             echo.starts_with("HTTP/1.1 200") && echo.trim_end().ends_with("ping"),
             "Go handler echoed the request body: {echo}"
         );
-        let ticks = request(addr, "GET", "/ticks", "").await;
-        let lower = ticks.to_lowercase();
-        assert!(
-            ticks.starts_with("HTTP/1.1 200")
-                && lower.contains("text/event-stream")
-                && lower.contains("transfer-encoding: chunked"),
-            "Go handler streamed a chunked SSE body: {ticks}"
-        );
-        for n in 0..3 {
-            assert!(
-                ticks.contains(&format!("data: tick {n}")),
-                "event {n}: {ticks}"
-            );
-        }
-
         assert!(
             request(addr, "GET", "/nope", "")
                 .await

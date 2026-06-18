@@ -397,4 +397,56 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_sse_handler_pushes_events_and_closes_on_disconnect() {
+        // A Go (TinyGo) full-lifecycle SSE handler (go-sse-feed): open subscribes to the
+        // "feed" tag and reports "open", message emits each pushed event, close reports
+        // "close". Proves `web.Sse{Open,Message,Close}` does push-via-tags + close on
+        // disconnect, resembling the Rust and TS handlers.
+        const GO_SSE_FEED: &[u8] = include_bytes!("../../tests/fixtures/go_sse_feed.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_SSE_FEED).unwrap(), "run")
+            .unwrap();
+        let server = wr.sse_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        for pid in rt.whereis_tag("feed") {
+            rt.send(pid, b"hello".to_vec());
+        }
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 1024];
+        loop {
+            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+                .await
+                .expect("the pushed event arrives in time")
+                .expect("socket read ok");
+            assert!(n > 0, "stream produced data");
+            seen.extend_from_slice(&buf[..n]);
+            if String::from_utf8_lossy(&seen).contains("data: hello") {
+                break;
+            }
+        }
+
+        drop(conn);
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on disconnect"
+        );
+
+        handle.abort();
+    }
 }

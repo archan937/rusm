@@ -1,6 +1,6 @@
-// Package web is the HTTP / Server-Sent-Events serving surface for RUSM Go components.
-// Write handler functions that take a Request + Params and return a Response (or stream
-// SSE), register them by action name, and Serve. The host runs the unified per-request
+// Package web is the HTTP / WebSocket / Server-Sent-Events serving surface for RUSM Go
+// components. For HTTP, write handler functions that take a Request + Params and return a
+// Response, register them by action name, and Serve. The host runs the unified per-request
 // model: it resolves the rusm.toml [serve.routes] table, spawns this component fresh per
 // request, dispatches the matched action here, and turns the reply into the HTTP
 // response — so a handler is just normal Go, a request in and a response out:
@@ -10,18 +10,16 @@
 //		h.Handle("hello", func(r web.Request, p web.Params) web.Response {
 //			return web.Text("hi " + p.Get("name"))
 //		})
-//		h.HandleSSE("ticks", func(r web.Request, p web.Params, sse web.Sse) {
-//			for n := 0; n < 3; n++ { sse.Data([]byte(fmt.Sprintf("tick %d", n))) }
-//		})
 //		h.Serve()
 //	}
+//
+// WebSocket ([WebSocket]) and Server-Sent Events ([Sse]) are per-connection handlers
+// instead — one process per connection, with Open/Message/Close lifecycles.
 package web
 
 import (
 	"encoding/json"
 	"strings"
-
-	rusm "github.com/archan937/rusm/packages/rusm-go"
 )
 
 // Request is an incoming HTTP request. Body is decoded from the wire's base64 by
@@ -98,45 +96,4 @@ func (p Params) Get(name string) string {
 		}
 	}
 	return ""
-}
-
-// Sse is a live Server-Sent Events stream handed to a streaming handler. Each request
-// runs in its own process, so a handler may block here for the whole connection — write
-// events as they occur, then return (Serve closes the stream afterwards).
-type Sse struct {
-	stream rusm.Stream
-	open   bool
-}
-
-// Write sends a raw SSE frame (e.g. []byte("data: hi\n\n")); false once the client is gone.
-func (s Sse) Write(frame []byte) bool {
-	return s.open && s.stream.Write(frame)
-}
-
-// Data sends a `data: <payload>\n\n` event.
-func (s Sse) Data(payload []byte) bool { return s.Write(DataFrame(payload)) }
-
-// Run live-tails until the client disconnects: each inbound message goes to mapFn
-// (return emit=true with a frame to send it, emit=false to skip); an idle heartbeatMs
-// writes a heartbeat comment. Returns on disconnect — let the handler then end so the
-// process exits and a monitoring broker prunes this subscriber.
-func (s Sse) Run(heartbeatMs uint64, mapFn func(msg []byte) (frame []byte, emit bool)) {
-	for {
-		msg, ok := rusm.ReceiveBytesTimeout(heartbeatMs)
-		if ok {
-			if frame, emit := mapFn(msg); emit && !s.Write(frame) {
-				return
-			}
-		} else if !s.Write([]byte(": ping\n\n")) {
-			return
-		}
-	}
-}
-
-// DataFrame builds a `data: <payload>\n\n` SSE frame.
-func DataFrame(payload []byte) []byte {
-	frame := make([]byte, 0, len(payload)+len("data: \n\n"))
-	frame = append(frame, "data: "...)
-	frame = append(frame, payload...)
-	return append(frame, '\n', '\n')
 }
