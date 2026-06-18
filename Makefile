@@ -106,19 +106,40 @@ docs-deploy: docs-build ## Build the docs and force-push them to the gh-pages br
 		status=$$?; rm -rf $(DIST)/.git; \
 		[ $$status -eq 0 ] && echo "==> done: https://archan937.github.io/rusm/" || exit $$status
 
+.PHONY: sync-templates
+sync-templates: ## Regenerate rusm-cli/templates/ — the vendored copy of the example apps the scaffolder ships
+	@for lang in typescript rust go; do \
+		rsync -a --delete \
+			--exclude target --exclude node_modules --exclude wasm \
+			--exclude Cargo.lock --exclude bun.lock --exclude go.sum \
+			--exclude data.redb --exclude package.json \
+			examples/$$lang/ rusm-cli/templates/$$lang/; \
+	done
+	@# cargo drops any directory holding a literal Cargo.toml from the package tarball (it
+	@# reads it as a nested package), so the Rust manifests are vendored as Cargo.toml.tmpl;
+	@# template::files() strips the suffix back to Cargo.toml when scaffolding an app.
+	@find rusm-cli/templates -name Cargo.toml -exec sh -c 'mv "$$1" "$$1.tmpl"' _ {} \;
+	@echo "==> synced — \`cargo test -p rusm-cli template::\` guards against drift"
+
+# Already on crates.io? (200 → version exists.) The per-crate skip that makes publishing
+# resumable: a failed run re-runs cleanly and an already-uploaded version is never re-sent.
+crate_published = curl -fsS "https://crates.io/api/v1/crates/$$(basename $1)/$(VERSION)" >/dev/null 2>&1
+
 .PHONY: publish-dry
-publish-dry: ## Release pre-flight: dry-run every crate publish (no side effects)
+publish-dry: ## Release pre-flight: dry-run each not-yet-published crate (no side effects)
 	@for d in $(PUBLISH_ORDER); do \
+		if $(call crate_published,$$d); then echo "↷ $$(basename $$d)@$(VERSION) already published — skip"; continue; fi; \
 		echo "==> dry-run $$d"; \
 		( cd $$d && cargo publish --dry-run ) || { echo "✗ dry-run failed: $$d"; exit 1; }; \
 	done
-	@echo "==> all crates package cleanly"
+	@echo "==> packages cleanly"
 
 .PHONY: publish-crates
-publish-crates: ## Publish all crates to crates.io in dependency order
+publish-crates: ## Publish crates to crates.io in dependency order (skips versions already uploaded)
 	@for d in $(PUBLISH_ORDER); do \
+		if $(call crate_published,$$d); then echo "↷ $$(basename $$d)@$(VERSION) already on crates.io — skip"; continue; fi; \
 		echo "==> publish $$d"; \
-		( cd $$d && cargo publish ) || { echo "✗ publish failed: $$d — fix, then re-run from here"; exit 1; }; \
+		( cd $$d && cargo publish ) || { echo "✗ publish failed: $$d — fix, then re-run (published crates are skipped)"; exit 1; }; \
 	done
 
 .PHONY: publish-npm
@@ -127,19 +148,21 @@ publish-npm: ## Publish the rusm-ts package to npm
 
 .PHONY: publish-tags
 publish-tags: ## Tag the release (v$(VERSION)) + the rusm-go submodule, push the tags
-	git tag v$(VERSION)
-	git tag packages/rusm-go/v$(VERSION)
+	@git rev-parse "v$(VERSION)" >/dev/null 2>&1 || git tag v$(VERSION)
+	@git rev-parse "packages/rusm-go/v$(VERSION)" >/dev/null 2>&1 || git tag packages/rusm-go/v$(VERSION)
 	git push origin v$(VERSION) packages/rusm-go/v$(VERSION)
 
 .PHONY: publish
-publish: ## Full release v$(VERSION): crates.io + npm + tags (run `make publish-dry` first)
+publish: ## Full release v$(VERSION): dry-run, then crates.io + npm + tags (resumable — published crates are skipped)
 	@test -z "$$(git status --porcelain)" || { echo "✗ working tree not clean — commit first"; exit 1; }
-	@git diff --quiet origin/main..HEAD 2>/dev/null || { echo "→ note: push commits to origin first so the tags point at pushed history"; }
-	@echo "Publishing RUSM v$(VERSION) to crates.io + npm + git tags — Ctrl-C within 5s to abort."
+	@git diff --quiet origin/main..HEAD 2>/dev/null || echo "→ note: push commits to origin first so the tags point at pushed history"
+	@echo "==> verifying packaging (dry-run of not-yet-published crates)…"
+	@$(MAKE) --no-print-directory publish-dry
+	@echo "==> dry-run clean. Uploading to crates.io + npm + git tags — Ctrl-C within 5s to abort."
 	@sleep 5
-	$(MAKE) publish-crates
-	$(MAKE) publish-npm
-	$(MAKE) publish-tags
+	@$(MAKE) --no-print-directory publish-crates
+	@$(MAKE) --no-print-directory publish-npm
+	@$(MAKE) --no-print-directory publish-tags
 	@echo "==> v$(VERSION) published. Now create the GitHub release from the CHANGELOG."
 
 .PHONY: clean

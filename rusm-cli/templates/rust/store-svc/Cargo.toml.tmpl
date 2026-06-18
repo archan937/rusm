@@ -1,0 +1,18 @@
+# The shared `store` service contract — a #[rusm_rs::service] module wrapping the todo
+# data layer. Both the `store` component (which `serve()`s it) and the `reporter` (which
+# drives it through the generated typed `Client`) depend on this one crate, so client and
+# service can never drift. The Rust counterpart of the TS example's components/store (its
+# exported functions + the derived `Store` type).
+[package]
+name = "store-svc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "store_svc"
+
+[dependencies]
+rusm-rs = { path = "../../../crates/rusm-rs" }
+todos = { path = "../todos" }
+log = "0.4"

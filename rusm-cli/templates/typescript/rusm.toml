@@ -1,0 +1,59 @@
+# A collaborative todo board in TypeScript — three RUSM serving components:
+#   • api  (HTTP) — CRUD todos in durable kv, publishing each change to subscribers
+#   • feed (SSE)  — a live stream of the todo list (pushed via process-group tags, never polled)
+#   • chat (WS)   — rooms over process-group tags
+# `rusm build` bundles each components/<name>/index.ts; `rusm serve` hosts all three.
+
+[node]
+store = "data.redb"          # durable kv for the todos (created on first write)
+
+[log]
+level = "info"               # surface the components' console.log lines
+
+[[serve]]
+name = "api"
+protocol = "http"
+listen = "127.0.0.1:8080"
+
+[[serve]]
+name = "feed"
+protocol = "sse"
+listen = "127.0.0.1:8081"
+
+# This listener's response policy: let the page (served from :8080) read this cross-origin
+# SSE feed. CORS is the app's policy, declared here; the platform just applies it.
+[serve.headers]
+"access-control-allow-origin" = "*"
+
+[[serve]]
+name = "chat"
+protocol = "ws"
+listen = "127.0.0.1:8082"
+
+# api/feed/store read/write the durable todo list; chat needs none; reporter spawns store.
+[capabilities.stateful]
+inherits = "sandboxed"       # default-deny base
+allow-storage = true         # + durable kv
+
+[capabilities.spawner]
+inherits = "sandboxed"
+allow-spawn = true           # the reporter spawns the store service
+
+[components.api]
+capability = "stateful"
+
+[components.feed]
+capability = "stateful"
+
+[components.chat]
+capability = "sandboxed"
+
+# A service spawned on demand by the reporter (reached via the typed client); runs under
+# its own profile whoever spawns it.
+[components.store]
+capability = "stateful"
+
+# A resident worker: boot-spawned + supervised; drives the store through the typed client.
+[components.reporter]
+capability = "spawner"
+resident = true

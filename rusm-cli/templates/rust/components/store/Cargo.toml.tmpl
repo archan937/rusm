@@ -1,0 +1,21 @@
+# The `store` service component — runs `store_svc::store::serve()` as an isolated process.
+[workspace]
+
+[package]
+name = "store"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "store"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../crates/rusm-rs" }
+store-svc = { path = "../../store-svc" }
+wit-bindgen = "0.46"

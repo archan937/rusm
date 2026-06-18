@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RUSM todo board (Go)</title>
+  <style>
+    :root {
+      --accent: #5b5bd6; --accent-soft: #ececfb; --bg: #f7f7fb; --card: #fff;
+      --ink: #1a1a2e; --muted: #6b6b80; --line: #e7e7ef; --ok: #1aa179;
+      font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink);
+    }
+    * { box-sizing: border-box; }
+    body { max-width: 50rem; margin: 0 auto; padding: 2rem 1rem 4rem; background: var(--bg); }
+    header { margin-bottom: 1.4rem; }
+    h1 { margin: 0 0 .25rem; font-size: 1.6rem; letter-spacing: -.02em; }
+    .badge { font-size: .7rem; font-weight: 600; color: var(--accent); background: var(--accent-soft);
+             padding: .15rem .5rem; border-radius: 999px; vertical-align: middle; margin-left: .35rem; }
+    .sub { color: var(--muted); margin: 0; }
+    section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+              padding: 1.1rem 1.3rem; margin: 1rem 0; box-shadow: 0 1px 2px rgba(20,20,50,.04); }
+    h2 { margin: 0 0 .15rem; font-size: 1.05rem; display: flex; align-items: center; gap: .55rem; }
+    h2 .tag { font-size: .68rem; font-weight: 600; color: var(--muted); background: #f1f1f6;
+              padding: .14rem .5rem; border-radius: 6px; }
+    .what { color: var(--muted); font-size: .88rem; margin: .15rem 0 .9rem; }
+    .what code { background: #f1f1f6; padding: .05rem .35rem; border-radius: 5px; font-size: .85em; }
+    ul { list-style: none; padding: 0; margin: .6rem 0 0; }
+    li { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; border-top: 1px solid var(--line); }
+    li:first-child { border-top: 0; }
+    li .txt { flex: 1; }
+    li.done .txt { text-decoration: line-through; color: var(--muted); }
+    .id { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .85em; }
+    button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fafafb;
+             border-radius: 8px; padding: .3rem .7rem; color: var(--ink); transition: background .12s, filter .12s; }
+    button:hover { background: #f0f0f5; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary:hover { filter: brightness(1.08); }
+    button.icon { padding: .25rem .5rem; font-size: .82rem; color: var(--muted); }
+    input { font: inherit; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+    input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+    .row { display: flex; gap: .5rem; margin-top: .6rem; }
+    .row input { flex: 1; }
+    .empty { color: var(--muted); font-size: .9rem; padding: .6rem 0; }
+    .feed-stats { display: flex; gap: 1.6rem; align-items: baseline; flex-wrap: wrap; margin-top: .5rem; }
+    .stat b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+    .stat span { display: block; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }
+    .status { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: .45rem; }
+    .dot { width: .6rem; height: .6rem; border-radius: 50%; background: #c4c4d0; display: inline-block; }
+    .dot.live { background: var(--ok); }
+    .dot.pulse { animation: pulse .7s ease-out; }
+    @keyframes pulse { from { box-shadow: 0 0 0 0 rgba(26,161,121,.5); } to { box-shadow: 0 0 0 .7rem rgba(26,161,121,0); } }
+    #chatlog { display: flex; flex-direction: column; gap: .35rem; background: var(--bg);
+               border: 1px solid var(--line); border-radius: 10px; padding: .7rem; height: 11rem; overflow: auto; margin-top: .6rem; }
+    .msg { font-size: .88rem; max-width: 85%; padding: .3rem .6rem; border-radius: 10px; word-break: break-word; }
+    .msg.peer { background: #fff; border: 1px solid var(--line); align-self: flex-start; }
+    .msg .who { font-size: .68rem; color: var(--muted); margin-bottom: .05rem; }
+    .msg.sys { align-self: center; color: var(--muted); font-size: .78rem; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RUSM todo board <span class="badge">Go</span></h1>
+    <p class="sub">One app — HTTP, SSE &amp; WebSocket, plus a service — each an isolated, supervised WASM process, unified by process-group tags.</p>
+  </header>
+
+  <section>
+    <h2>Todos <span class="tag">HTTP · api · :8080</span></h2>
+    <p class="what">A buffered <code>web.Handlers</code> action set (routes in <code>rusm.toml</code>). CRUD persists in durable <code>kv</code>; every change is published to the <code>feed</code>'s subscribers over a tag. (A resident <code>store</code> service exposes the same data to the typed-client demo in <code>reporter</code>.)</p>
+    <div class="row">
+      <input id="text" placeholder="What needs doing?" />
+      <button id="add" class="primary">Add</button>
+    </div>
+    <ul id="todos"><li class="empty">Loading…</li></ul>
+  </section>
+
+  <section>
+    <h2>Live feed <span class="tag">SSE · feed · :8081</span></h2>
+    <p class="what"><b>The list above is driven by this feed</b> — a process per connection that subscribes to the todo tag and pushes each change (true push, not polling). Add or toggle a todo — or open a second tab — and watch the counter tick. The cross-origin read works via the listener's <code>[serve.headers]</code> CORS. Raw: <code>curl -N localhost:8081</code></p>
+    <div class="feed-stats">
+      <div class="status"><span id="dot" class="dot"></span> <span id="feedstatus">connecting…</span></div>
+      <div class="stat"><b id="feed-updates">0</b><span>pushes</span></div>
+      <div class="stat"><b id="feed-items">0</b><span>items</span></div>
+      <div class="stat"><b id="feed-last">—</b><span>last push</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Chat <span class="tag">WebSocket · chat · :8082</span></h2>
+    <p class="what">A process per connection; rooms are tags, fan-out is <code>WhereisTag</code> + <code>SendBytes</code>. Join a room, then send.</p>
+    <div class="row">
+      <input id="room" placeholder="room" value="general" />
+      <button id="join">Join</button>
+    </div>
+    <div class="row">
+      <input id="say" placeholder="message…" />
+      <button id="send" class="primary">Send</button>
+    </div>
+    <div id="chatlog"></div>
+  </section>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // --- Todos: rendered from the SSE feed (live); a same-origin fetch paints first. ---
+    function render(todos) {
+      const ul = $("todos");
+      ul.textContent = "";
+      if (!todos.length) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = "No todos yet — add one above.";
+        ul.appendChild(li);
+        return;
+      }
+      for (const t of todos) {
+        const li = document.createElement("li");
+        if (t.done) li.className = "done";
+        const id = document.createElement("span"); id.className = "id"; id.textContent = "#" + t.id;
+        const txt = document.createElement("span"); txt.className = "txt"; txt.textContent = t.text;
+        const tg = document.createElement("button"); tg.className = "icon"; tg.textContent = t.done ? "↺ undo" : "✓ done";
+        tg.onclick = () => fetch("/todos/" + t.id, { method: "PATCH" });
+        const del = document.createElement("button"); del.className = "icon"; del.textContent = "✕";
+        del.onclick = () => fetch("/todos/" + t.id, { method: "DELETE" });
+        li.append(id, txt, tg, del);
+        ul.appendChild(li);
+      }
+    }
+    const load = () => fetch("/todos").then((r) => r.json()).then(render);
+    $("add").onclick = async () => {
+      const text = $("text").value.trim();
+      if (!text) return;
+      await fetch("/todos", { method: "POST", body: JSON.stringify({ text }) });
+      $("text").value = "";
+    };
+    $("text").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add").click(); });
+    load();
+
+    // --- Live feed (SSE): each push re-renders the list AND ticks the visible counters,
+    //     so you can see the true server push (the api publishes; this receives). ---
+    let pushes = 0;
+    const feed = new EventSource("http://" + location.hostname + ":8081");
+    feed.onopen = () => { $("dot").className = "dot live"; $("feedstatus").textContent = "live"; };
+    feed.onmessage = (e) => {
+      const todos = JSON.parse(e.data);
+      render(todos);
+      pushes++;
+      $("feed-updates").textContent = pushes;
+      $("feed-items").textContent = todos.length;
+      $("feed-last").textContent = new Date().toLocaleTimeString();
+      const dot = $("dot");
+      dot.classList.remove("pulse");
+      void dot.offsetWidth; // restart the animation
+      dot.classList.add("pulse");
+    };
+    feed.onerror = () => { $("dot").className = "dot"; $("feedstatus").textContent = "offline"; };
+
+    // --- Chat (WebSocket): a frame arrives as binary, so decode it, parse the JSON, and
+    //     render system notices vs peer messages distinctly. ---
+    const ws = new WebSocket("ws://" + location.hostname + ":8082");
+    ws.binaryType = "arraybuffer";
+    function push(el) { const log = $("chatlog"); log.appendChild(el); log.scrollTop = 1e9; }
+    function sys(text) {
+      const el = document.createElement("div"); el.className = "msg sys"; el.textContent = text; push(el);
+    }
+    function peer(from, text) {
+      const el = document.createElement("div"); el.className = "msg peer";
+      const who = document.createElement("div"); who.className = "who"; who.textContent = "#" + from;
+      const body = document.createElement("div"); body.textContent = text;
+      el.append(who, body); push(el);
+    }
+    ws.onopen = () => sys("connected");
+    ws.onclose = () => sys("disconnected");
+    ws.onmessage = (e) => {
+      const raw = typeof e.data === "string" ? e.data : new TextDecoder().decode(e.data);
+      let m;
+      try { m = JSON.parse(raw); } catch { return; }
+      if (m.system != null) return sys(m.system);
+      if (m.from === "system") return sys(m.text);
+      if (m.text != null) return peer(m.from, m.text);
+    };
+    $("join").onclick = () => ws.send(JSON.stringify({ join: $("room").value.trim() || "general" }));
+    $("send").onclick = () => { const v = $("say").value.trim(); if (v) ws.send(JSON.stringify({ say: v })); $("say").value = ""; };
+    $("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("send").click(); });
+  </script>
+</body>
+</html>
