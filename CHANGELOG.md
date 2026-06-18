@@ -1,10 +1,69 @@
 # Changelog
 
 All notable changes to RUSM are documented here. The project is a Cargo workspace of
-several crates plus the `rusm-ts` npm package; because they version independently, each
-release lists the versions it shipped. Format follows
-[Keep a Changelog](https://keepachangelog.com/); the project is pre-1.0, so minor/patch
-numbers don't yet imply SemVer guarantees.
+several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in lock-step**
+(earlier releases versioned independently, so each pre-0.2.0 entry lists the versions it
+shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
+pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
+
+## [0.2.0] — 2026-06-19
+
+A guest-language and serving release: **Go joins Rust and TypeScript as a first-class
+guest**, the **serving surface gains a full lifecycle** (WebSocket `close`, a reworked
+per-connection SSE, per-listener response headers), and a complete **example app** ships
+in all three languages. The whole workspace + the `rusm-ts` package move to **0.2.0** in
+lock-step for this release.
+
+### Added
+- **Go guests (`rusm-go`)** — a first-class TinyGo → `wasm32-wasip2` guest SDK, so a RUSM
+  process body can be Rust, TypeScript, **or Go**, interoperating over one JSON wire:
+  `Pid`/`Send`/`Receive`/`Spawn`, the registry + process-group tags, byte streams, a
+  `Service` + typed client (call/cast/stream/callback), an in-guest `Supervisor`, and a
+  `web` HTTP/SSE/WebSocket serving API. `rusm new --lang go`; `rusm build` drives TinyGo.
+- **Dynamic JS spawn-from** — `spawn_from` / `SpawnFrom` (RS/TS/Go): spawn a JS guest from
+  an `inline:` string, a `kv:<bucket>/<key>` entry, or a `url:`/`http(s)://` source.
+- **WebSocket `close` lifecycle hook** — handlers now see `open` / `message` / `close`
+  (close fired on disconnect) across Rust, TypeScript, and Go.
+- **Per-connection SSE** — SSE is now an `open`/`message`/`close` handler (one sandboxed
+  process per connection, the SSE twin of WebSocket): RS `sse::serve`, TS
+  `sse({ open, message, close })`, Go `web.Sse{ … }.Serve()`.
+- **`[serve.headers]`** — per-listener response headers in `rusm.toml` (e.g. CORS so a
+  browser can read a cross-origin SSE feed). Application policy, applied by the platform.
+- **TS HTTP handlers gained `kv` + publish + `console`** on the js-http-runner — a
+  `wasi:http` TypeScript handler can persist to `kv` and push to subscribers.
+- **Example apps** — a runnable **collaborative todo board** in each language
+  (`examples/{typescript,rust,go}`): five components — HTTP CRUD `api`, SSE `feed`,
+  WebSocket `chat`, a resident `store` service, and a `reporter` worker — wired by
+  process-group tags, with a polished web UI.
+- **CLI** — `rusm new --template todo-board` scaffolds the full example app; `rusm
+  --version` / `-V`; a richer top-level help and per-command `--help` (descriptions +
+  examples).
+
+### Changed
+- **Examples reorganised** by audience: the three apps at `examples/{typescript,rust,go}`,
+  performance benchmarks under `examples/benchmarks/`, and library/host-API examples under
+  `examples/embedding/`. Removed the superseded `ts-app` and the internal harness demos
+  (`headless_run`, `synthetic_source`, `observer_overhead`).
+- **Docs** — the serving + guest guides point at the runnable example components; SSE is
+  documented throughout as a per-connection handler (the old routed 3-arg SSE action is
+  gone).
+
+### Fixed
+- **SSE disconnects no longer leak** — a dropped or refreshed SSE connection now reaps its
+  handler process (releasing its process-group tag) the instant the connection ends,
+  rather than lingering until the next keep-alive ping.
+- **The census re-emits on tag release** — an *unlabeled* per-connection process (chat /
+  feed) leaving a process-group tag now updates the census; previously only labeled exits
+  re-triggered it, so chat/feed disconnects went unreported.
+- **The `rusm new --protocol sse` scaffold** generated the removed routed-action form
+  (didn't compile); it now scaffolds the per-connection `sse::serve` / `web.Sse` handler.
+- **The example web page** — chat frames are decoded (no more `[object Blob]`) and the live
+  feed shows a pulsing status + push counters.
+
+### Versions
+All workspace crates and the `rusm-ts` npm package ship at **0.2.0**; `rusm-go` is tagged
+`v0.2.0`. (This release moves the previously independently-versioned crates to a single
+lock-step version.)
 
 ## [0.1.5] — 2026-06-16
 

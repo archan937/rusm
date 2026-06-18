@@ -17,6 +17,7 @@
 > |---|---|---|---|
 > | **Rust** | ✅ `#[rusm_rs::handlers]` actions | ✅ `ws::serve` handler | ✅ `sse::serve` handler |
 > | **TypeScript** | ✅ `export default` `fetch` handler | ✅ `websocket({ open, message, close })` | ✅ `sse({ open, message, close })` |
+> | **Go** | ✅ `web.NewHandlers()` actions | ✅ `web.WebSocket{ Open, Message, Close }` | ✅ `web.Sse{ Open, Message, Close }` |
 
 RUSM runs a component as a high-throughput **HTTP(S) / WS(S) / SSE server** — a
 sandboxed, supervised handler answering requests. The whole serving model rests on one

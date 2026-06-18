@@ -14,7 +14,7 @@ rusm attach        # live REPL into a running node
 Config comes from `rusm.toml` (see **[configuration](./reference-configuration)**);
 the commands that start a node also accept the flags in the last section.
 
-## `rusm new <name> [--rust] [--protocol http|sse|ws]`
+## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board]`
 
 Scaffold a new app in `./<name>` — a component, a `rusm.toml` with a `[[serve]]`
 entry, `.gitignore`, and a README. From nothing to a live server in three commands.
@@ -32,6 +32,7 @@ code* (no `wit-bindgen`/`export!`, no `Process` frame plumbing):
 | --- | --- | --- |
 | `--rust` / `--lang <ts\|rust\|go\|generic>` | TypeScript | `ts`, `rust`, `go`, `generic` |
 | `--protocol <p>` / `-p <p>` | `http` | `http`, `sse`, `ws` |
+| `--template <name>` | _(none)_ | `todo-board` — see below |
 
 ```sh
 rusm new chat --protocol ws            # a TypeScript WebSocket echo
@@ -69,6 +70,19 @@ What each cell scaffolds:
   **wasip2** component into `components/api/` (a scaffolded `README.md` states the
   expected interface: `wasi:http/incoming-handler` for HTTP/SSE, a `rusm:runtime`
   actor for WS, or `wasi:cli/run` for a command). `rusm build` copies it into `wasm/`.
+
+### `--template todo-board`
+
+Instead of the minimal single-component starter, scaffold a **full example app** — the
+collaborative todo board, the same one under [`examples/<lang>`](https://github.com/archan937/rusm/tree/main/examples):
+five components (HTTP CRUD `api`, SSE `feed`, WebSocket `chat`, a `store` service, and a
+`reporter` worker) wired together by process-group tags, with a web UI. `--protocol` does
+not apply (the board brings its own listeners); choose the language with `--lang`.
+
+```sh
+rusm new board --template todo-board --lang go   # the whole app, in Go
+cd board && rusm build && rusm serve              # open http://127.0.0.1:8080
+```
 
 ## `rusm build`
 
@@ -165,3 +179,10 @@ Applied by the node-starting commands (layered over `rusm.toml`):
 
 > `rusm new` takes the app name; `rusm attach` takes the target as a positional
 > argument; `rusm build` takes no flags.
+
+Two flags are **global** — they work with any command, or none:
+
+| Flag | Meaning |
+| --- | --- |
+| `-h`, `--help` | The top-level help, or a command's (`rusm <command> --help`). |
+| `-V`, `--version` | Print the `rusm` version (e.g. `rusm 0.2.0`). |
