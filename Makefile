@@ -126,6 +126,14 @@ sync-templates: ## Regenerate rusm-cli/templates/ — the vendored copy of the e
 # version is never re-sent. crates.io rejects requests without a User-Agent (403), so set one.
 crate_published = curl -fsS -A "rusm-make-publish" "https://crates.io/api/v1/crates/$$(basename $1)/$(VERSION)" >/dev/null 2>&1
 
+NPM_PKG := rusm-ts
+NPM_DIR := packages/rusm-ts
+# Is this exact version already on npm? (`npm view` is a public read — works logged out.)
+npm_published = [ -n "$$(npm view $(NPM_PKG)@$(VERSION) version 2>/dev/null)" ]
+# Logged in to npm? (npm publish on an existing package returns a misleading 404 when not.)
+npm_authed = npm whoami >/dev/null 2>&1
+npm_login_hint = run \`npm login\` (registry $$(npm config get registry)), then re-run
+
 .PHONY: publish-dry
 publish-dry: ## Release pre-flight: dry-run each not-yet-published crate (no side effects)
 	@for d in $(PUBLISH_ORDER); do \
@@ -144,8 +152,13 @@ publish-crates: ## Publish crates to crates.io in dependency order (skips versio
 	done
 
 .PHONY: publish-npm
-publish-npm: ## Publish the rusm-ts package to npm
-	cd packages/rusm-ts && npm publish
+publish-npm: ## Publish rusm-ts to npm (skips if already published; verifies login first)
+	@if $(npm_published); then \
+		echo "↷ $(NPM_PKG)@$(VERSION) already on npm — skip"; \
+	else \
+		$(npm_authed) || { echo "✗ not logged in to npm — $(npm_login_hint)"; exit 1; }; \
+		( cd $(NPM_DIR) && npm publish ); \
+	fi
 
 .PHONY: publish-tags
 publish-tags: ## Tag the release (v$(VERSION)) + the rusm-go submodule, push the tags
@@ -157,6 +170,9 @@ publish-tags: ## Tag the release (v$(VERSION)) + the rusm-go submodule, push the
 publish: ## Full release v$(VERSION): dry-run, then crates.io + npm + tags (resumable — published crates are skipped)
 	@test -z "$$(git status --porcelain)" || { echo "✗ working tree not clean — commit first"; exit 1; }
 	@git diff --quiet origin/main..HEAD 2>/dev/null || echo "→ note: push commits to origin first so the tags point at pushed history"
+	@# Check npm login up front (unless rusm-ts is already published) — a missing login must
+	@# abort BEFORE any crate is uploaded, not halfway through the release.
+	@if $(npm_published); then :; else $(npm_authed) || { echo "✗ not logged in to npm — $(npm_login_hint) \`make publish\`"; exit 1; }; fi
 	@echo "==> verifying packaging (dry-run of not-yet-published crates)…"
 	@$(MAKE) --no-print-directory publish-dry
 	@echo "==> dry-run clean. Uploading to crates.io + npm + git tags — Ctrl-C within 5s to abort."
