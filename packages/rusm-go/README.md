@@ -111,9 +111,11 @@ rusm.Supervisor{
 
 ## Serving — HTTP / SSE / WebSocket (the `web` subpackage)
 
-Serving is **process-per-unit-of-work**: a fresh instance per HTTP/SSE request, one
-process per WS connection — no head-of-line blocking, crash containment per unit.
-Routing is declarative in `rusm.toml` (`"METHOD /path/:param" = "component#action"`).
+Serving is **process-per-unit-of-work**: a fresh instance per HTTP request, one process
+per SSE/WS connection — no head-of-line blocking, crash containment per unit. HTTP routing
+is declarative in `rusm.toml` (`"METHOD /path/:param" = "component#action"`).
+
+An HTTP component — buffered, routed actions:
 
 ```go
 import (
@@ -129,10 +131,21 @@ func run() {
 	h.Handle("home", func(req web.Request, p web.Params) web.Response {
 		return web.Text("hi " + p.Get("name"))
 	})
-	h.HandleSSE("ticks", func(req web.Request, p web.Params, sse web.Sse) {
-		for n := 0; n < 5; n++ { sse.Data([]byte(fmt.Sprintf("tick %d", n))) }
-	})
 	h.Serve()
+}
+```
+
+An SSE component — one process per connection (like WebSocket): `Open` subscribes to an
+event source (e.g. a process-group tag) and emits initial events; `Message` emits each
+event pushed to the mailbox:
+
+```go
+func run() {
+	web.Sse{
+		Open:    func(s web.Stream) { rusm.RegisterTag("ticks") }, // subscribe
+		Message: func(s web.Stream, ev []byte) { s.Data(ev) },     // a pushed event → emit
+		Close:   func(s web.Stream) {},                            // disconnect — clean or dropped
+	}.Serve()
 }
 ```
 

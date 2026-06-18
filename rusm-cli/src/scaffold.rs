@@ -198,13 +198,13 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
     out
 }
 
-/// A Rust or Go HTTP/SSE app uses the named-action model — Rust's `#[rusm_rs::handlers]`
-/// / Go's `web.Handlers` — reached through a `[serve.routes]` table to a
-/// `[components.<name>]` handler. TS HTTP/SSE (a `wasi:http` `export default`) and
-/// WebSocket (per-connection) are a single named handler component with no routes.
+/// Only a Rust or Go **HTTP** app uses the named-action model — Rust's
+/// `#[rusm_rs::handlers]` / Go's `web.Handlers` — reached through a `[serve.routes]` table
+/// to a `[components.<name>]` handler. Everything else is a single named handler component
+/// with no routes: SSE and WebSocket are per-connection (`sse::serve` / `web.Sse`,
+/// `ws::serve` / `web.WebSocket`), and TS HTTP is a `wasi:http` `export default`.
 fn has_routes(app: &NewApp) -> bool {
-    matches!(app.lang, Lang::Rust | Lang::Go)
-        && matches!(app.protocol, Protocol::Http | Protocol::Sse)
+    matches!(app.lang, Lang::Rust | Lang::Go) && app.protocol == Protocol::Http
 }
 
 const TOML_HEADER: &str =
@@ -219,7 +219,7 @@ fn rusm_toml(app: &NewApp) -> String {
         format!(
             "{TOML_HEADER}\
              [[serve]]\n\
-             protocol = \"{proto}\"           # http | sse\n\
+             protocol = \"{proto}\"           # http (routed)\n\
              listen = \"127.0.0.1:8080\"\n\n\
              [serve.routes]\n\
              \"GET /\" = \"api#home\"        # METHOD /path = component#action\n\n\
@@ -410,9 +410,10 @@ func run() {
         }
         Protocol::Sse => {
             "\
-// A RUSM SSE component in Go: a streaming handler action writes a text/event-stream
-// body. Each request is its own process, so it may block here for the whole
-// connection — write events as they occur. [serve.routes] maps `GET /` to `api#home`.
+// A RUSM SSE component in Go: a per-connection handler (like WebSocket). The host runs
+// one instance per connection; Open emits initial events and Message emits each event
+// pushed to this process's mailbox (typically via a process-group tag subscribed to in
+// Open). Keep shared state in a resident [components.<name>] service or kv.
 package main
 
 import (
@@ -426,15 +427,16 @@ func init() { rusm.Run(run) }
 func main() {}
 
 func run() {
-	h := web.NewHandlers()
-	h.HandleSSE(\"home\", func(_ web.Request, _ web.Params, sse web.Sse) {
-		for n := 0; n < 5; n++ {
-			if !sse.Data([]byte(fmt.Sprintf(\"tick %d\", n))) {
-				break // the client disconnected
+	web.Sse{
+		Open: func(s web.Stream) {
+			for n := 0; n < 5; n++ {
+				s.Data([]byte(fmt.Sprintf(\"tick %d\", n)))
 			}
-		}
-	})
-	h.Serve()
+		},
+		Message: func(s web.Stream, event []byte) {
+			s.Data(event) // a pushed event → emit it
+		},
+	}.Serve()
 }
 "
         }
@@ -491,22 +493,29 @@ pub mod api {
         }
         Protocol::Sse => {
             "\
-//! A RUSM SSE component: a handler **action** taking `Sse` streams a `text/event-stream`
-//! body. Each request is its own process, so the action may block here for the whole
-//! connection — write events as they occur. `[routes]` maps `GET /` to `api#home`.
-use rusm_rs::http::{Params, Request, Sse};
+//! A RUSM SSE component: a per-connection handler (like WebSocket). The host runs one
+//! instance per connection; `open` emits initial events and `message` emits each event
+//! pushed to this process's mailbox (typically via a process-group tag subscribed to in
+//! `open`). Keep shared state in a `[components.<name>]` service or `kv`.
+use rusm_rs::sse::{self, Handler, Stream};
 
-#[rusm_rs::handlers]
-pub mod api {
-    use super::*;
+#[derive(Default)]
+struct Api;
 
-    pub fn home(_request: Request, _params: Params, sse: Sse) {
+impl Handler for Api {
+    fn open(&mut self, stream: &Stream) {
         for n in 0..5 {
-            if !sse.data(format!(\"tick {n}\").as_bytes()) {
-                break; // the client disconnected
-            }
+            stream.data(format!(\"tick {n}\").as_bytes());
         }
     }
+    fn message(&mut self, stream: &Stream, event: Vec<u8>) {
+        stream.data(&event); // a pushed event → emit it
+    }
+}
+
+#[rusm_rs::main]
+fn main() {
+    sse::serve(Api::default());
 }
 "
         }
@@ -688,13 +697,12 @@ mod tests {
             let cfg = NodeConfig::from_toml(&toml).expect("scaffolded rusm.toml must parse");
             assert_eq!(cfg.serve.len(), 1);
             assert_eq!(cfg.serve[0].protocol, want_proto, "{lang:?}/{protocol:?}");
-            let routed = matches!(lang, Lang::Rust | Lang::Go)
-                && matches!(protocol, Protocol::Http | Protocol::Sse);
+            let routed = matches!(lang, Lang::Rust | Lang::Go) && protocol == Protocol::Http;
             let table = cfg.serve[0].route_table().expect("routes compile");
             assert_eq!(
                 table.is_empty(),
                 !routed,
-                "{lang:?}/{protocol:?}: routes present iff Rust/Go HTTP/SSE"
+                "{lang:?}/{protocol:?}: routes present iff Rust/Go HTTP"
             );
             if routed {
                 // Routes name the `[components.api]` handler; the listener has no `name`.
@@ -713,10 +721,12 @@ mod tests {
 
     #[test]
     fn rust_components_carry_no_wit_dir_and_use_a_rusm_macro() {
-        // HTTP is a `#[rusm_rs::handlers]` component; WS is `#[rusm_rs::main]`. Neither
-        // needs a `wit/` dir (the macro inlines the WIT) nor any wit-bindgen boilerplate.
+        // HTTP is a `#[rusm_rs::handlers]` component; SSE and WS are per-connection
+        // `#[rusm_rs::main]` components. None needs a `wit/` dir (the macro inlines the
+        // WIT) nor any wit-bindgen boilerplate.
         for (protocol, macro_attr) in [
             (Protocol::Http, "#[rusm_rs::handlers]"),
+            (Protocol::Sse, "#[rusm_rs::main]"),
             (Protocol::Ws, "#[rusm_rs::main]"),
         ] {
             let dir = tempfile::tempdir().unwrap();
