@@ -12,7 +12,9 @@ mod scaffold;
 mod template;
 
 pub use app::{capabilities_for, serve_apps, spawn_components, Hosted, ServedEndpoint};
-pub use cli::{command_help, node_overrides, usage, wants_help, NodeOverrides};
+pub use cli::{
+    command_help, node_overrides, usage, version, wants_help, wants_version, NodeOverrides,
+};
 pub use component::prebuilt_wasm;
 pub use endpoint::{normalize_target, DEFAULT_HOST};
 pub use render::render_message;

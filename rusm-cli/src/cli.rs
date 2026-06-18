@@ -1,82 +1,155 @@
-//! The `rusm` command-line surface: one command table that backs both the
-//! top-level usage and each command's `--help`, plus the shared pico-args helpers.
-//! Pure logic, kept out of `main.rs` (thin I/O glue) so it is unit-tested.
+//! The `rusm` command-line surface: one command table that backs the top-level help,
+//! each command's `--help`, and `--version`, plus the shared pico-args helpers. Pure
+//! logic, kept out of `main.rs` (thin I/O glue) so it is unit-tested.
 
 use anyhow::Result;
 use pico_args::Arguments;
 
-/// One CLI command: its name, full invocation, and one-line summary.
+/// One-line description of what `rusm` is, shown in the help header.
+const TAGLINE: &str = "an Erlang-inspired WebAssembly runtime — isolated, supervised processes";
+
+/// Where to send people for the long form.
+const DOCS_URL: &str = "https://github.com/archan937/rusm";
+
+/// One CLI command: its name, full invocation, a one-line summary (the overview), a
+/// longer description and a few example invocations (`rusm <name> --help`).
 struct CommandSpec {
     name: &'static str,
     usage: &'static str,
     summary: &'static str,
+    details: &'static str,
+    examples: &'static [&'static str],
 }
 
-/// Every `rusm` command — the single source of truth for the help text, so the
-/// overview and the per-command help can never drift apart.
+/// Every `rusm` command — the single source of truth for all help text, ordered as the
+/// app lifecycle reads (create → build → run/serve → operate), so the overview and the
+/// per-command help can never drift apart.
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "new",
-        usage: "rusm new <name> [--rust] [--lang ts|rust|go|generic] [--protocol http|sse|ws]",
+        usage: "rusm new <name> [--rust] [--lang ts|rust|go|generic] \
+                [--protocol http|sse|ws] [--template todo-board]",
         summary: "scaffold a new RUSM app in ./<name>",
-    },
-    CommandSpec {
-        name: "node",
-        usage: "rusm node start [--config <file>] [--listen <addr>]",
-        summary: "host the app and expose a live attach endpoint",
+        details: "Creates ./<name> with a component, a rusm.toml, and a README. `--lang` \
+                  picks the guest language (default TypeScript), `--protocol` the serving \
+                  shape (default http). `--template todo-board` scaffolds the full \
+                  five-component example app instead of the minimal starter.",
+        examples: &[
+            "rusm new hello",
+            "rusm new api --lang go --protocol ws",
+            "rusm new board --template todo-board --lang rust",
+        ],
     },
     CommandSpec {
         name: "build",
         usage: "rusm build",
-        summary: "compile ./components/* -> ./wasm/*.wasm",
+        summary: "compile ./components/* -> ./wasm/*",
+        details: "Compiles each ./components/<name>/ to ./wasm/ — cargo (wasm32-wasip2) for \
+                  Rust, TinyGo for Go, Bun for TypeScript. Run it before `run` or `serve`.",
+        examples: &["rusm build"],
     },
     CommandSpec {
         name: "run",
         usage: "rusm run",
         summary: "run ./wasm components per rusm.toml [components.<name>]",
+        details: "Spawns each component declared in rusm.toml `[components.<name>]` as a \
+                  supervised process — for non-serving apps (workers, services, CLIs).",
+        examples: &["rusm run"],
     },
     CommandSpec {
         name: "dev",
         usage: "rusm dev",
         summary: "build + run, then watch ./components and reload on edits",
+        details: "The fast inner loop: builds, runs, then watches ./components and rebuilds \
+                  + reloads the changed component on every edit.",
+        examples: &["rusm dev"],
     },
     CommandSpec {
         name: "serve",
         usage: "rusm serve",
         summary: "host ./wasm components as HTTP/WS/SSE servers per rusm.toml [[serve]]",
+        details: "Hosts each rusm.toml `[[serve]]` listener on a real TCP port — a fresh \
+                  sandboxed instance per HTTP/SSE request, one process per WebSocket \
+                  connection. Routes come from each listener's `[serve.routes]`.",
+        examples: &["rusm serve"],
+    },
+    CommandSpec {
+        name: "node",
+        usage: "rusm node start [--config <file>] [--listen <addr>]",
+        summary: "host the app and expose a live attach endpoint",
+        details: "Hosts the app as a long-lived node and exposes a live attach/observer \
+                  endpoint (default ws://127.0.0.1:4000) for the dashboard or `rusm attach`.",
+        examples: &["rusm node start", "rusm node start --listen 0.0.0.0:4000"],
     },
     CommandSpec {
         name: "attach",
         usage: "rusm attach [<host | host:port | ws-url>]",
         summary: "observe a running node (defaults to 127.0.0.1:4000)",
+        details: "Connects a live REPL to a running node (like `iex --remsh`): run \
+                  scenarios, toggle observer detail, inspect live processes.",
+        examples: &["rusm attach", "rusm attach 192.168.1.10:4000"],
     },
 ];
 
-/// The top-level `usage:` block: every command's invocation and summary.
+/// `rusm <version>` — the version line for `--version`, sourced from the crate version so
+/// it tracks releases automatically (one source: Cargo.toml).
+pub fn version() -> String {
+    format!("rusm {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// The top-level help: a header with the version + tagline, the command table (names
+/// aligned), the global options, and a docs pointer.
 pub fn usage() -> String {
-    let mut out = String::from("usage:\n");
+    let width = COMMANDS.iter().map(|c| c.name.len()).max().unwrap_or(0);
+    let mut out = format!(
+        "{}\n{TAGLINE}\n\nUsage:\n  rusm <command> [options]\n\nCommands:\n",
+        version()
+    );
     for c in COMMANDS {
-        out.push_str("  ");
-        out.push_str(c.usage);
-        out.push_str("\n      ");
-        out.push_str(c.summary);
-        out.push('\n');
+        out.push_str(&format!(
+            "  {:<width$}  {}\n",
+            c.name,
+            c.summary,
+            width = width
+        ));
     }
+    out.push_str(
+        "\nOptions:\n  \
+         -h, --help       show this help (or `rusm <command> --help` for a command)\n  \
+         -V, --version    print the version\n\n",
+    );
+    out.push_str(&format!("Docs: {DOCS_URL}\n"));
     out
 }
 
-/// The `--help` text for one command, or `None` when `name` is not a command.
+/// The `--help` text for one command (usage + description + examples), or `None` when
+/// `name` is not a command.
 pub fn command_help(name: &str) -> Option<String> {
-    COMMANDS
-        .iter()
-        .find(|c| c.name == name)
-        .map(|c| format!("{}\n      {}", c.usage, c.summary))
+    COMMANDS.iter().find(|c| c.name == name).map(|c| {
+        let mut out = format!("rusm {} — {}\n\nUsage:\n  {}\n", c.name, c.summary, c.usage);
+        if !c.details.is_empty() {
+            out.push_str(&format!("\n{}\n", c.details));
+        }
+        if !c.examples.is_empty() {
+            out.push_str("\nExamples:\n");
+            for example in c.examples {
+                out.push_str(&format!("  {example}\n"));
+            }
+        }
+        out
+    })
 }
 
-/// Whether the remaining arguments request help (`-h` / `--help`). Consumes the
-/// flag so it is never mistaken for a positional argument afterwards.
+/// Whether the remaining arguments request help (`-h` / `--help`). Consumes the flag so
+/// it is never mistaken for a positional argument afterwards.
 pub fn wants_help(args: &mut Arguments) -> bool {
     args.contains(["-h", "--help"])
+}
+
+/// Whether the remaining arguments request the version (`-V` / `--version`). Consumes the
+/// flag, like [`wants_help`].
+pub fn wants_version(args: &mut Arguments) -> bool {
+    args.contains(["-V", "--version"])
 }
 
 /// The node-config overrides every node-booting command accepts: `--config <file>`
@@ -106,23 +179,42 @@ mod tests {
     }
 
     #[test]
-    fn usage_lists_every_command_with_its_summary() {
+    fn version_is_the_crate_version() {
+        assert_eq!(version(), format!("rusm {}", env!("CARGO_PKG_VERSION")));
+        assert!(version().starts_with("rusm "));
+    }
+
+    #[test]
+    fn usage_has_a_header_and_lists_every_command_with_its_summary() {
         let u = usage();
-        assert!(u.starts_with("usage:\n"));
+        assert!(u.starts_with("rusm "), "starts with the version header");
+        assert!(u.contains(TAGLINE));
+        assert!(u.contains("Commands:"));
+        assert!(u.contains("-V, --version"), "documents the version flag");
+        assert!(u.contains(DOCS_URL));
         for name in ["new", "node", "build", "run", "dev", "serve", "attach"] {
-            assert!(
-                u.contains(&format!("rusm {name}")),
-                "usage missing `{name}`"
-            );
+            assert!(u.contains(name), "usage missing `{name}`");
         }
         assert!(u.contains("scaffold a new RUSM app"));
     }
 
     #[test]
-    fn command_help_is_per_command_and_none_for_unknown() {
+    fn command_help_is_per_command_with_examples_and_none_for_unknown() {
         let help = command_help("build").expect("build is a command");
         assert!(help.contains("rusm build"));
         assert!(help.contains("compile ./components"));
+        assert!(help.contains("Examples:"));
+
+        let new = command_help("new").expect("new is a command");
+        assert!(
+            new.contains("--template todo-board"),
+            "new help shows the template flag"
+        );
+        assert!(
+            new.contains("rusm new board --template"),
+            "new help has a template example"
+        );
+
         assert!(command_help("frobnicate").is_none());
     }
 
@@ -134,6 +226,17 @@ mod tests {
 
         let mut a = args(&["--help"]);
         assert!(wants_help(&mut a));
+        assert!(a.finish().is_empty(), "the flag is consumed, not left over");
+    }
+
+    #[test]
+    fn wants_version_detects_both_flags_and_consumes_them() {
+        assert!(wants_version(&mut args(&["-V"])));
+        assert!(wants_version(&mut args(&["--version"])));
+        assert!(!wants_version(&mut args(&["serve"])));
+
+        let mut a = args(&["--version"]);
+        assert!(wants_version(&mut a));
         assert!(a.finish().is_empty(), "the flag is consumed, not left over");
     }
 

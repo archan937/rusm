@@ -6,8 +6,8 @@ use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
     command_help, node_overrides, normalize_target, parse, parse_new_args, prebuilt_wasm,
-    render_message, scaffold, serve_apps, spawn_components, usage, wants_help, Hosted, Protocol,
-    ReplInput, DEFAULT_HOST, HELP,
+    render_message, scaffold, serve_apps, spawn_components, usage, version, wants_help,
+    wants_version, Hosted, Protocol, ReplInput, DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -18,16 +18,24 @@ use tokio_tungstenite::tungstenite::Message;
 #[tokio::main]
 async fn main() {
     let mut args = Arguments::from_env();
+
+    // `--version` / `-V` is global: handle it before anything else, so it works with or
+    // without a command (`rusm -V`, `rusm serve --version`).
+    if wants_version(&mut args) {
+        println!("{}", version());
+        return;
+    }
+
     let command = args
         .subcommand()
         .unwrap_or_else(|error| die(format!("error: {error}"), 2));
 
-    // `rusm` / `rusm help` → the top-level usage; a recognised command followed by
-    // `--help`/`-h` → that command's help. Both are handled once, here, so the command
-    // bodies below stay free of help plumbing.
+    // `rusm` / `rusm help` / `rusm --help` → the top-level help; a recognised command
+    // followed by `--help`/`-h` → that command's help. Both are handled once, here, so the
+    // command bodies below stay free of help plumbing. Requested help goes to stdout (exit
+    // 0); only misuse (unknown command) prints to stderr.
     match command.as_deref() {
-        None => die_usage(if wants_help(&mut args) { 0 } else { 2 }),
-        Some("help") => die_usage(0),
+        None | Some("help") => print_help(),
         Some(name) if wants_help(&mut args) => match command_help(name) {
             Some(help) => println!("{help}"),
             None => unknown_command(name),
@@ -50,7 +58,15 @@ fn die(message: impl std::fmt::Display, code: i32) -> ! {
     std::process::exit(code);
 }
 
-/// Print the top-level usage and exit with `code`.
+/// Print the top-level help to stdout and exit 0 — the response to a *requested* help
+/// (`rusm`, `rusm help`, `rusm --help`), so it can be piped without mixing into stderr.
+fn print_help() -> ! {
+    print!("{}", usage());
+    std::process::exit(0);
+}
+
+/// Print the top-level usage to stderr and exit with `code` — for misuse (an unknown
+/// command), where help is a diagnostic, not the requested output.
 fn die_usage(code: i32) -> ! {
     eprint!("{}", usage());
     std::process::exit(code);
