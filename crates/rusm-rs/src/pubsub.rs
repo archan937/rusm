@@ -80,13 +80,13 @@ impl Topics {
     /// a broker calls this first and treats a `false` as an ordinary command. A fast
     /// prefix check keeps non-`__down` messages from ever being parsed.
     pub fn handle_down(&mut self, msg: &[u8]) -> bool {
-        if !msg.starts_with(br#"{"__down":"#) {
-            return false;
+        match crate::down_pid(msg) {
+            Some(pid) => {
+                self.prune(pid);
+                true
+            }
+            None => false,
         }
-        if let Some(pid) = parse_down_pid(msg) {
-            self.prune(pid);
-        }
-        true
     }
 
     /// The number of subscribers on `topic` (introspection / capacity).
@@ -101,11 +101,4 @@ impl Topics {
         }
         self.monitored.remove(&pid);
     }
-}
-
-/// Extract the pid from a host `__down` message (`{"__down":"<pid>","reason":...}`).
-fn parse_down_pid(msg: &[u8]) -> Option<Pid> {
-    let value: serde_json::Value = serde_json::from_slice(msg).ok()?;
-    let pid = value.get("__down")?.as_str()?.parse().ok()?;
-    Some(Pid(pid))
 }

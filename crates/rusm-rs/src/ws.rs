@@ -2,8 +2,9 @@
 //! component process *per connection*, so a handler is naturally isolated — its state
 //! is that one connection's. The host delivers the connection's **writer pid** as the
 //! first message (the process that owns the socket sink); reply by sending frames to it
-//! (see [`Connection::send`]). Each later message is one inbound frame; the process is
-//! killed when the socket closes (no `close` callback needed — exit cascades clean up).
+//! (see [`Connection::send`]). Each later message is one inbound frame; when the socket
+//! closes — clean close or dropped connection alike — [`Handler::close`] fires, then the
+//! process exits.
 
 use crate::Pid;
 
@@ -37,13 +38,17 @@ pub trait Handler {
     }
     /// One inbound frame from the client.
     fn message(&mut self, conn: &Connection, data: Vec<u8>);
+    /// The connection closed — the client disconnected, cleanly or by a dropped socket.
+    /// Fires exactly once, before the process exits. Default: do nothing.
+    fn close(&mut self, conn: &Connection) {
+        let _ = conn;
+    }
 }
 
-/// Run `handler` for this connection: learn the writer pid (the host's message 1),
-/// fire [`Handler::open`], then dispatch each inbound frame to [`Handler::message`].
-/// Never returns — the host kills the process when the socket closes. Call it from a
-/// component's `run`.
-pub fn serve<H: Handler>(mut handler: H) -> ! {
+/// Run `handler` for this connection: learn the writer pid (the host's message 1), fire
+/// [`Handler::open`], dispatch each inbound frame to [`Handler::message`], and fire
+/// [`Handler::close`] when the socket closes — then return. Call it from a component's `run`.
+pub fn serve<H: Handler>(mut handler: H) {
     // Message 1: the writer pid (decimal — the RUSM "tell me where to answer"
     // convention shared with the other per-connection paths).
     let writer = Pid(String::from_utf8(crate::receive_bytes())
@@ -51,9 +56,16 @@ pub fn serve<H: Handler>(mut handler: H) -> ! {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0));
     let conn = Connection { writer };
+    // The writer process owns the socket, so its death *is* the disconnect (clean close
+    // or dropped connection alike); monitoring it turns that into the `close` callback.
+    crate::monitor(writer);
     handler.open(&conn);
     loop {
         let data = crate::receive_bytes();
+        if crate::down_pid(&data) == Some(writer) {
+            handler.close(&conn);
+            return;
+        }
         handler.message(&conn, data);
     }
 }

@@ -151,6 +151,12 @@ impl WasmRuntime {
     }
 }
 
+/// How long to wait for a connection's handler to run its `close` and exit on its own
+/// (after its writer is killed) before force-reaping it. A cooperating handler — the SDK
+/// `ws::serve`, which monitors the writer — exits in microseconds; this only caps a
+/// handler that ignores the disconnect.
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
+
 impl WsServer {
     /// Serve WebSockets on `listener` until it closes — one connection per task.
     pub async fn serve(self, listener: TcpListener) {
@@ -239,9 +245,18 @@ impl WsServer {
             }
         }
 
-        // Connection done — tear down just this connection's processes.
-        component.kill();
+        // Connection done. Kill the writer first: a handler monitoring it (the SDK
+        // `ws::serve` does) then receives the `__down`, runs its `close`, and exits — so
+        // we await that exit (briefly) before reaping. A handler that ignores the
+        // disconnect is force-killed once the grace elapses.
+        let component_pid = component.pid();
         writer.kill();
+        if tokio::time::timeout(CLOSE_GRACE, component.join())
+            .await
+            .is_err()
+        {
+            rt.kill(component_pid);
+        }
     }
 }
 
@@ -249,6 +264,69 @@ impl WsServer {
 mod tests {
     use super::*;
     use tokio_tungstenite::tungstenite::Message;
+
+    /// Spawn a process registered as `"collector"` that forwards every message it
+    /// receives to the returned channel — lets a test observe what a guest reports.
+    fn collector(rt: &rusm_otp::Runtime) -> tokio::sync::mpsc::UnboundedReceiver<Vec<u8>> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let proc = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let rusm_otp::Received::Message(b) = ctx.recv().await {
+                    let _ = tx.send(b);
+                }
+            }
+        });
+        rt.register("collector", proc.pid());
+        rx
+    }
+
+    /// The next event from a [`collector`] channel, or panic after 5s.
+    async fn next_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) -> Vec<u8> {
+        tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a lifecycle event within 5s")
+            .expect("collector channel stays open")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_handler_runs_open_message_and_close_on_disconnect() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // A full-lifecycle handler (rs-ws-lifecycle) reports "open"/"close" to a
+        // registered collector and echoes frames — proving `close` fires when the client
+        // disconnects (the host kills the writer; the handler, monitoring it, sees the
+        // `__down` and runs `close` before exiting).
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        ws.send(Message::text("hi")).await.unwrap();
+        assert_eq!(&ws.next().await.unwrap().unwrap().into_data()[..], b"hi");
+
+        ws.close(None).await.unwrap(); // disconnect
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on disconnect"
+        );
+
+        handle.abort();
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn echoes_a_websocket_message() {

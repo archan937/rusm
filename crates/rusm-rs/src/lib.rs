@@ -109,6 +109,18 @@ pub fn monitor(target: Pid) {
     actor::monitor(target.0);
 }
 
+/// Parse a monitor `__down` message (`{"__down":"<pid>","reason":...}`) into the dead
+/// process's [`Pid`], or `None` for an ordinary message. The single source for `__down`
+/// decoding across the guest crate ([`pubsub`] and [`ws`]); a fast prefix check keeps
+/// ordinary messages from ever being parsed.
+pub fn down_pid(msg: &[u8]) -> Option<Pid> {
+    if !msg.starts_with(br#"{"__down":"#) {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(msg).ok()?;
+    value.get("__down")?.as_str()?.parse().ok().map(Pid)
+}
+
 /// Register this process under a name in the node registry.
 pub fn register(name: &str) -> bool {
     actor::register(name)
