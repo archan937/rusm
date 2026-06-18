@@ -19,6 +19,7 @@
 package rusm
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -139,6 +140,22 @@ func SpawnFrom(component, source string) (Pid, error) {
 // Monitor watches target: when it dies, this process receives a __down message — the
 // basis for a Supervisor.
 func Monitor(target Pid) { actor.Monitor(actor.Pid(target)) }
+
+// DownPid parses a monitor __down message ({"__down":"<pid>","reason":...}) into the
+// dead process's Pid; ok is false for an ordinary message. The single source for __down
+// decoding in this SDK — a fast prefix check keeps ordinary messages from being parsed.
+func DownPid(msg []byte) (pid Pid, ok bool) {
+	if !bytes.HasPrefix(msg, []byte(`{"__down":"`)) {
+		return 0, false
+	}
+	var v struct {
+		Down string `json:"__down"`
+	}
+	if json.Unmarshal(msg, &v) != nil {
+		return 0, false
+	}
+	return ParsePid(v.Down)
+}
 
 // Register registers this process under name in the node registry.
 func Register(name string) bool { return actor.Register(name) }

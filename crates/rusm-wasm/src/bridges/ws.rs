@@ -371,6 +371,41 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_ws_handler_fires_close_on_disconnect() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // A Go (TinyGo) full-lifecycle handler (go-ws-lifecycle) — open/close report to a
+        // registered collector, message echoes — proving `web.WebSocket.Close` fires on
+        // disconnect (monitor-the-writer), resembling the Rust and TS handlers.
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/go_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        ws.send(Message::text("hi go")).await.unwrap();
+        assert_eq!(&ws.next().await.unwrap().unwrap().into_data()[..], b"hi go");
+
+        ws.close(None).await.unwrap(); // disconnect
+        assert_eq!(next_event(&mut rx).await, b"close", "close fires on disconnect");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn echoes_a_websocket_message() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
