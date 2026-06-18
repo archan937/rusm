@@ -37,6 +37,9 @@ pub struct HttpServer {
     pre: ProxyPre<WasiHost>,
     spawner: Arc<Spawner>,
     caps: Capabilities,
+    /// Listener declared `protocol = "sse"`: every 2xx reply must be a
+    /// `text/event-stream`, or the host fails loud (a manifest/handler contract check).
+    require_sse: bool,
 }
 
 impl WasmRuntime {
@@ -52,6 +55,7 @@ impl WasmRuntime {
             pre: prepared.pre.clone(),
             spawner: Arc::clone(&self.spawner),
             caps,
+            require_sse: false,
         }
     }
 
@@ -81,6 +85,15 @@ impl WasmRuntime {
 }
 
 impl HttpServer {
+    /// Mark this as an SSE listener (`protocol = "sse"`): every successful reply must be a
+    /// `text/event-stream`, or the host serves 500. The most valuable place for the check
+    /// — a hand-written TS `fetch` sets the content-type itself (unlike the RS/Go SDKs),
+    /// so this turns a forgotten header into a loud failure, not a silently-broken stream.
+    pub fn require_event_stream(mut self) -> Self {
+        self.require_sse = true;
+        self
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes (one connection per task, one
     /// component instance per request). Abort the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
@@ -153,7 +166,22 @@ impl HttpServer {
             .map(|pq| pq.as_str())
             .unwrap_or("/")
             .to_string();
-        let result = self.dispatch(req).await;
+        // SSE transport correctness, uniform across all guest languages: fail loud on a
+        // `protocol = "sse"` listener that produced a non-event-stream 2xx, else ensure an
+        // event-stream is never cached. (The handler-less TS path sets its own headers, so
+        // this is where a forgotten `text/event-stream` is caught.)
+        let result = self.dispatch(req).await.map(|mut response| {
+            if super::access::violates_sse_contract(
+                self.require_sse,
+                response.status().as_u16(),
+                response.headers(),
+            ) {
+                sse_violation_response()
+            } else {
+                super::access::ensure_no_cache(&mut response);
+                response
+            }
+        });
         let (status, proto) = match &result {
             Ok(r) => (
                 r.status().as_u16(),
@@ -205,6 +233,22 @@ impl HttpServer {
             },
         }
     }
+}
+
+/// A 500 for a `protocol = "sse"` listener whose handler produced a non-event-stream
+/// reply — built in the runner's outgoing-body type so it slots into the serve path.
+fn sse_violation_response() -> hyper::Response<HyperOutgoingBody> {
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Bytes;
+    let body = Full::new(Bytes::from_static(
+        b"protocol=\"sse\" requires a text/event-stream response",
+    ))
+    .map_err(|never| match never {})
+    .boxed_unsync();
+    hyper::Response::builder()
+        .status(500)
+        .body(body)
+        .expect("500 response builds")
 }
 
 #[cfg(test)]
@@ -376,6 +420,45 @@ mod tests {
         );
 
         handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_sse_listener_adds_no_cache_and_rejects_a_non_event_stream() {
+        // A `protocol = "sse"` listener (`.require_event_stream()`) over the handler-less
+        // TS path — the most valuable place for the check, since a hand-written `fetch`
+        // sets its own content-type. A proper SSE handler gets `Cache-Control: no-cache`;
+        // a handler that forgot `text/event-stream` fails loud (500) instead of silently
+        // serving a broken stream.
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+
+        let ok = wr
+            .http_server_js(TS_SSE, CapabilityProfile::Trusted.capabilities())
+            .require_event_stream();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let ok_handle = tokio::spawn(ok.serve(listener));
+        let response = get(addr).await.to_lowercase();
+        assert!(response.starts_with("http/1.1 200"), "got: {response}");
+        assert!(response.contains("text/event-stream"), "is SSE: {response}");
+        assert!(
+            response.contains("cache-control: no-cache"),
+            "the host adds no-cache to a TS SSE stream: {response}"
+        );
+        ok_handle.abort();
+
+        // A plain-text TS handler on an sse listener (forgot the header) → 500.
+        let bad = wr
+            .http_server_js(TS_HELLO, CapabilityProfile::Trusted.capabilities())
+            .require_event_stream();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bad_handle = tokio::spawn(bad.serve(listener));
+        let response = get(addr).await;
+        assert!(
+            response.starts_with("HTTP/1.1 500"),
+            "a non-event-stream TS reply on an sse listener fails loud: {response}"
+        );
+        bad_handle.abort();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

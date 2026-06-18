@@ -365,7 +365,11 @@ mod tests {
         assert_eq!(&ws.next().await.unwrap().unwrap().into_data()[..], b"hi ts");
 
         ws.close(None).await.unwrap(); // disconnect
-        assert_eq!(next_event(&mut rx).await, b"close", "close fires on disconnect");
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on disconnect"
+        );
 
         handle.abort();
     }
@@ -400,7 +404,11 @@ mod tests {
         assert_eq!(&ws.next().await.unwrap().unwrap().into_data()[..], b"hi go");
 
         ws.close(None).await.unwrap(); // disconnect
-        assert_eq!(next_event(&mut rx).await, b"close", "close fires on disconnect");
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on disconnect"
+        );
 
         handle.abort();
     }

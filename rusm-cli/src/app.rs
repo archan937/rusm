@@ -355,10 +355,11 @@ pub async fn serve_apps(
             let table = spec
                 .route_table()
                 .map_err(|e| anyhow!("invalid [serve.routes] for {}: {e}", spec.listen))?;
-            tokio::spawn(
-                wasm.routed_http_server(routed_resolver(table), caps_map.clone())
-                    .serve(listener),
-            )
+            let mut server = wasm.routed_http_server(routed_resolver(table), caps_map.clone());
+            if spec.protocol.is_sse() {
+                server = server.require_event_stream();
+            }
+            tokio::spawn(server.serve(listener))
         } else {
             // No routes: a single named handler component — a WebSocket worker
             // (per connection) or a handler-less `wasi:http` HTTP component.
@@ -378,7 +379,11 @@ pub async fn serve_apps(
                 .unwrap_or_else(|| CapabilityProfile::Sandboxed.capabilities());
             let remote = remote_bundle(spec.source.as_deref(), wasm).await?;
             if spec.protocol.is_http() {
-                tokio::spawn(build_http_server(dir, wasm, name, caps, remote)?.serve(listener))
+                let mut server = build_http_server(dir, wasm, name, caps, remote)?;
+                if spec.protocol.is_sse() {
+                    server = server.require_event_stream();
+                }
+                tokio::spawn(server.serve(listener))
             } else {
                 tokio::spawn(build_ws_server(dir, wasm, name, caps, remote)?.serve(listener))
             }

@@ -58,6 +58,9 @@ pub struct RoutedHttpServer {
     resolve: Resolver,
     /// The capability profile to spawn each handler component under, by name.
     caps: Arc<HashMap<String, Capabilities>>,
+    /// Listener declared `protocol = "sse"`: every 2xx reply must be a
+    /// `text/event-stream`, or the host fails loud (a manifest/handler contract check).
+    require_sse: bool,
 }
 
 impl WasmRuntime {
@@ -76,11 +79,20 @@ impl WasmRuntime {
             spawner: self.spawner.clone(),
             resolve,
             caps: Arc::new(caps),
+            require_sse: false,
         }
     }
 }
 
 impl RoutedHttpServer {
+    /// Mark this as an SSE listener (`protocol = "sse"`): every successful reply must be a
+    /// `text/event-stream`, or the host serves 500 (a contract check — see
+    /// [`super::access::violates_sse_contract`]).
+    pub fn require_event_stream(mut self) -> Self {
+        self.require_sse = true;
+        self
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes — one task per connection. Abort
     /// the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
@@ -117,10 +129,25 @@ impl RoutedHttpServer {
             .map(|pq| pq.as_str())
             .unwrap_or("/")
             .to_string();
-        let response = match self.dispatch(req).await {
+        let mut response = match self.dispatch(req).await {
             Ok(response) => response,
             Err(never) => match never {}, // dispatch is infallible
         };
+        // SSE transport correctness, uniform across all guest languages: fail loud on a
+        // `protocol = "sse"` listener that produced a non-event-stream 2xx, else ensure an
+        // event-stream is never cached.
+        if super::access::violates_sse_contract(
+            self.require_sse,
+            response.status().as_u16(),
+            response.headers(),
+        ) {
+            response = error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "protocol=\"sse\" requires a text/event-stream response",
+            );
+        } else {
+            super::access::ensure_no_cache(&mut response);
+        }
         let proto = if super::access::is_event_stream(response.headers()) {
             "sse"
         } else {
@@ -481,6 +508,51 @@ mod tests {
                 .await
                 .starts_with("HTTP/1.1 405"),
             "matched path + wrong method is 405"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_sse_listener_adds_no_cache_and_rejects_a_non_event_stream() {
+        // A `protocol = "sse"` listener (`.require_event_stream()`): the host enforces SSE
+        // transport correctness on every reply — add `Cache-Control: no-cache` to the
+        // event-stream, and fail loud (500) on a route that returns a non-event-stream.
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(HANDLERS).unwrap(), "run")
+            .unwrap();
+        wr.register_component("demo", prepared);
+        let table = RouteTable::from_map(&HashMap::from([
+            ("GET /ticks".to_string(), "demo#ticks".to_string()),
+            ("GET /hello/:name".to_string(), "demo#hello".to_string()),
+        ]))
+        .unwrap();
+        let caps = HashMap::from([(
+            "demo".to_string(),
+            CapabilityProfile::Sandboxed.capabilities(),
+        )]);
+        let server = wr
+            .routed_http_server(resolver(table), caps)
+            .require_event_stream();
+        let addr = serve_on(server).await;
+
+        // A real SSE action: 200, text/event-stream, and the host-added `no-cache`.
+        let ticks = request(addr, "GET", "/ticks", "").await.to_lowercase();
+        assert!(ticks.starts_with("http/1.1 200"), "got: {ticks}");
+        assert!(ticks.contains("text/event-stream"), "is SSE: {ticks}");
+        assert!(
+            ticks.contains("cache-control: no-cache"),
+            "the host adds no-cache to an SSE stream: {ticks}"
+        );
+
+        // A buffered (non-event-stream) action on an SSE listener breaks the contract → 500.
+        let bad = request(addr, "GET", "/hello/alice", "").await;
+        assert!(
+            bad.starts_with("HTTP/1.1 500"),
+            "a non-event-stream reply on an sse listener fails loud: {bad}"
+        );
+        assert!(
+            bad.contains("text/event-stream"),
+            "the 500 explains the SSE contract: {bad}"
         );
     }
 

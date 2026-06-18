@@ -221,8 +221,10 @@ pub enum ServeProtocol {
     /// Request/response HTTP/1.1 — a `wasi:http` component, one instance per request.
     Http,
     /// Server-Sent Events: an HTTP component that streams a `text/event-stream`
-    /// body. Served identically to [`Http`](Self::Http); the tag documents intent
-    /// and lets a load driver pick the streaming scenario.
+    /// body. Hosted by the same server as [`Http`](Self::Http), but the tag is
+    /// load-bearing: it makes the host enforce SSE transport correctness (add
+    /// `Cache-Control: no-cache`, and fail loud if a reply isn't `text/event-stream`),
+    /// drives the CLI probe hint, and lets a load driver pick the streaming scenario.
     Sse,
     /// WebSocket — one sandboxed component process per connection.
     Ws,
@@ -233,6 +235,12 @@ impl ServeProtocol {
     /// plain HTTP and SSE are; only WebSocket uses a different server.
     pub fn is_http(self) -> bool {
         matches!(self, Self::Http | Self::Sse)
+    }
+
+    /// Whether this listener is declared for Server-Sent Events — so the host enforces
+    /// the `text/event-stream` contract and SSE caching rules on its replies.
+    pub fn is_sse(self) -> bool {
+        matches!(self, Self::Sse)
     }
 }
 
@@ -567,6 +575,9 @@ mod tests {
         assert_eq!(cfg.serve[2].protocol, ServeProtocol::Sse);
         assert!(cfg.serve[0].protocol.is_http() && cfg.serve[2].protocol.is_http());
         assert!(!cfg.serve[1].protocol.is_http());
+        // ...but only the SSE listener enforces the event-stream contract.
+        assert!(cfg.serve[2].protocol.is_sse());
+        assert!(!cfg.serve[0].protocol.is_sse() && !cfg.serve[1].protocol.is_sse());
     }
 
     #[test]

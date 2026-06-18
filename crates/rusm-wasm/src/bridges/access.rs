@@ -53,6 +53,36 @@ pub(crate) fn is_event_stream(headers: &hyper::HeaderMap) -> bool {
         .is_some_and(|c| c.starts_with("text/event-stream"))
 }
 
+/// SSE transport correctness, applied to every served response so all three guest
+/// languages behave identically: an event-stream must never be cached, yet none of the
+/// SDKs set it. Add `Cache-Control: no-cache` when this is an event-stream that lacks
+/// one — idempotent, and a guest's explicit value is left untouched.
+pub(crate) fn ensure_no_cache<B>(response: &mut hyper::Response<B>) {
+    if is_event_stream(response.headers())
+        && !response
+            .headers()
+            .contains_key(hyper::header::CACHE_CONTROL)
+    {
+        response.headers_mut().insert(
+            hyper::header::CACHE_CONTROL,
+            hyper::header::HeaderValue::from_static("no-cache"),
+        );
+    }
+}
+
+/// Whether a listener declared `protocol = "sse"` produced a contract violation: a
+/// successful (2xx) reply that is **not** a `text/event-stream`. The host serves this as
+/// 500 rather than silently delivering a broken SSE endpoint — failing loud where a guest
+/// (notably a hand-written TS `fetch`) forgot the content-type. Always false for a plain
+/// HTTP listener (`require_sse == false`), and an error reply (a 4xx/5xx) is left alone.
+pub(crate) fn violates_sse_contract(
+    require_sse: bool,
+    status: u16,
+    headers: &hyper::HeaderMap,
+) -> bool {
+    require_sse && (200..300).contains(&status) && !is_event_stream(headers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +119,61 @@ mod tests {
             "application/json".parse().unwrap(),
         );
         assert!(!is_event_stream(&h));
+    }
+
+    fn response_with(content_type: Option<&str>) -> hyper::Response<()> {
+        let mut r = hyper::Response::new(());
+        if let Some(ct) = content_type {
+            r.headers_mut()
+                .insert(hyper::header::CONTENT_TYPE, ct.parse().unwrap());
+        }
+        r
+    }
+
+    #[test]
+    fn ensure_no_cache_only_marks_uncached_event_streams() {
+        // An event-stream without Cache-Control gains `no-cache`.
+        let mut sse = response_with(Some("text/event-stream"));
+        ensure_no_cache(&mut sse);
+        assert_eq!(
+            sse.headers().get(hyper::header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+
+        // A guest's explicit Cache-Control is preserved (idempotent / non-clobbering).
+        let mut explicit = response_with(Some("text/event-stream"));
+        explicit.headers_mut().insert(
+            hyper::header::CACHE_CONTROL,
+            "no-store, max-age=0".parse().unwrap(),
+        );
+        ensure_no_cache(&mut explicit);
+        assert_eq!(
+            explicit
+                .headers()
+                .get(hyper::header::CACHE_CONTROL)
+                .unwrap(),
+            "no-store, max-age=0"
+        );
+
+        // A non-SSE response is untouched.
+        let mut plain = response_with(Some("application/json"));
+        ensure_no_cache(&mut plain);
+        assert!(!plain.headers().contains_key(hyper::header::CACHE_CONTROL));
+    }
+
+    #[test]
+    fn violates_sse_contract_flags_only_a_non_event_stream_2xx_on_an_sse_listener() {
+        let sse = response_with(Some("text/event-stream"));
+        let json = response_with(Some("application/json"));
+
+        // The violation: an SSE listener returned a 2xx that isn't an event-stream.
+        assert!(violates_sse_contract(true, 200, json.headers()));
+        // Not a violation: it *is* an event-stream.
+        assert!(!violates_sse_contract(true, 200, sse.headers()));
+        // Not a violation: an error reply (4xx/5xx) is allowed to be plain.
+        assert!(!violates_sse_contract(true, 404, json.headers()));
+        assert!(!violates_sse_contract(true, 500, json.headers()));
+        // Never a violation on a plain HTTP listener.
+        assert!(!violates_sse_contract(false, 200, json.headers()));
     }
 }

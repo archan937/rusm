@@ -64,17 +64,18 @@ pub mod api {
     }
 
     pub fn events(_req: Request, p: Params, sse: Sse) {            // 3 args → SSE
-        let room = p.get("room").unwrap_or("lobby").to_string();
+        let label = p.get("label").unwrap_or("tick").to_string();
         for n in 0.. {
-            if !sse.data(format!("{room} tick {n}").as_bytes()) { break; }
+            if !sse.data(format!("{label} {n}\n").as_bytes()) { break; }
         }
     }
 }
 ```
 
-**WS** — implement `ws::Handler` (`open`/`message`, reply via `Connection::send`) and
-`ws::serve` it; the host runs one isolated process per connection (no `close` callback —
-the process exits on disconnect):
+**WS** — implement `ws::Handler` (`open`/`message`/`close`, reply via `Connection::send`)
+and `ws::serve` it; the host runs one isolated process per connection. `open` fires on
+connect, `message` per inbound frame, `close` once on disconnect (clean or dropped) —
+`open` and `close` are optional:
 
 ```rust
 use rusm_rs::ws::{self, Connection, Handler};
@@ -85,6 +86,7 @@ struct Echo;
 impl Handler for Echo {
     fn open(&mut self, conn: &Connection) { conn.send(b"welcome\n"); }
     fn message(&mut self, conn: &Connection, data: Vec<u8>) { conn.send(&data); }
+    fn close(&mut self, _conn: &Connection) { /* disconnect — clean or dropped */ }
 }
 
 #[rusm_rs::main]
