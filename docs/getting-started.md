@@ -38,6 +38,8 @@ rusm serve                   # → http://127.0.0.1:8080
 curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 ```
 
+### Scaffold a real app — the todo board
+
 Want a real app instead of hello world? Scaffold the full **todo board** — HTTP CRUD, a
 live SSE feed, WebSocket chat, and a resident `store` service driven by a worker — in
 TypeScript, Rust, or Go:

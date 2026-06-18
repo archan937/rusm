@@ -39,9 +39,10 @@ rusm serve                   # → http://127.0.0.1:8080
 curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 ```
 
-**Or scaffold the full example app** — a collaborative todo board (HTTP CRUD + a live
-SSE feed + WebSocket chat + a resident `store` service driven by a worker), in
-TypeScript, Rust, or Go:
+### Scaffold a real app — the todo board
+
+A collaborative todo board (HTTP CRUD + a live SSE feed + WebSocket chat + a resident
+`store` service driven by a worker), in TypeScript, Rust, or Go:
 
 ```sh
 rusm new board --template todo-board   # add --lang rust or --lang go (default: ts)
