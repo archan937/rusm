@@ -21,7 +21,7 @@ use http_body_util::{BodyExt, StreamBody};
 use hyper::body::{Bytes, Frame};
 use hyper::Response;
 use hyper_util::rt::TokioIo;
-use rusm_otp::Received;
+use rusm_otp::{Pid, Received};
 use tokio::net::TcpListener;
 
 use crate::caps::Capabilities;
@@ -31,9 +31,16 @@ use crate::{PreparedComponent, Spawner, WasmRuntime};
 type ResBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
 
 /// Keep-alive interval: if no event flows for this long the writer emits a `: ping`
-/// comment, so intermediaries don't reap an idle stream and a dead client is noticed
-/// (the ping write fails) within the window.
+/// comment, so intermediaries don't reap an idle stream. Prompt disconnect *teardown* does
+/// **not** rely on this ping — SSE is one-way (no inbound read channel for the writer to
+/// notice a drop on), so it comes from the connection task reaping the per-connection
+/// processes when hyper completes `serve_connection` (see [`SseServer::serve`]).
 const HEARTBEAT: Duration = Duration::from_secs(15);
+
+/// Grace for a handler to run its own `close` (via its monitor of the writer) after a
+/// client disconnect, before the connection task force-reaps it — mirrors the WS bridge,
+/// so a cooperating handler tears down gracefully and one that ignores it still can't leak.
+const CLOSE_GRACE: Duration = Duration::from_millis(200);
 
 /// Body channel depth — bounded, so a slow client back-pressures the writer (it parks on
 /// `send`) instead of the body buffering without limit.
@@ -102,14 +109,44 @@ impl SseServer {
             stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
+                let rt = server.spawner.rt.clone();
+                // The per-connection processes (handler + its writer) spawned while serving
+                // this connection. SSE is one-way with no inbound read channel, so the
+                // handler can't see a client disconnect itself — but hyper surfaces it by
+                // *completing* `serve_connection` (even for an idle stream). That is the
+                // prompt teardown signal: when the connection ends we reap these processes,
+                // releasing the handler's process-group tag at once — so a dropped/refreshed
+                // connection never leaks a live process. (The WS bridge force-reaps the same
+                // way; the writer's heartbeat is only a keep-alive + last-resort backstop.)
+                let procs: Arc<std::sync::Mutex<Vec<(Pid, Pid)>>> =
+                    Arc::new(std::sync::Mutex::new(Vec::new()));
+                let slot = Arc::clone(&procs);
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
-                    async move { server.handle(req).await }
+                    let slot = Arc::clone(&slot);
+                    async move { server.handle(req, slot).await }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
                     .serve_connection(TokioIo::new(stream), service)
                     .await;
+                // `serve_connection` completed = the client disconnected (hyper surfaces it
+                // by finishing the future, even for an idle stream). Reap each per-connection
+                // (writer, handler): kill the writer — its `tx` drop ends the body and a
+                // handler monitoring it runs `close` and exits — give that a brief grace,
+                // then force-reap a handler that ignored the disconnect. Mirrors the WS
+                // bridge, so a dropped/refreshed connection releases its tag and leaks nothing.
+                let pairs = std::mem::take(&mut *procs.lock().unwrap());
+                for (writer_pid, component_pid) in pairs {
+                    rt.kill(writer_pid);
+                    let deadline = tokio::time::Instant::now() + CLOSE_GRACE;
+                    while rt.is_alive(component_pid) && tokio::time::Instant::now() < deadline {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    if rt.is_alive(component_pid) {
+                        rt.kill(component_pid);
+                    }
+                }
             });
         }
     }
@@ -121,6 +158,7 @@ impl SseServer {
     async fn handle(
         &self,
         req: hyper::Request<hyper::body::Incoming>,
+        procs: Arc<std::sync::Mutex<Vec<(Pid, Pid)>>>,
     ) -> Result<Response<ResBody>, Infallible> {
         let method = req.method().as_str().to_string();
         let path = req
@@ -144,7 +182,7 @@ impl SseServer {
         let writer = rt.spawn(move |mut ctx| async move {
             loop {
                 tokio::select! {
-                    _ = tx.closed() => break, // client disconnected
+                    _ = tx.closed() => break, // client disconnected (hyper dropped the body)
                     received = ctx.recv() => match received {
                         Received::Message(payload) => {
                             if tx.send(sse_data_frame(&payload)).await.is_err() {
@@ -176,6 +214,10 @@ impl SseServer {
         // crash); the handler (monitoring the writer in its SDK loop) ends when the writer
         // dies on client disconnect (its `closed()` arm). Neither side leaks.
         rt.monitor(writer.pid(), component.pid());
+        // Hand this connection's (writer, handler) to the connection task, which reaps them
+        // when `serve_connection` completes (the client disconnect) — SSE has no inbound
+        // read channel, so that completion is the only prompt disconnect signal.
+        procs.lock().unwrap().push((writer.pid(), component.pid()));
 
         let body = futures_util::stream::unfold(rx, |mut rx| async move {
             rx.recv()
@@ -301,6 +343,57 @@ mod tests {
             b"close",
             "close fires on disconnect"
         );
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_idle_sse_client_disconnect_is_reaped_with_no_leak() {
+        // An *idle* SSE client disconnect (no events ever published): the writer can't see
+        // it (SSE has no inbound read channel), so the connection task reaps the handler
+        // when hyper completes `serve_connection` — `close` fires and the "feed" tag is
+        // released, so a dropped/refreshed connection leaks no live process. Regression for
+        // feeds lingering and piling up one-per-refresh.
+        const SSE_FEED: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_feed.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_FEED).unwrap(), "run")
+            .unwrap();
+        let server = wr.sse_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // Connect, let `open` fire (it subscribes to "feed"), then go idle and disconnect —
+        // no events are ever published, so only the connection task (hyper completing
+        // `serve_connection`) can surface the drop, never the handler itself.
+        {
+            let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+            conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+            assert_eq!(rt.whereis_tag("feed").len(), 1, "one live feed subscriber");
+        } // `conn` dropped here → client disconnect, stream idle
+
+        // The handler must run `close` and exit promptly (the connection task reaps it)…
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "idle disconnect tears the handler down"
+        );
+        // …and its "feed" tag is released, so a dropped connection leaves no live process.
+        let start = std::time::Instant::now();
+        while !rt.whereis_tag("feed").is_empty() {
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "feed tag released promptly after idle disconnect (no leak)"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
 
         handle.abort();
     }
