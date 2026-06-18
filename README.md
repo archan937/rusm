@@ -41,7 +41,7 @@ curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 
 ### Scaffold a real app — the TODO board
 
-A collaborative TODO board (HTTP CRUD + a live SSE feed + WebSocket chat + a resident
+A collaborative TODO board (HTTP CRUD + a live SSE feed + WebSocket Chat + a resident
 `store` service driven by a worker), in TypeScript, Rust, or Go:
 
 ```sh
