@@ -7,6 +7,15 @@ GH_PAGES := gh-pages
 SCENARIO ?= connection-storm
 SECONDS ?= 5
 EX ?= host_components
+VERSION ?= 0.2.0
+
+# crates.io publish order — dependencies before dependents. Each crate is published from
+# its own directory, so the same loop works for workspace members AND the wasm-only guest
+# crates excluded from the workspace (rusm-rs, rusm-rs-macros).
+PUBLISH_ORDER := \
+	crates/rusm-logfmt crates/rusm-wire crates/rusm-metrics crates/rusm-kv crates/rusm-jsc \
+	crates/rusm-rs-macros crates/rusm-otp crates/rusm-observer crates/rusm-node \
+	crates/rusm-cluster crates/rusm-rs crates/rusm-wasm rusm-cli
 
 .PHONY: help
 help: ## Show this help
@@ -96,6 +105,42 @@ docs-deploy: docs-build ## Build the docs and force-push them to the gh-pages br
 		git -C $(DIST) push -f "$$origin" HEAD:$(GH_PAGES); \
 		status=$$?; rm -rf $(DIST)/.git; \
 		[ $$status -eq 0 ] && echo "==> done: https://archan937.github.io/rusm/" || exit $$status
+
+.PHONY: publish-dry
+publish-dry: ## Release pre-flight: dry-run every crate publish (no side effects)
+	@for d in $(PUBLISH_ORDER); do \
+		echo "==> dry-run $$d"; \
+		( cd $$d && cargo publish --dry-run ) || { echo "✗ dry-run failed: $$d"; exit 1; }; \
+	done
+	@echo "==> all crates package cleanly"
+
+.PHONY: publish-crates
+publish-crates: ## Publish all crates to crates.io in dependency order
+	@for d in $(PUBLISH_ORDER); do \
+		echo "==> publish $$d"; \
+		( cd $$d && cargo publish ) || { echo "✗ publish failed: $$d — fix, then re-run from here"; exit 1; }; \
+	done
+
+.PHONY: publish-npm
+publish-npm: ## Publish the rusm-ts package to npm
+	cd packages/rusm-ts && npm publish
+
+.PHONY: publish-tags
+publish-tags: ## Tag the release (v$(VERSION)) + the rusm-go submodule, push the tags
+	git tag v$(VERSION)
+	git tag packages/rusm-go/v$(VERSION)
+	git push origin v$(VERSION) packages/rusm-go/v$(VERSION)
+
+.PHONY: publish
+publish: ## Full release v$(VERSION): crates.io + npm + tags (run `make publish-dry` first)
+	@test -z "$$(git status --porcelain)" || { echo "✗ working tree not clean — commit first"; exit 1; }
+	@git diff --quiet origin/main..HEAD 2>/dev/null || { echo "→ note: push commits to origin first so the tags point at pushed history"; }
+	@echo "Publishing RUSM v$(VERSION) to crates.io + npm + git tags — Ctrl-C within 5s to abort."
+	@sleep 5
+	$(MAKE) publish-crates
+	$(MAKE) publish-npm
+	$(MAKE) publish-tags
+	@echo "==> v$(VERSION) published. Now create the GitHub release from the CHANGELOG."
 
 .PHONY: clean
 clean: ## Remove Rust build artifacts
