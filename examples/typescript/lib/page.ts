@@ -44,9 +44,8 @@ export const page = /* html */ `<!doctype html>
   </section>
 
   <section>
-    <h2>Live feed — SSE <span class="what">(the <code>feed</code> component, :8081)</span></h2>
-    <p class="what">A process per connection that subscribes to the todo tag and streams each change — true push, not polling. The list above refreshes as todos change anywhere; to watch the raw stream:</p>
-    <pre class="what"><code>curl -N localhost:8081</code></pre>
+    <h2>Live feed — SSE <span class="what">(the <code>feed</code> component, :8081)</span> <span id="feedstatus" class="what">connecting…</span></h2>
+    <p class="what"><b>The list above is driven by this feed</b> — a process per connection that subscribes to the todo tag and streams each change (true push, not polling). Open a second tab and watch changes appear live. The cross-origin read works because the listener declares <code>access-control-allow-origin</code> in its <code>[serve.headers]</code>. Raw stream: <code>curl -N localhost:8081</code></p>
   </section>
 
   <section>
@@ -66,29 +65,35 @@ export const page = /* html */ `<!doctype html>
   <script>
     const $ = (id) => document.getElementById(id);
 
-    // --- Todos (api, same origin) ---
-    async function load() {
-      const todos = await fetch("/todos").then((r) => r.json());
+    // --- Todos: rendered from the SSE feed (live), with a same-origin fetch as the
+    //     first paint and a fallback after local actions. ---
+    function render(todos) {
       $("todos").innerHTML = "";
       for (const t of todos) {
         const li = document.createElement("li");
         if (t.done) li.className = "done";
         li.innerHTML = '<span></span><button class="t">toggle</button><button class="d">delete</button>';
         li.querySelector("span").textContent = "#" + t.id + " " + t.text;
-        li.querySelector(".t").onclick = () => fetch("/todos/" + t.id, { method: "PATCH" }).then(load);
-        li.querySelector(".d").onclick = () => fetch("/todos/" + t.id, { method: "DELETE" }).then(load);
+        li.querySelector(".t").onclick = () => fetch("/todos/" + t.id, { method: "PATCH" });
+        li.querySelector(".d").onclick = () => fetch("/todos/" + t.id, { method: "DELETE" });
         $("todos").appendChild(li);
       }
     }
+    const load = () => fetch("/todos").then((r) => r.json()).then(render);
     $("add").onclick = async () => {
       const text = $("text").value.trim();
       if (!text) return;
       await fetch("/todos", { method: "POST", body: JSON.stringify({ text }) });
       $("text").value = "";
-      load();
     };
-    load();
-    setInterval(load, 1500); // reflect changes from other clients (the feed pushes the same data live)
+    load(); // first paint (the feed then drives every update, including other clients')
+
+    // --- Live feed (SSE): the api publishes each change; this pushes it here. The
+    //     cross-origin EventSource works because the feed listener sets CORS. ---
+    const feed = new EventSource("http://" + location.hostname + ":8081");
+    feed.onopen = () => ($("feedstatus").textContent = "● live");
+    feed.onmessage = (e) => render(JSON.parse(e.data));
+    feed.onerror = () => ($("feedstatus").textContent = "○ offline");
 
     // --- Chat (WebSocket) ---
     const log = (line) => { $("chatlog").textContent += line + "\\n"; $("chatlog").scrollTop = 1e9; };

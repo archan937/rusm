@@ -272,6 +272,14 @@ pub struct ServeSpec {
     /// `kv:<bucket>/<key>` instead of `./wasm/<name>` (see [`BundleSource`]).
     #[serde(default)]
     pub source: Option<String>,
+    /// Extra response headers for **this** listener, the `[serve.headers]` table:
+    /// `"name" = "value"`. The host merges them into every HTTP/SSE response on the
+    /// listener, over its transport defaults — the listener's **response policy**
+    /// (e.g. `"access-control-allow-origin" = "*"` to let a browser read a cross-origin
+    /// SSE feed, or security headers). Application policy, declared here; the platform
+    /// only applies it. A `BTreeMap` so the emitted order is deterministic.
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
 }
 
 impl ServeSpec {
@@ -279,6 +287,14 @@ impl ServeSpec {
     /// malformed entry). Empty when no routes are declared.
     pub fn route_table(&self) -> Result<crate::routes::RouteTable, String> {
         crate::routes::RouteTable::from_map(&self.routes)
+    }
+
+    /// This listener's `[serve.headers]` as ordered pairs (for the serving bridges).
+    pub fn header_pairs(&self) -> Vec<(String, String)> {
+        self.headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 }
 
@@ -620,6 +636,42 @@ mod tests {
             .serve
             .first()
             .map_or(true, |s| s.route_table().unwrap().is_empty()));
+    }
+
+    #[test]
+    fn parses_per_listener_response_headers() {
+        // `[serve.headers]` attaches to its `[[serve]]` entry — the listener's response
+        // policy (e.g. CORS so a browser can read a cross-origin SSE feed). Defaults empty.
+        let cfg = NodeConfig::from_toml(
+            r#"
+            [[serve]]
+            name = "feed"
+            protocol = "sse"
+            listen = "127.0.0.1:8081"
+
+            [serve.headers]
+            "access-control-allow-origin" = "*"
+            "x-demo" = "1"
+
+            [[serve]]
+            name = "plain"
+            protocol = "http"
+            listen = "127.0.0.1:8080"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.serve[0].header_pairs(),
+            vec![
+                ("access-control-allow-origin".to_string(), "*".to_string()),
+                ("x-demo".to_string(), "1".to_string()),
+            ],
+            "headers parse in deterministic (sorted) order"
+        );
+        assert!(
+            cfg.serve[1].header_pairs().is_empty(),
+            "no headers by default"
+        );
     }
 
     #[test]

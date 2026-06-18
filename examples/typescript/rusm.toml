@@ -20,6 +20,11 @@ name = "feed"
 protocol = "sse"
 listen = "127.0.0.1:8081"
 
+# This listener's response policy: let the page (served from :8080) read this cross-origin
+# SSE feed. CORS is the app's policy, declared here; the platform just applies it.
+[serve.headers]
+"access-control-allow-origin" = "*"
+
 [[serve]]
 name = "chat"
 protocol = "ws"

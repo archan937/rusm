@@ -198,6 +198,31 @@ declaration order. Resolution semantics:
 | A path matches but the method does not | **HTTP 405** (Method Not Allowed) |
 | No route matches the path | **HTTP 404** (Not Found) |
 
+## `[serve.headers]` — per-listener response headers
+
+An optional subtable on an HTTP/SSE `[[serve]]` listener (like `[serve.routes]`, it
+attaches to the most recent `[[serve]]`): response headers the host merges into **every**
+reply on that listener, over its transport defaults. This is the listener's **response
+policy** — declared by the app, applied by the platform. The common case is CORS, so a
+browser page can read a **cross-origin SSE feed** (the SSE handler can't set the head
+itself):
+
+```toml
+[[serve]]
+name = "feed"
+protocol = "sse"
+listen = "127.0.0.1:8081"
+
+[serve.headers]
+"access-control-allow-origin" = "*"      # let a browser on another origin read this feed
+```
+
+Each `"name" = "value"` is added to the response (an invalid header name/value is
+skipped, never fatal). The platform's own transport headers (`content-type:
+text/event-stream`, `cache-control: no-cache` for SSE) still apply; a header you declare
+here with the same name overrides them. Useful too for security headers
+(`x-frame-options`, …) on an HTTP listener.
+
 ## `[capabilities.<name>]` — custom capability profiles
 
 Like Cargo's `[profile.<name>]`: a profile **inherits** a built-in base and overrides

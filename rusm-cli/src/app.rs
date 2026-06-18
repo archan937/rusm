@@ -360,6 +360,7 @@ pub async fn serve_apps(
                 .map_err(|e| anyhow!("invalid [serve.routes] for {}: {e}", spec.listen))?;
             tokio::spawn(
                 wasm.routed_http_server(routed_resolver(table), caps_map.clone())
+                    .with_headers(spec.header_pairs())
                     .serve(listener),
             )
         } else {
@@ -384,16 +385,21 @@ pub async fn serve_apps(
                 .map(|c| capabilities_for(&c.capability, profiles))
                 .unwrap_or_else(|| CapabilityProfile::Sandboxed.capabilities());
             let remote = remote_bundle(spec.source.as_deref(), wasm).await?;
+            let headers = spec.header_pairs();
             match spec.protocol {
-                ServeProtocol::Sse => {
-                    tokio::spawn(build_sse_server(dir, wasm, name, caps, remote)?.serve(listener))
-                }
+                ServeProtocol::Sse => tokio::spawn(
+                    build_sse_server(dir, wasm, name, caps, remote)?
+                        .with_headers(headers)
+                        .serve(listener),
+                ),
                 ServeProtocol::Ws => {
                     tokio::spawn(build_ws_server(dir, wasm, name, caps, remote)?.serve(listener))
                 }
-                ServeProtocol::Http => {
-                    tokio::spawn(build_http_server(dir, wasm, name, caps, remote)?.serve(listener))
-                }
+                ServeProtocol::Http => tokio::spawn(
+                    build_http_server(dir, wasm, name, caps, remote)?
+                        .with_headers(headers)
+                        .serve(listener),
+                ),
             }
         };
         endpoints.push(ServedEndpoint {
@@ -728,6 +734,7 @@ mod tests {
             routes: HashMap::new(),            // no routes → the handler-less wasi:http path
             name: Some("api".to_string()),
             source: None,
+            headers: Default::default(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -772,6 +779,7 @@ mod tests {
             routes: HashMap::new(),
             name: Some("echo".to_string()),
             source: None,
+            headers: Default::default(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -820,6 +828,7 @@ mod tests {
             ]),
             name: None,
             source: None,
+            headers: Default::default(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &handlers, &HashMap::new())
             .await
@@ -860,6 +869,7 @@ mod tests {
             routes: HashMap::new(),
             name: Some("ghost".to_string()),
             source: None,
+            headers: Default::default(),
         }];
         let err = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await

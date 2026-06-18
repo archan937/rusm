@@ -53,6 +53,26 @@ pub(crate) fn is_event_stream(headers: &hyper::HeaderMap) -> bool {
         .is_some_and(|c| c.starts_with("text/event-stream"))
 }
 
+/// Merge a listener's declared `[serve.headers]` into a response — the app's response
+/// policy (e.g. CORS so a browser may read a cross-origin SSE feed, or security headers),
+/// applied over the platform's transport defaults. Invalid names/values are skipped (a
+/// manifest typo can't break the serve loop). The app declares them; the platform only
+/// applies them.
+pub(crate) fn apply_extra_headers<B>(
+    response: &mut hyper::Response<B>,
+    headers: &[(String, String)],
+) {
+    let map = response.headers_mut();
+    for (name, value) in headers {
+        if let (Ok(name), Ok(value)) = (
+            name.parse::<hyper::header::HeaderName>(),
+            value.parse::<hyper::header::HeaderValue>(),
+        ) {
+            map.insert(name, value);
+        }
+    }
+}
+
 /// SSE transport correctness, applied to every served response so all three guest
 /// languages behave identically: an event-stream must never be cached, yet none of the
 /// SDKs set it. Add `Cache-Control: no-cache` when this is an event-stream that lacks
@@ -115,6 +135,25 @@ mod tests {
                 .insert(hyper::header::CONTENT_TYPE, ct.parse().unwrap());
         }
         r
+    }
+
+    #[test]
+    fn apply_extra_headers_merges_listener_policy_and_skips_invalid() {
+        let mut r = response_with(Some("text/event-stream"));
+        apply_extra_headers(
+            &mut r,
+            &[
+                ("access-control-allow-origin".into(), "*".into()),
+                ("bad name".into(), "x".into()), // invalid header name — skipped, not fatal
+            ],
+        );
+        assert_eq!(r.headers().get("access-control-allow-origin").unwrap(), "*");
+        assert!(r.headers().get("bad name").is_none());
+        // the transport default is untouched.
+        assert_eq!(
+            r.headers().get(hyper::header::CONTENT_TYPE).unwrap(),
+            "text/event-stream"
+        );
     }
 
     #[test]

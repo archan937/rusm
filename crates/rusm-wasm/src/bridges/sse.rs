@@ -52,6 +52,9 @@ pub struct SseServer {
     bundle: Option<Arc<Vec<u8>>>,
     spawner: Arc<Spawner>,
     caps: Capabilities,
+    /// The listener's `[serve.headers]` — merged into every response head (e.g. CORS so a
+    /// browser may read this cross-origin feed). Empty by default.
+    headers: Arc<Vec<(String, String)>>,
 }
 
 impl WasmRuntime {
@@ -63,6 +66,7 @@ impl WasmRuntime {
             bundle: None,
             spawner: Arc::clone(&self.spawner),
             caps,
+            headers: Arc::new(Vec::new()),
         }
     }
 
@@ -75,11 +79,19 @@ impl WasmRuntime {
             bundle: Some(Arc::new(bundle.into())),
             spawner: Arc::clone(&self.spawner),
             caps,
+            headers: Arc::new(Vec::new()),
         }
     }
 }
 
 impl SseServer {
+    /// Add the listener's `[serve.headers]` (the response-policy headers merged into each
+    /// SSE head — e.g. CORS).
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = Arc::new(headers);
+        self
+    }
+
     /// Serve SSE on `listener` until it closes — one connection per task. Abort the task
     /// driving this to stop.
     pub async fn serve(self, listener: TcpListener) {
@@ -170,12 +182,15 @@ impl SseServer {
                 .await
                 .map(|chunk| (Ok::<_, Infallible>(Frame::data(chunk)), rx))
         });
-        Ok(Response::builder()
+        let mut response = Response::builder()
             .status(200)
             .header("content-type", "text/event-stream")
             .header("cache-control", "no-cache")
             .body(StreamBody::new(body).boxed())
-            .expect("sse response builds"))
+            .expect("sse response builds");
+        // Merge the listener's declared response policy (e.g. CORS) over the SSE defaults.
+        super::access::apply_extra_headers(&mut response, &self.headers);
+        Ok(response)
     }
 }
 
@@ -445,6 +460,52 @@ mod tests {
             next_event(&mut rx).await,
             b"close",
             "close fires on disconnect"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_sse_listener_applies_serve_headers() {
+        // `[serve.headers]` (e.g. CORS) merges into the SSE head, over the transport
+        // defaults — so a browser can read a cross-origin feed.
+        const SSE_FEED: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_feed.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_FEED).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .sse_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_headers(vec![("access-control-allow-origin".into(), "*".into())]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 512];
+        loop {
+            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+                .await
+                .expect("the head arrives")
+                .expect("socket read ok");
+            seen.extend_from_slice(&buf[..n]);
+            if String::from_utf8_lossy(&seen).contains("\r\n\r\n") {
+                break; // end of response headers
+            }
+        }
+        let head = String::from_utf8_lossy(&seen).to_lowercase();
+        assert!(
+            head.contains("access-control-allow-origin: *"),
+            "serve.headers applied: {head}"
+        );
+        assert!(
+            head.contains("text/event-stream"),
+            "transport default kept: {head}"
         );
 
         handle.abort();

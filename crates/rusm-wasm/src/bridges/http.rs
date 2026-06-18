@@ -37,6 +37,9 @@ pub struct HttpServer {
     pre: ProxyPre<WasiHost>,
     spawner: Arc<Spawner>,
     caps: Capabilities,
+    /// The listener's `[serve.headers]` — merged into every response (e.g. CORS / security
+    /// headers). Empty by default.
+    headers: Arc<Vec<(String, String)>>,
 }
 
 impl WasmRuntime {
@@ -52,6 +55,7 @@ impl WasmRuntime {
             pre: prepared.pre.clone(),
             spawner: Arc::clone(&self.spawner),
             caps,
+            headers: Arc::new(Vec::new()),
         }
     }
 
@@ -81,6 +85,13 @@ impl WasmRuntime {
 }
 
 impl HttpServer {
+    /// Add the listener's `[serve.headers]` (response-policy headers merged into each
+    /// reply — e.g. CORS / security headers).
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = Arc::new(headers);
+        self
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes (one connection per task, one
     /// component instance per request). Abort the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
@@ -158,6 +169,7 @@ impl HttpServer {
         // sets it itself; this covers a raw `wasi:http` component that streams one).
         let result = self.dispatch(req).await.map(|mut response| {
             super::access::ensure_no_cache(&mut response);
+            super::access::apply_extra_headers(&mut response, &self.headers);
             response
         });
         let (status, proto) = match &result {
