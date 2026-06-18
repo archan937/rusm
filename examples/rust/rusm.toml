@@ -1,0 +1,52 @@
+# A collaborative todo board in Rust — the same three serving components as the
+# TypeScript example, idiomatic to Rust:
+#   • api  (HTTP) — #[rusm_rs::handlers] actions, routed declaratively (below); CRUD in kv,
+#                   publishing each change to subscribers
+#   • feed (SSE)  — a per-connection sse::serve handler that streams the live todo list
+#   • chat (WS)   — a per-connection ws::serve handler; rooms over process-group tags
+# `rusm build` compiles each components/<name>/ with cargo (wasm32-wasip2); `rusm serve`
+# hosts all three.
+
+[node]
+store = "data.redb"          # durable kv for the todos
+
+[log]
+level = "info"               # surface the components' log::info! lines
+
+# Routed HTTP: the api's actions are dispatched by method + path (Rust handlers route
+# declaratively, unlike the self-routing TS fetch handler).
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+
+[serve.routes]
+"GET /todos"          = "api#list"
+"POST /todos"         = "api#create"
+"PATCH /todos/:id"    = "api#toggle"
+"DELETE /todos/:id"   = "api#remove"
+"OPTIONS /todos"      = "api#preflight"
+"OPTIONS /todos/:id"  = "api#preflight"
+
+[[serve]]
+name = "feed"
+protocol = "sse"
+listen = "127.0.0.1:8081"
+
+[[serve]]
+name = "chat"
+protocol = "ws"
+listen = "127.0.0.1:8082"
+
+# api and feed read/write the durable todo list; chat is stateless (tags only).
+[capabilities.stateful]
+inherits = "sandboxed"
+allow-storage = true
+
+[components.api]
+capability = "stateful"
+
+[components.feed]
+capability = "stateful"
+
+[components.chat]
+capability = "sandboxed"

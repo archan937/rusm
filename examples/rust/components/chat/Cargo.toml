@@ -1,0 +1,23 @@
+# A chat room over WebSocket — a per-connection `ws::serve` handler.
+[workspace]
+
+[package]
+name = "chat"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "chat"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../crates/rusm-rs" }
+wit-bindgen = "0.46"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
