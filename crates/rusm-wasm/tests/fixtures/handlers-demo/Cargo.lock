@@ -233,8 +233,9 @@ dependencies = [
 
 [[package]]
 name = "rusm-rs"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
+ "log",
  "rusm-rs-macros",
  "rusm-wire",
  "serde",
@@ -244,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-rs-macros"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "proc-macro2",
  "quote",
