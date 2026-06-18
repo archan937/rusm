@@ -14,18 +14,18 @@ publish = false
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-rusm-node = { path = "../../crates/rusm-node", version = "0.1.1" }
-rusm-metrics = { path = "../../crates/rusm-metrics", version = "0.1.0" }
-rusm-observer = { path = "../../crates/rusm-observer", version = "0.1.0" }
-rusm-otp = { path = "../../crates/rusm-otp", version = "0.1.2" }
-rusm-wasm = { path = "../../crates/rusm-wasm", version = "0.1.4" }
+rusm-node = { path = "../../crates/rusm-node", version = "0.2.0" }
+rusm-metrics = { path = "../../crates/rusm-metrics", version = "0.2.0" }
+rusm-observer = { path = "../../crates/rusm-observer", version = "0.2.0" }
+rusm-otp = { path = "../../crates/rusm-otp", version = "0.2.0" }
+rusm-wasm = { path = "../../crates/rusm-wasm", version = "0.2.0" }
 # The durable KV primitive, driven directly by the kv-storm engine (as a guest
 # would, via the storage capability) for a factual durable-write throughput.
-rusm-kv = { path = "../../crates/rusm-kv", version = "0.1.0" }
-rusm-cluster = { path = "../../crates/rusm-cluster", version = "0.1.0" }
+rusm-kv = { path = "../../crates/rusm-kv", version = "0.2.0" }
+rusm-cluster = { path = "../../crates/rusm-cluster", version = "0.2.0" }
 # The out-of-process load lib, reused by the live serving-scenario engines so the
 # dashboard drives load through the same balter/capacity path as `rusm-loadtest`.
-rusm-loadtest = { path = "../rusm-loadtest", version = "0.1.0" }
+rusm-loadtest = { path = "../rusm-loadtest", version = "0.2.0" }
 anyhow = { workspace = true }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 tokio-tungstenite = "0.29.0"
