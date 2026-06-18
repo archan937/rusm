@@ -33,6 +33,7 @@ pub mod http;
 pub mod kv;
 pub mod logging;
 pub mod pubsub;
+pub mod sse;
 pub mod supervisor;
 pub mod wire;
 pub mod ws;

@@ -1,0 +1,26 @@
+# A per-connection SSE handler (rusm-rs) exercising the FULL lifecycle —
+# open / message / close — reporting "open"/"close" to a registered `collector`,
+# subscribing to the "feed" process-group tag, and emitting each published event. Proves
+# push-via-tags + close-on-disconnect. Built for wasm32-wasip2, checked in as
+# rs_sse_feed.wasm. Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/rs_sse_feed.wasm ../rs_sse_feed.wasm
+[workspace]
+
+[package]
+name = "rs-sse-feed"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "rs_sse_feed"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"
