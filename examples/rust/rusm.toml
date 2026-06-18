@@ -1,11 +1,13 @@
-# A collaborative todo board in Rust — the same three serving components as the
-# TypeScript example, idiomatic to Rust:
-#   • api  (HTTP) — #[rusm_rs::handlers] actions, routed declaratively (below); CRUD in kv,
-#                   publishing each change to subscribers
-#   • feed (SSE)  — a per-connection sse::serve handler that streams the live todo list
-#   • chat (WS)   — a per-connection ws::serve handler; rooms over process-group tags
+# A collaborative todo board in Rust — the same components as the TypeScript example,
+# idiomatic to Rust:
+#   • api      (HTTP) — #[rusm_rs::handlers] actions, routed declaratively (below); CRUD in
+#                       kv + serves the web page at `/`, publishing each change to subscribers
+#   • feed     (SSE)  — a per-connection sse::serve handler that streams the live todo list
+#   • chat     (WS)   — a per-connection ws::serve handler; rooms over process-group tags
+#   • store  (service) — its exported fns ARE the API; the typed-client target (composition)
+#   • reporter (worker) — resident; drives the store via store::Client (call/cast/stream/cb)
 # `rusm build` compiles each components/<name>/ with cargo (wasm32-wasip2); `rusm serve`
-# hosts all three.
+# hosts the three listeners and boots the resident reporter.
 
 [node]
 store = "data.redb"          # durable kv for the todos
@@ -20,6 +22,7 @@ protocol = "http"
 listen = "127.0.0.1:8080"
 
 [serve.routes]
+"GET /"               = "api#home"
 "GET /todos"          = "api#list"
 "POST /todos"         = "api#create"
 "PATCH /todos/:id"    = "api#toggle"
@@ -32,15 +35,24 @@ name = "feed"
 protocol = "sse"
 listen = "127.0.0.1:8081"
 
+# This listener's response policy: let the page (served from :8080) read this cross-origin
+# SSE feed. CORS is the app's policy, declared here; the platform just applies it.
+[serve.headers]
+"access-control-allow-origin" = "*"
+
 [[serve]]
 name = "chat"
 protocol = "ws"
 listen = "127.0.0.1:8082"
 
-# api and feed read/write the durable todo list; chat is stateless (tags only).
+# api/feed/store read/write the durable todo list; chat needs none; reporter spawns store.
 [capabilities.stateful]
+inherits = "sandboxed"       # default-deny base
+allow-storage = true         # + durable kv
+
+[capabilities.spawner]
 inherits = "sandboxed"
-allow-storage = true
+allow-spawn = true           # the reporter spawns the store service
 
 [components.api]
 capability = "stateful"
@@ -50,3 +62,13 @@ capability = "stateful"
 
 [components.chat]
 capability = "sandboxed"
+
+# A service spawned on demand by the reporter (reached via the typed client); runs under
+# its own profile whoever spawns it.
+[components.store]
+capability = "stateful"
+
+# A resident worker: boot-spawned + supervised; drives the store through the typed client.
+[components.reporter]
+capability = "spawner"
+resident = true

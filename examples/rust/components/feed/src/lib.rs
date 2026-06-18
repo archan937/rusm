@@ -23,6 +23,5 @@ impl Handler for Feed {
 
 #[rusm_rs::main]
 fn run() {
-    rusm_rs::logging::init();
     sse::serve(Feed);
 }

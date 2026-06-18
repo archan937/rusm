@@ -42,7 +42,10 @@ pub fn get(id: u64) -> Option<Todo> {
 }
 
 pub fn save(todo: &Todo) {
-    let _ = bucket().set(&todo.id.to_string(), &serde_json::to_vec(todo).unwrap_or_default());
+    let _ = bucket().set(
+        &todo.id.to_string(),
+        &serde_json::to_vec(todo).unwrap_or_default(),
+    );
 }
 
 pub fn remove(id: u64) -> bool {
@@ -73,4 +76,37 @@ pub fn publish() {
     for pid in rusm_rs::whereis_tag(FEED_TAG) {
         rusm_rs::send_bytes(pid, &payload);
     }
+}
+
+// ── High-level operations — the single source for both the `api` (in-process) and the
+// `store` service. Each persists then publishes the new list to subscribers. ──
+
+/// Add a todo and publish; returns the new todo.
+pub fn create(text: &str) -> Todo {
+    let todo = Todo {
+        id: next_id(),
+        text: text.to_string(),
+        done: false,
+    };
+    save(&todo);
+    publish();
+    todo
+}
+
+/// Flip a todo's `done` and publish; `None` if it doesn't exist.
+pub fn set_done(id: u64) -> Option<Todo> {
+    let mut todo = get(id)?;
+    todo.done = !todo.done;
+    save(&todo);
+    publish();
+    Some(todo)
+}
+
+/// Delete a todo and publish; `false` if it didn't exist.
+pub fn delete(id: u64) -> bool {
+    let removed = remove(id);
+    if removed {
+        publish();
+    }
+    removed
 }

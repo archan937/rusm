@@ -1,0 +1,22 @@
+# The `reporter` worker — drives the `store` service through the generated typed client.
+[workspace]
+
+[package]
+name = "reporter"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "reporter"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../crates/rusm-rs" }
+store-svc = { path = "../../store-svc" }
+wit-bindgen = "0.46"
+log = "0.4"

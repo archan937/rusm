@@ -46,18 +46,24 @@ impl Chat {
 
 impl Handler for Chat {
     fn open(&mut self, conn: &Connection) {
-        Self::system(conn, "connected — send {\"join\":\"<room>\"} to join a room");
+        Self::system(
+            conn,
+            "connected — send {\"join\":\"<room>\"} to join a room",
+        );
         log::info!("chat: connected");
     }
 
     fn message(&mut self, conn: &Connection, data: Vec<u8>) {
-        let Ok(frame) = serde_json::from_slice::<Frame>(&data) else { return };
+        let Ok(frame) = serde_json::from_slice::<Frame>(&data) else {
+            return;
+        };
 
         // {"join": "<room>"} — subscribe this connection and greet.
         if let Some(room) = frame.join {
             rusm_rs::register_tag(&Self::tag(&room));
             Self::system(conn, &format!("welcome to #{room}"));
-            let announce = json!({ "from": "system", "text": format!("a new member joined #{room}") });
+            let announce =
+                json!({ "from": "system", "text": format!("a new member joined #{room}") });
             self.room = Some(room.clone());
             self.broadcast(&announce, true);
             log::info!("chat: joined #{room}");
@@ -69,8 +75,16 @@ impl Handler for Chat {
             if self.room.is_none() {
                 return Self::system(conn, "join a room first");
             }
-            self.broadcast(&json!({ "from": rusm_rs::me().to_string(), "text": say }), false);
-            log::info!("chat: #{} <{}> {}", self.room.as_deref().unwrap_or("-"), rusm_rs::me(), say);
+            self.broadcast(
+                &json!({ "from": rusm_rs::me().to_string(), "text": say }),
+                false,
+            );
+            log::info!(
+                "chat: #{} <{}> {}",
+                self.room.as_deref().unwrap_or("-"),
+                rusm_rs::me(),
+                say
+            );
             return;
         }
 
@@ -87,6 +101,5 @@ impl Handler for Chat {
 
 #[rusm_rs::main]
 fn run() {
-    rusm_rs::logging::init();
     ws::serve(Chat::default());
 }
