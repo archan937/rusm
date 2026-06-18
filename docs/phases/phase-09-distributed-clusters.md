@@ -49,7 +49,7 @@ the hard boundary holds; distribution is an actor-core concern, not a Wasm one).
 
 ## Performance
 
-The [`cluster_fanout`](https://github.com/archan937/rusm/tree/main/examples/cluster_fanout) benchmark measures the
+The [`cluster_fanout`](https://github.com/archan937/rusm/tree/main/examples/benchmarks/cluster_fanout) benchmark measures the
 transport on loopback, in two honest phases (latency separately from throughput —
 under saturation, latency is queue-dominated, so one number would mislead):
 

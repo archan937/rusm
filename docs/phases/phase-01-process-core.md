@@ -47,7 +47,7 @@ count it, kill it without leaks) and the rest is additive.
 
 ```sh
 cargo run -p rusm-bench -- run spawn-storm 5      # 5 seconds of real spawns
-cargo run -p rusm-bench --example headless_run    # sampled ticks, no network
+cargo run -p rusm-bench -- run ping-pong 5        # 5 seconds of real round-trips
 ```
 
 ## Verification

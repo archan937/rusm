@@ -61,7 +61,7 @@ Counters are relaxed atomics; the node pushes a **periodic aggregated snapshot**
 (10–60 Hz), never an event per operation. The per-instance detail table is the
 only costly part of a snapshot, so it is **toggleable** — off for clean
 benchmark runs. We prove the overhead is negligible by running a high-rate
-benchmark **observer-on vs observer-off** (see the `observer_overhead` example).
+benchmark **observer-on vs observer-off** (toggle it live with `detail off` in `rusm attach`, or the dashboard's detail switch).
 
 ## Spawn-storm: how the number is produced (read this)
 

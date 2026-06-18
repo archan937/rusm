@@ -39,5 +39,5 @@ Expected output:
 - Swap `send_global` for `tokyo.send("london", "greeter", …)` to address a peer
   node explicitly instead of by global name.
 
-See [`cluster_fanout`](../cluster_fanout/) for a throughput/latency benchmark of
+See [`cluster_fanout`](../../benchmarks/cluster_fanout/) for a throughput/latency benchmark of
 the same transport.

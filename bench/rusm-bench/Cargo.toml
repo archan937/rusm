@@ -46,50 +46,40 @@ tempfile = "3"
 
 # Runnable examples live in the repo-root `examples/<name>/` directories,
 # each with its own README.
+# embedding/ — use RUSM as a library (host components, embed a node, build a cluster).
 [[example]]
 name = "host_components"
-path = "../../examples/host_components/main.rs"
+path = "../../examples/embedding/host_components/main.rs"
 
 [[example]]
 name = "host_ts_component"
-path = "../../examples/host_ts_component/main.rs"
-
-[[example]]
-name = "headless_run"
-path = "../../examples/headless_run/main.rs"
+path = "../../examples/embedding/host_ts_component/main.rs"
 
 [[example]]
 name = "embedded_node"
-path = "../../examples/embedded_node/main.rs"
-
-[[example]]
-name = "synthetic_source"
-path = "../../examples/synthetic_source/main.rs"
-
-[[example]]
-name = "observer_overhead"
-path = "../../examples/observer_overhead/main.rs"
+path = "../../examples/embedding/embedded_node/main.rs"
 
 [[example]]
 name = "cluster"
-path = "../../examples/cluster/main.rs"
+path = "../../examples/embedding/cluster/main.rs"
 
+# benchmarks/ — performance proofs (throughput, latency, capacity, with baselines).
 [[example]]
 name = "cluster_fanout"
-path = "../../examples/cluster_fanout/main.rs"
+path = "../../examples/benchmarks/cluster_fanout/main.rs"
 
 [[example]]
 name = "http_bench"
-path = "../../examples/http_bench/main.rs"
+path = "../../examples/benchmarks/http_bench/main.rs"
 
 [[example]]
 name = "ws_bench"
-path = "../../examples/ws_bench/main.rs"
+path = "../../examples/benchmarks/ws_bench/main.rs"
 
 [[example]]
 name = "sse_bench"
-path = "../../examples/sse_bench/main.rs"
+path = "../../examples/benchmarks/sse_bench/main.rs"
 
 [[example]]
 name = "connection_scale"
-path = "../../examples/connection_scale/main.rs"
+path = "../../examples/benchmarks/connection_scale/main.rs"

@@ -25,8 +25,9 @@ numbers, with no new plumbing.
 4. **`rusm-cli`** — `rusm node start` and the `rusm attach` REPL.
 5. **Dashboard** (`bench/dashboard`, React on Bun, uPlot) — benchmark view + live
    observer; pure logic (`format`, `protocol`, `state`) unit-tested to 100%.
-6. **Examples** — `headless_run`, `synthetic_source`, `observer_overhead`,
-   `embedded_node`.
+6. **Harness & examples** — the benchmark runner, the deterministic synthetic source,
+   and the observer detail-toggle (all in `bench/rusm-bench`); the runnable
+   [`embedded_node`](../../examples/embedding/embedded_node/) example embeds a node.
 
 ## Concepts introduced
 
@@ -40,9 +41,9 @@ numbers, with no new plumbing.
 ## Play with it
 
 ```sh
-cargo run -p rusm-bench --example headless_run        # print sampled ticks
+cargo run -p rusm-bench -- run spawn-storm 5          # real spawns, sampled ticks
 cargo run -p rusm-bench -- start                      # the dashboard node (or: make dashboard)
-cargo run -p rusm-bench --example observer_overhead   # detail on vs off
+cargo run -p rusm-cli -- attach                       # then `detail off` — observer on vs off
 ```
 
 ## Verification

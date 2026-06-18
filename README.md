@@ -231,17 +231,15 @@ Not crates: the dashboard at `bench/dashboard` (Bun/React); docs under `docs/`. 
 
 ## Examples
 
-`examples/` holds small, ready-to-run programs — each its own directory with a
-README and expected output. Run with `cargo run -p rusm-bench --example <name>`:
+`examples/` holds ready-to-run programs in three groups:
 
-| Example | What it shows |
+| Group | What it is |
 | --- | --- |
-| [`headless_run`](examples/headless_run) | Drive the benchmark runner directly (no network) and print sampled ticks. |
-| [`synthetic_source`](examples/synthetic_source) | The deterministic synthetic data source, reproducible per `(scenario, tick)`. |
-| [`observer_overhead`](examples/observer_overhead) | The observer's detail on/off switch (basis of the overhead proof). |
-| [`embedded_node`](examples/embedded_node) | Embed a node and serve the live protocol for the dashboard / REPL. |
+| [`typescript`](examples/typescript) · [`rust`](examples/rust) · [`go`](examples/go) | **Apps — start here.** The same collaborative todo board (HTTP + SSE + WS + a service), one per guest language. `cd examples/<lang> && rusm build && rusm serve`. |
+| [`embedding/`](examples/embedding) | **Use RUSM as a Rust library** — host components, embed a node, run a TS guest, build a cluster. |
+| [`benchmarks/`](examples/benchmarks) | **Performance, measured not asserted** — HTTP/WS/SSE serving, connection scale, cross-node fan-out, against real baselines. |
 
-See [`examples/README.md`](examples/README.md) for end-to-end recipes.
+See [`examples/README.md`](examples/README.md) for the full index and end-to-end recipes.
 
 ## Acknowledgements
 

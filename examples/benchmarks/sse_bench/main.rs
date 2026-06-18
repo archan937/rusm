@@ -19,7 +19,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// An endless `wasi:http` SSE stream — yields events as fast as the client reads.
-const FIREHOSE: &[u8] = include_bytes!("../../crates/rusm-wasm/tests/fixtures/sse_firehose.wasm");
+const FIREHOSE: &[u8] =
+    include_bytes!("../../../crates/rusm-wasm/tests/fixtures/sse_firehose.wasm");
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

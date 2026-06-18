@@ -2,7 +2,7 @@
 
 Pushes concurrent **held-open** connections to the machine's ceiling — each served by
 its own isolated `rusm-otp` process — and reports the measured peak. Where
-[`connection_storm`](../connection_storm/) measures connect/sec *throughput* by
+the [`connection-storm`](../../../bench/rusm-bench/src/connectionstorm.rs) scenario measures connect/sec *throughput* by
 recycling against one port, this **holds every connection open**, so the question is
 pure concurrency: how many live processes-with-sockets can coexist.
 
@@ -46,7 +46,7 @@ The wall is the **OS**, never RUSM. Two real limits, both the kernel's:
    (hence **zero connect failures**). That lifts the wall back to the fd cap.
 
 **RUSM itself is nowhere near a limit here.** Minting a process per connection is
-near-free — the [spawn storm](../../bench/rusm-bench/src/spawnstorm.rs) does ~2.4M
+near-free — the [spawn storm](../../../bench/rusm-bench/src/spawnstorm.rs) does ~2.4M
 spawns/sec, and the process side holds *millions*. The 49k number is what *this single
 machine's kernel* allows two-ended on loopback; a real deployment gets connections from
 many client hosts (each with its own ephemeral range) and across machines in a cluster,

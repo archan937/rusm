@@ -155,7 +155,7 @@ async fn main() {
 
 A trap (or a denied capability the guest turns into a trap) exits the process
 `Crashed`, so links and supervisors react exactly as for a native process. The
-runnable [`host_components`](https://github.com/archan937/rusm/tree/main/examples/host_components)
+runnable [`host_components`](https://github.com/archan937/rusm/tree/main/examples/embedding/host_components)
 example (`make example EX=host_components`) shows this end to end, including a
 memory-cap denial.
 

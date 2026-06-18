@@ -21,7 +21,7 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
 /// The WS-handler component: echoes each frame from inside the sandbox.
-const WS_ECHO: &[u8] = include_bytes!("../../crates/rusm-wasm/tests/fixtures/rs_ws_echo.wasm");
+const WS_ECHO: &[u8] = include_bytes!("../../../crates/rusm-wasm/tests/fixtures/rs_ws_echo.wasm");
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,34 +1,49 @@
 # RUSM examples
 
-Small, ready-to-run programs — each demonstrates one capability. Spawn-storm,
-ping-pong, and fault-recovery run **real** `rusm-otp` processes; the remaining
-scenarios are synthetic until their phase lands — the same code keeps working as
-each part of the runtime arrives.
+Three kinds of example, by what you're here for: **build an app** (start here),
+**embed the runtime** as a library, or **see the numbers**.
 
-## Runnable example apps
+## Apps — start here
 
-Each example is its own directory with a `main.rs` and a `README.md` (what it
-shows, how to run it, and the output to expect). Run any from the repo root:
+A complete **collaborative todo board**, one per guest language — the same app, idiomatic
+to each. HTTP CRUD + a live SSE feed + WebSocket chat + a service driven by a worker, each
+an isolated, supervised WASM process, unified by process-group tags (no broker). Build and
+serve, then open `http://localhost:8080`:
 
-| Example | Shows | Command |
+```sh
+cd examples/<lang>          # typescript | rust | go
+rusm build && rusm serve
+```
+
+| App | Language | Toolchain |
 | --- | --- | --- |
-| [`host_components`](./host_components/) | **Host real WASM components** as isolated, introspectable, capability-sandboxed processes (Phase 7) — the heart of RUSM. | `cargo run -p rusm-bench --example host_components` |
-| [`cluster`](./cluster/) | **A two-node cluster** (Phase 9): processes message across nodes over QUIC+TLS, a global registry hides location, and live attach lists a peer's processes. | `cargo run -p rusm-bench --example cluster` |
-| [`cluster_fanout`](./cluster_fanout/) | Benchmark the cross-node transport: unloaded round-trip latency + saturation throughput. | `cargo run --release -p rusm-bench --example cluster_fanout` |
-| [`http_bench`](./http_bench/) | **Serve a WASM component as HTTP** (Phase 11) and stress it vs a bare-hyper baseline — req/s + p50/p99, sandbox overhead. | `cargo run --release -p rusm-bench --example http_bench` |
-| [`ws_bench`](./ws_bench/) | **WebSocket** stress: hold many concurrent connections, each a sandboxed WASM **component process**, and echo round-trips — the stability-under-load proof + sandbox cost vs the host transport. | `cargo run --release -p rusm-bench --example ws_bench` |
-| [`sse_bench`](./sse_bench/) | **Server-Sent Events** stress: hold many long-lived `text/event-stream` connections from a WASM component — events/sec, streams held, the streaming-stability proof. | `cargo run --release -p rusm-bench --example sse_bench` |
-| [`headless_run`](./headless_run/) | Drive the benchmark runner directly (no network) and print sampled ticks. | `cargo run -p rusm-bench --example headless_run` |
-| [`synthetic_source`](./synthetic_source/) | The deterministic synthetic data source — reproducible per `(scenario, tick)`. | `cargo run -p rusm-bench --example synthetic_source` |
-| [`observer_overhead`](./observer_overhead/) | The observer's detail on/off switch (basis of the overhead proof). | `cargo run -p rusm-bench --example observer_overhead` |
-| [`embedded_node`](./embedded_node/) | Embed a node and serve the live protocol for the dashboard / REPL. | `cargo run -p rusm-bench --example embedded_node` |
+| [`typescript`](./typescript/) | TypeScript (Bun) | `rusm build` bundles each component |
+| [`rust`](./rust/) | Rust | `cargo` → `wasm32-wasip2` |
+| [`go`](./go/) | Go | TinyGo → `wasm32-wasip2` |
+
+Each app's README has the full tour (the five components, the web page, the composition).
+They're the on-ramp: write normal code in your language, get a supervised multi-protocol
+server.
+
+## [Embedding](./embedding/) — use RUSM as a Rust library
+
+Drive the host crates directly, the way the CLI does: host WASM components as supervised
+processes, run a TypeScript guest, embed a node, or build a cluster.
+`host_components` · `host_ts_component` · `embedded_node` · `cluster` — see
+[`embedding/README.md`](./embedding/).
+
+## [Benchmarks](./benchmarks/) — performance, measured not asserted
+
+Throughput, tail latency, and capacity against real baselines (bare hyper, a host echo).
+`http_bench` · `ws_bench` · `sse_bench` · `connection_scale` · `cluster_fanout` — see
+[`benchmarks/README.md`](./benchmarks/).
 
 ## End-to-end recipes
 
 Start a node, then watch it from the dashboard and/or a REPL:
 
 ```sh
-# 1. Start a node (or run the embedded_node example above)
+# 1. Start a node (or run the embedded_node example)
 cargo run -p rusm-cli -- node start            # ws://127.0.0.1:4000
 
 # 2a. The dashboard

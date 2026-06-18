@@ -26,9 +26,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 /// wstd `wasi:http` component (ergonomic, carries an async reactor).
-const WSTD: &[u8] = include_bytes!("../../crates/rusm-wasm/tests/fixtures/http_hello.wasm");
+const WSTD: &[u8] = include_bytes!("../../../crates/rusm-wasm/tests/fixtures/http_hello.wasm");
 /// Lean `wasi:http` component (raw bindings, no reactor) — the host's serving ceiling.
-const LEAN: &[u8] = include_bytes!("../../crates/rusm-wasm/tests/fixtures/http_lean.wasm");
+const LEAN: &[u8] = include_bytes!("../../../crates/rusm-wasm/tests/fixtures/http_lean.wasm");
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

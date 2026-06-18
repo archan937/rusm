@@ -6,7 +6,7 @@ DIST := $(DOCS)/.vitepress/dist
 GH_PAGES := gh-pages
 SCENARIO ?= connection-storm
 SECONDS ?= 5
-EX ?= headless_run
+EX ?= host_components
 
 .PHONY: help
 help: ## Show this help
@@ -44,7 +44,7 @@ run: ## Run a scenario in the terminal (SCENARIO=… SECONDS=…)
 	cargo run -p rusm-bench -- run $(SCENARIO) $(SECONDS)
 
 .PHONY: example
-example: ## Run an example (EX=headless_run|synthetic_source|observer_overhead|embedded_node)
+example: ## Run an example (EX=host_components|host_ts_component|embedded_node|cluster|http_bench|ws_bench|sse_bench|connection_scale|cluster_fanout)
 	cargo run -p rusm-bench --example $(EX)
 
 .PHONY: build

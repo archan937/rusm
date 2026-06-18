@@ -247,7 +247,7 @@ cargo run -p rusm-cli -- new hello          # scaffold an app
 cargo run -p rusm-cli -- serve              # host rusm.toml [[serve]] entries on real ports
 cargo run -p rusm-bench -- start            # the benchmark/dashboard node (repo-only)
 cargo run -p rusm-bench -- run connection-storm 5
-cargo run -p rusm-bench --example headless_run
+cargo run -p rusm-bench --example host_components
 cargo run -p rusm-loadtest -- --help        # out-of-process serving load test (vs a live `rusm serve` port)
 
 cd bench/dashboard && bun install && bun run dev      # dashboard
