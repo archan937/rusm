@@ -188,3 +188,63 @@ export const websocket = (handlers: WebSocketHandlers) => {
     },
   };
 };
+
+/** One live SSE stream — the SSE twin of {@link Socket}. Emit events with
+ *  {@link SseStream.data}; `id` is its writer pid. SSE is one-way (server → client), so
+ *  there are no inbound frames — events reach a handler through its mailbox (typically a
+ *  process-group tag it subscribes to in {@link SseHandlers.open}). (Named `SseStream` to
+ *  avoid clashing with the byte-stream {@link Stream} from `Process.openStream`.) */
+export interface SseStream {
+  readonly id: bigint;
+  /** Emit one event to the client (a string is sent as UTF-8). The platform frames it
+   *  as a `data:` SSE event. */
+  data(payload: string | Uint8Array): void;
+  /** End the stream and this process (a server-initiated close). {@link SseHandlers.close}
+   *  then fires once, the same teardown as a client disconnect. */
+  close(): void;
+}
+
+/** Per-connection SSE handlers — the SSE twin of {@link WebSocketHandlers}. */
+export interface SseHandlers {
+  /** The stream opened. Subscribe to your event source here (e.g.
+   *  {@link ProcessApi.registerTag}). */
+  open?(stream: SseStream): void;
+  /** One event pushed to this stream (e.g. a published message from a subscribed tag).
+   *  Emit it with `stream.data(…)`. */
+  message(stream: SseStream, event: Uint8Array): void;
+  /** The stream closed — the client disconnected, or the handler called
+   *  {@link SseStream.close}. */
+  close?(stream: SseStream): void;
+}
+
+/** Build an SSE component from per-connection handlers — the twin of {@link websocket}.
+ *  The host runs one process per connection; you emit events with `stream.data(…)`.
+ *  Export the result as the component's default:
+ *
+ *  ```ts
+ *  export default sse({
+ *    open: (s) => Process.registerTag("todos"),     // subscribe
+ *    message: (s, ev) => s.data(ev),                 // a published event → emit
+ *  });
+ *  ```
+ */
+export const sse = (handlers: SseHandlers) => {
+  let done = false;
+  const stream = (id: bigint): SseStream => ({
+    id,
+    data: (payload) => Process.send(id, payload),
+    close: () => {
+      done = true;
+    },
+  });
+  return {
+    sse: {
+      open: (conn: bigint) => handlers.open?.(stream(conn)),
+      message: (conn: bigint, event: Uint8Array) =>
+        handlers.message(stream(conn), event),
+      close: (conn: bigint) => handlers.close?.(stream(conn)),
+      // The driver checks this after `open` and each `message` to honor a self-close.
+      done: () => done,
+    },
+  };
+};

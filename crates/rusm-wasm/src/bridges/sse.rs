@@ -332,4 +332,69 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_typescript_sse_handler_pushes_events_and_closes_on_disconnect() {
+        // An inline JS bundle in the `sse({…})` shape rusm-ts emits — open subscribes to
+        // the "feed" tag and reports "open", message emits each pushed event, close
+        // reports "close". Proves the actor-aware TS SSE path: the per-connection js-runner
+        // handler subscribes + receives published events (push-via-tags) and fires close on
+        // disconnect, resembling the Rust handler.
+        const BUNDLE: &str = r#"
+            const report = (e) => { const c = Process.whereis("collector"); if (c !== null) Process.send(c, e); };
+            module.exports.default = {
+              sse: {
+                open:    (conn)     => { Process.registerTag("feed"); report("open"); },
+                message: (conn, ev) => Process.send(conn, ev), // emit the pushed event
+                close:   (conn)     => report("close"),
+              },
+            };
+        "#;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let server = wr.sse_server_js(BUNDLE, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        for pid in rt.whereis_tag("feed") {
+            rt.send(pid, b"hello".to_vec());
+        }
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 1024];
+        loop {
+            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+                .await
+                .expect("the pushed event arrives in time")
+                .expect("socket read ok");
+            assert!(n > 0, "stream produced data");
+            seen.extend_from_slice(&buf[..n]);
+            if String::from_utf8_lossy(&seen).contains("data: hello") {
+                break;
+            }
+        }
+        assert!(
+            String::from_utf8_lossy(&seen)
+                .to_lowercase()
+                .contains("text/event-stream"),
+            "SSE head present"
+        );
+
+        drop(conn);
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on disconnect"
+        );
+
+        handle.abort();
+    }
 }

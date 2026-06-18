@@ -1,13 +1,23 @@
-import { test, expect } from "bun:test";
+import { test, expect, beforeEach } from "bun:test";
 
-// The runner injects `Process` as a global before the bundle runs; the helper
-// captures it at import, so the mock must be installed before the dynamic import.
+// The runner injects `Process` as a global before the bundle runs; the helper captures
+// it at import (a single cached module), so we install a mock before importing, then
+// re-point `Process.send` to this file's sink in `beforeEach` — otherwise a sibling test
+// file that mocks the same global would steal our sends.
 const sent: Array<[bigint, string | Uint8Array]> = [];
 (globalThis as unknown as { Process: unknown }).Process = {
   send: (to: bigint, msg: string | Uint8Array) => sent.push([to, msg]),
 };
 
-const { websocket } = await import("./index");
+const { websocket, Process } = await import("./index");
+
+beforeEach(() => {
+  sent.length = 0;
+  (Process as unknown as { send: unknown }).send = (
+    to: bigint,
+    msg: string | Uint8Array,
+  ) => sent.push([to, msg]);
+});
 
 test("websocket() exposes the { websocket: { open, message, close } } shape the runner drives", () => {
   const handler = websocket({ message: () => {} });

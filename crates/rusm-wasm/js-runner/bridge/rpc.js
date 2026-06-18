@@ -197,10 +197,12 @@ globalThis.__rusm_entry = function () {
   // (or a default handler function) as a stateful serving loop — module state
   // persists across requests because the instance is long-lived.
   if (globalThis.__rusm_role === "http") return __rusm_http_serve(h.default);
-  // A per-connection WebSocket handler: `export default websocket({ open, message,
-  // close })` (an object carrying a `.websocket` lifecycle table). The host runs one
-  // sandboxed process per connection; we drive this connection's lifecycle.
-  if (h.default && h.default.websocket) return __rusm_ws_connection(h.default.websocket);
+  // A per-connection handler carrying an `open/message/close` lifecycle table: a
+  // WebSocket (`export default websocket({…})` → `.websocket`) or an SSE stream
+  // (`export default sse({…})` → `.sse`). The host runs one sandboxed process per
+  // connection; one driver runs both (the table differs, the lifecycle doesn't).
+  if (h.default && h.default.websocket) return __rusm_connection(h.default.websocket);
+  if (h.default && h.default.sse) return __rusm_connection(h.default.sse);
   const named = Object.keys(h).filter((k) => k !== "default" && typeof h[k] === "function");
   if (named.length) {
     const handlers = {};
@@ -292,25 +294,27 @@ function __downPid(bytes) {
   }
 }
 
-// Per-connection WebSocket lifecycle (mirrors the Rust `ws::serve` loop): the host runs
-// one process per connection, delivering the writer pid first (the reply target), then
-// each inbound frame. We `monitor` the writer — its death IS the disconnect, clean or
+// Per-connection lifecycle driver (mirrors the Rust `ws::serve` / `sse::serve` loop),
+// shared by WebSocket and SSE: the host runs one process per connection, delivering the
+// writer pid first (the reply target), then each later message — an inbound frame (WS) or
+// a pushed event (SSE). We `monitor` the writer — its death IS the disconnect, clean or
 // dropped — so the guest's `close` fires before this process exits. `conn` passed to the
-// callbacks is the writer pid (the SDK wraps it into a `Socket`).
-async function __rusm_ws_connection(ws) {
-  if (!ws || typeof ws.message !== "function") return; // not a websocket handler
+// callbacks is the writer pid (the SDK wraps it into a `Socket` or `Stream`). An optional
+// `table.done()` lets a handler self-stop (SSE `stream.close()`): we end after `close`,
+// the process exits, and the host writer ends the body (it monitors this process).
+async function __rusm_connection(table) {
+  if (!table || typeof table.message !== "function") return; // not a lifecycle handler
+  const stopped = () => table.done && table.done();
   const writer = BigInt(await Process.receiveText()); // message 1: the writer pid
   Process.monitor(writer);
-  if (ws.open) await ws.open(writer);
-  for (;;) {
+  if (table.open) await table.open(writer);
+  while (!stopped()) {
     let data;
     try { data = await Process.receive(); } catch { return; }
-    if (__downPid(data) === writer) {
-      if (ws.close) await ws.close(writer);
-      return;
-    }
-    await ws.message(writer, data);
+    if (__downPid(data) === writer) break; // client disconnected
+    await table.message(writer, data);
   }
+  if (table.close) await table.close(writer);
 }
 
 // Encode a guest `Response` to the wire shape the host expects: body as base64
