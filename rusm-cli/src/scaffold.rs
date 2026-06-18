@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use crate::template::{self, parse_template, Template};
+
 /// The guest language for the scaffolded component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
@@ -53,6 +55,10 @@ pub struct NewApp {
     pub name: String,
     pub lang: Lang,
     pub protocol: Protocol,
+    /// `Some` for `--template <name>`: scaffold a full example app instead of the minimal
+    /// single-component starter. The `protocol` field is unused in that case (a template
+    /// brings its own listeners).
+    pub template: Option<Template>,
 }
 
 /// Parse the arguments following `rusm new` into a [`NewApp`]: a single positional
@@ -64,15 +70,17 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     // takes precedence over the `--rust` shorthand; `-p` is an alias for `--protocol`.
     let rust = args.contains("--rust");
     let lang = args.opt_value_from_str::<_, String>("--lang")?;
-    let protocol = match args.opt_value_from_str::<_, String>("--protocol")? {
+    let protocol_arg = match args.opt_value_from_str::<_, String>("--protocol")? {
         Some(value) => Some(value),
         None => args.opt_value_from_str("-p")?,
     };
+    let template_arg = args.opt_value_from_str::<_, String>("--template")?;
 
     // Then the one positional: the app name. A missing name is the usage error.
     let name: String = args.free_from_str().map_err(|_| {
         anyhow!(
-            "usage: rusm new <name> [--rust] [--lang ts|rust|go|generic] [--protocol http|sse|ws]"
+            "usage: rusm new <name> [--rust] [--lang ts|rust|go|generic] \
+             [--protocol http|sse|ws] [--template todo-board]"
         )
     })?;
     validate_name(&name)?;
@@ -91,14 +99,35 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
         None if rust => Lang::Rust,
         None => Lang::TypeScript,
     };
-    let protocol = match protocol {
-        Some(value) => parse_protocol(&value)?,
+    let protocol = match &protocol_arg {
+        Some(value) => parse_protocol(value)?,
         None => Protocol::Http,
     };
+
+    // A template scaffolds a full example app, so it owns its own listeners + language
+    // surface: `--protocol` is meaningless and `generic` (no source) has nothing to fill.
+    let template = match template_arg {
+        Some(value) => {
+            let template = parse_template(&value)?;
+            if matches!(lang, Lang::Generic) {
+                bail!("`--template` needs a guest language — use `--lang ts|rust|go`");
+            }
+            if protocol_arg.is_some() {
+                bail!(
+                    "`--protocol` can't be combined with `--template` \
+                       (the todo board serves http, sse, and ws)"
+                );
+            }
+            Some(template)
+        }
+        None => None,
+    };
+
     Ok(NewApp {
         name,
         lang,
         protocol,
+        template,
     })
 }
 
@@ -151,6 +180,10 @@ pub fn scaffold(root: &Path, app: &NewApp) -> Result<Vec<PathBuf>> {
 /// The full set of (relative path, contents) for an app — the single place that maps
 /// a (language, protocol) to its files.
 fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
+    // A template scaffolds a full example app (its files are the real `examples/<lang>`).
+    if app.template.is_some() {
+        return template::files(app.lang, &app.name);
+    }
     let mut out = vec![
         (PathBuf::from("rusm.toml"), rusm_toml(app)),
         (PathBuf::from(".gitignore"), GITIGNORE.to_string()),
@@ -170,17 +203,14 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
             }
         }
         Lang::Rust => {
-            out.push((
-                PathBuf::from("components/api/Cargo.toml"),
-                CARGO_TOML.to_string(),
-            ));
+            out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
             out.push((
                 PathBuf::from("components/api/src/lib.rs"),
                 rust_component(app.protocol).to_string(),
             ));
         }
         Lang::Go => {
-            out.push((PathBuf::from("components/api/go.mod"), GO_MOD.to_string()));
+            out.push((PathBuf::from("components/api/go.mod"), go_mod()));
             out.push((
                 PathBuf::from("components/api/main.go"),
                 go_component(app.protocol).to_string(),
@@ -263,9 +293,9 @@ const TSCONFIG: &str = "\
 }
 ";
 
-fn package_json(name: &str) -> String {
+pub(crate) fn package_json(name: &str) -> String {
     format!(
-        "{{\n  \"name\": \"{name}\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {{\n    \"rusm-ts\": \"^0.1.0\"\n  }}\n}}\n"
+        "{{\n  \"name\": \"{name}\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {{\n    \"rusm-ts\": \"^{SDK_VERSION}\"\n  }}\n}}\n"
     )
 }
 
@@ -298,27 +328,35 @@ rusm serve      # http://127.0.0.1:8080
 See https://github.com/archan937/rusm for more.
 ";
 
+/// The published SDK version a scaffolded app depends on — the next release. **One
+/// source of truth** for every scaffold/template dependency reference (`rusm-rs`,
+/// `rusm-ts`, `rusm-go`), so a version bump is a single edit and can't drift again. The
+/// actual crate/package versions are bumped to match when that release is cut.
+pub(crate) const SDK_VERSION: &str = "0.2.0";
+
 /// The Rust component crate — one `cdylib`, the `rusm-rs` guest crate, and
 /// `wit-bindgen` (which `#[rusm_rs::main]` drives so the source carries no `wit/`).
-const CARGO_TOML: &str = "\
-[package]
-name = \"api\"
-version = \"0.1.0\"
-edition = \"2021\"
-
-[lib]
-crate-type = [\"cdylib\"]
-
-[dependencies]
-rusm-rs = \"0.1\"
-wit-bindgen = \"0.46\"
-
-[profile.release]
-opt-level = \"z\"
-strip = true
-
-[workspace]
-";
+fn cargo_toml() -> String {
+    format!(
+        "[package]\n\
+         name = \"api\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2021\"\n\
+         \n\
+         [lib]\n\
+         crate-type = [\"cdylib\"]\n\
+         \n\
+         [dependencies]\n\
+         rusm-rs = \"{SDK_VERSION}\"\n\
+         wit-bindgen = \"0.46\"\n\
+         \n\
+         [profile.release]\n\
+         opt-level = \"z\"\n\
+         strip = true\n\
+         \n\
+         [workspace]\n"
+    )
+}
 
 fn ts_component(protocol: Protocol) -> &'static str {
     match protocol {
@@ -373,13 +411,15 @@ export default websocket({
 /// The Go component module: the rusm-go guest SDK (its `web` subpackage provides the
 /// HTTP/SSE/WebSocket handler surface). TinyGo + wit-bindgen-go are driven by `rusm
 /// build`, so the source carries no bindings boilerplate and no `wit/` dir.
-const GO_MOD: &str = "\
-module api
-
-go 1.24
-
-require github.com/archan937/rusm/packages/rusm-go v0.1.0
-";
+fn go_mod() -> String {
+    format!(
+        "module api\n\
+         \n\
+         go 1.24\n\
+         \n\
+         require github.com/archan937/rusm/packages/rusm-go v{SDK_VERSION}\n"
+    )
+}
 
 fn go_component(protocol: Protocol) -> &'static str {
     match protocol {
@@ -613,6 +653,7 @@ mod tests {
             name: "demo".into(),
             lang,
             protocol,
+            template: None,
         }
     }
 
@@ -800,6 +841,15 @@ mod tests {
             (mixed.lang, mixed.protocol, mixed.name.as_str()),
             (Lang::Rust, Protocol::Sse, "hello")
         );
+
+        // `--template` is off by default and parses when given.
+        assert_eq!(d.template, None);
+        assert_eq!(
+            p(&["hello", "--template", "todo-board", "--lang", "go"])
+                .unwrap()
+                .template,
+            Some(Template::TodoBoard)
+        );
     }
 
     #[test]
@@ -823,6 +873,18 @@ mod tests {
         assert!(p(&["--rust"]).is_err(), "options but no name");
         assert!(p(&["-p", "ws"]).is_err(), "options but no name");
         assert!(p(&["--frobnicate"]).is_err(), "a lone flag is not a name");
+        assert!(
+            p(&["hello", "--template", "bogus"]).is_err(),
+            "bad template"
+        );
+        assert!(
+            p(&["hello", "--template", "todo-board", "--lang", "generic"]).is_err(),
+            "a template needs a guest language"
+        );
+        assert!(
+            p(&["hello", "--template", "todo-board", "--protocol", "ws"]).is_err(),
+            "--protocol conflicts with --template"
+        );
         for bad in ["..", ".", "a/b", "", "a\\b", "-x", "--name"] {
             assert!(p(&[bad]).is_err(), "{bad:?} should be rejected");
         }
@@ -837,8 +899,42 @@ mod tests {
             name: "taken".into(),
             lang: Lang::TypeScript,
             protocol: Protocol::Http,
+            template: None,
         };
         let err = scaffold(dir.path(), &occupied).unwrap_err();
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn template_scaffolds_the_full_todo_board() {
+        for lang in [Lang::TypeScript, Lang::Rust, Lang::Go] {
+            let dir = tempfile::tempdir().unwrap();
+            let app = NewApp {
+                name: "demo".into(),
+                lang,
+                protocol: Protocol::Http,
+                template: Some(Template::TodoBoard),
+            };
+            let created = scaffold(dir.path(), &app).unwrap();
+            let root = dir.path().join("demo");
+            for rel in &created {
+                assert!(root.join(rel).is_file(), "{lang:?}: missing {rel:?}");
+            }
+            // The full app, not the single-component starter: the three serving listeners
+            // plus the composition components, and a README to read.
+            let cfg =
+                NodeConfig::from_toml(&std::fs::read_to_string(root.join("rusm.toml")).unwrap())
+                    .expect("template rusm.toml parses");
+            assert_eq!(cfg.serve.len(), 3, "{lang:?}: http + sse + ws listeners");
+            assert!(
+                cfg.components.contains_key("store"),
+                "{lang:?}: store service"
+            );
+            assert!(
+                cfg.components.contains_key("reporter"),
+                "{lang:?}: reporter worker"
+            );
+            assert!(root.join("README.md").is_file(), "{lang:?}: README");
+        }
     }
 }
