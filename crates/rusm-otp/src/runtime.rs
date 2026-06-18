@@ -326,10 +326,6 @@ impl Inner {
             if self.wants(crate::LogLevel::for_exit(reason)) {
                 crate::lifecycle::log_exit(pid, label, reason);
             }
-            // A labeled process ended → census activity; recount (debounced).
-            if self.wants(crate::LogLevel::Info) {
-                self.note_census();
-            }
         }
 
         for name in &entry.names {
@@ -337,11 +333,20 @@ impl Inner {
         }
         // Release process-group memberships the same way (and drop a group that empties),
         // so `whereis_tag`/`kill_tag` only ever see live members.
+        let released_tags = !entry.tags.is_empty();
         for tag in &entry.tags {
             if let Some(mut members) = self.tags.get_mut(tag) {
                 members.remove(&pid.0);
             }
             self.tags.remove_if(tag, |_, members| members.is_empty());
+        }
+        // Census activity on exit: a labeled process leaving changes a component count, and
+        // a process releasing a tag changes that group's live count — the latter matters
+        // even when the process is *unlabeled* (a per-connection serving process holds a
+        // `room:`/feed tag but carries no label), so its disconnect still updates the
+        // census. Mirrors the `register_tag`/`unregister_tag` triggers; debounced.
+        if (entry.label.is_some() || released_tags) && self.wants(crate::LogLevel::Info) {
+            self.note_census();
         }
         for monitor in entry.monitors {
             self.deliver(
@@ -1333,6 +1338,37 @@ mod tests {
         assert!(!rt.unregister_tag("x", a.pid())); // already gone
         a.kill();
         a.join().await;
+    }
+
+    #[tokio::test]
+    async fn an_unlabeled_tag_holder_exit_is_census_activity() {
+        // A per-connection serving process is *unlabeled* but holds a process-group tag
+        // (e.g. a chat `room:`). When it disconnects (exits), the tag's live count drops,
+        // so the census must recount — even with no component label. Regression: the census
+        // only re-fired on *labeled* exits, so chat/feed disconnects went unreported.
+        let rt = Runtime::new();
+        rt.set_log_level(crate::LogLevel::Info); // the census only tracks at Info+
+        let a = rt.spawn(|_| std::future::pending::<()>());
+        assert!(rt.register_tag("room:general", a.pid()));
+        let after_join = rt
+            .inner
+            .census_gen
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        a.kill(); // an unlabeled exit that releases the tag
+        a.join().await;
+
+        assert!(
+            rt.inner
+                .census_gen
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > after_join,
+            "an unlabeled tag-holder's exit advances the census generation (recount)"
+        );
+        assert!(
+            rt.whereis_tag("room:general").is_empty(),
+            "tag released on exit"
+        );
     }
 
     #[tokio::test]
