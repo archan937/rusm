@@ -20,8 +20,14 @@ func report(event string) {
 
 func run() {
 	web.Sse{
-		Open:    func(s web.Stream) { rusm.RegisterTag("feed"); report("open") }, // subscribe
-		Message: func(s web.Stream, ev []byte) { s.Data(ev) },                    // emit the pushed event
-		Close:   func(s web.Stream) { report("close") },
+		Open: func(s web.Stream) { rusm.RegisterTag("feed"); report("open") }, // subscribe
+		Message: func(s web.Stream, ev []byte) {
+			if string(ev) == "close" {
+				s.Close() // server-initiated self-stop
+			} else {
+				s.Data(ev) // emit the pushed event
+			}
+		},
+		Close: func(s web.Stream) { report("close") },
 	}.Serve()
 }

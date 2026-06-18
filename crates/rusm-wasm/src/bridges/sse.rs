@@ -449,4 +449,96 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_typescript_sse_handler_can_stop_itself() {
+        // Inline bundle in the `sse({…})` shape with the helper's `done` flag: on a "close"
+        // event the handler flips `done` (the `stream.close()` equivalent), so the driver
+        // stops, `close` fires, and the client sees EOF — the TS twin of the Rust self-stop.
+        const BUNDLE: &str = r#"
+            const report = (e) => { const c = Process.whereis("collector"); if (c !== null) Process.send(c, e); };
+            let done = false;
+            module.exports.default = {
+              sse: {
+                open:    (conn)     => { Process.registerTag("feed"); report("open"); },
+                message: (conn, ev) => {
+                  if (new TextDecoder().decode(ev) === "close") { done = true; }
+                  else { Process.send(conn, ev); }
+                },
+                close:   (conn)     => report("close"),
+                done:    ()         => done,
+              },
+            };
+        "#;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let server = wr.sse_server_js(BUNDLE, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        for pid in rt.whereis_tag("feed") {
+            rt.send(pid, b"close".to_vec());
+        }
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on self-stop"
+        );
+        let mut tail = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut tail))
+            .await
+            .expect("the stream ends after self-close")
+            .expect("socket read ok");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_sse_handler_can_stop_itself() {
+        // The Go twin of the self-stop test: web.Sse calls Stream.Close() on a "close"
+        // event, ending the stream and its process — close fires and the client sees EOF.
+        const GO_SSE_FEED: &[u8] = include_bytes!("../../tests/fixtures/go_sse_feed.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_SSE_FEED).unwrap(), "run")
+            .unwrap();
+        let server = wr.sse_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        for pid in rt.whereis_tag("feed") {
+            rt.send(pid, b"close".to_vec());
+        }
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"close",
+            "close fires on self-stop"
+        );
+        let mut tail = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut tail))
+            .await
+            .expect("the stream ends after self-close")
+            .expect("socket read ok");
+
+        handle.abort();
+    }
 }
