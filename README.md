@@ -39,9 +39,9 @@ rusm serve                   # → http://127.0.0.1:8080
 curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 ```
 
-### Scaffold a real app — the todo board
+### Scaffold a real app — the TODO board
 
-A collaborative todo board (HTTP CRUD + a live SSE feed + WebSocket chat + a resident
+A collaborative TODO board (HTTP CRUD + a live SSE feed + WebSocket chat + a resident
 `store` service driven by a worker), in TypeScript, Rust, or Go:
 
 ```sh
@@ -245,7 +245,7 @@ Not crates: the dashboard at `bench/dashboard` (Bun/React); docs under `docs/`. 
 
 | Group | What it is |
 | --- | --- |
-| [`typescript`](examples/typescript) · [`rust`](examples/rust) · [`go`](examples/go) | **Apps — start here.** The same collaborative todo board (HTTP + SSE + WS + a service), one per guest language. `cd examples/<lang> && rusm build && rusm serve`. |
+| [`typescript`](examples/typescript) · [`rust`](examples/rust) · [`go`](examples/go) | **Apps — start here.** The same collaborative TODO board (HTTP + SSE + WS + a service), one per guest language. `cd examples/<lang> && rusm build && rusm serve`. |
 | [`embedding/`](examples/embedding) | **Use RUSM as a Rust library** — host components, embed a node, run a TS guest, build a cluster. |
 | [`benchmarks/`](examples/benchmarks) | **Performance, measured not asserted** — HTTP/WS/SSE serving, connection scale, cross-node fan-out, against real baselines. |
 
