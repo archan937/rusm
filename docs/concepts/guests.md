@@ -47,8 +47,8 @@ pub mod api {
 
 WebSockets are **per connection**: implement `ws::Handler` and `ws::serve` it. The host
 runs one isolated process per connection, hands each inbound frame to `message`, and you
-reply through the `Connection` (the per-connection process simply exits on disconnect —
-there is no `close` callback):
+reply through the `Connection`. `open` and `close` are optional — `close` fires once on
+disconnect (clean or dropped), then the process exits:
 
 ```rust
 use rusm_rs::ws::{self, Connection, Handler};
@@ -59,6 +59,7 @@ struct Echo;
 impl Handler for Echo {
     fn open(&mut self, conn: &Connection) { conn.send(b"welcome\n"); }
     fn message(&mut self, conn: &Connection, data: Vec<u8>) { conn.send(&data); } // echo
+    fn close(&mut self, _conn: &Connection) {} // disconnect — clean or dropped
 }
 
 #[rusm_rs::main]
@@ -82,8 +83,8 @@ Bun into a small `.js`.
 TS serving uses **web standards** (the `#[handlers]` macro is Rust-only) and needs **no
 `[serve.routes]` table** — the component *is* the handler. HTTP/SSE is `export default` a
 `fetch`-shaped function returning a `Response`; SSE returns a streaming `ReadableStream`
-body. WS is `export default websocket({ open, message })` from the `rusm-ts` package —
-one worker process per connection:
+body. WS is `export default websocket({ open, message, close })` from the `rusm-ts`
+package — one worker process per connection:
 
 ```ts
 // HTTP/SSE — a per-request wasi:http component
@@ -147,15 +148,17 @@ func run() {
 }
 ```
 
-WebSocket is `web.WebSocket{ Open, Message }.Serve()` — the host runs one isolated
+WebSocket is `web.WebSocket{ Open, Message, Close }.Serve()` — the host runs one isolated
 process per connection, hands each inbound frame to `Message`, and you reply through the
-`Conn` (the process simply exits on disconnect; no `close` callback):
+`Conn`. `Open` and `Close` are optional — `Close` fires once on disconnect (clean or
+dropped), then the process exits:
 
 ```go
 func run() {
 	web.WebSocket{
 		Open:    func(c web.Conn) { c.Send([]byte("welcome\n")) },
 		Message: func(c web.Conn, data []byte) { c.Send(data) }, // echo
+		Close:   func(c web.Conn) {},                            // disconnect — clean or dropped
 	}.Serve()
 }
 ```

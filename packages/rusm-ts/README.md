@@ -43,8 +43,14 @@ WebSockets use the `websocket()` helper — one instance serves every connection
 import { websocket } from "rusm-ts";
 
 export default websocket({
+  open(socket) {
+    socket.send("welcome\n");
+  },
   message(socket, data) {
-    socket.send(data); // echo
+    socket.send(data); // echo this connection's frame
+  },
+  close(socket) {
+    // disconnect — clean or dropped (optional)
   },
 });
 ```

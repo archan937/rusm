@@ -541,10 +541,10 @@ curl http://127.0.0.1:8080/users/42    # user 42   (Rust, via the :id route)
 
 To adapt: add more `[serve.routes]` entries and matching `pub fn`s; stream **SSE** with a
 3-arg action `fn(Request, Params, Sse)` (set `protocol = "sse"`); or serve
-**WebSocket** with `protocol = "ws"` and a `rusm_rs::ws::serve({ open, message })`
-handler — one sandboxed process per connection (the TS twin is
-`export default websocket({ open, message })` from `rusm-ts`; the Go twin is
-`web.WebSocket{ Open, Message }.Serve()`). See
+**WebSocket** with `protocol = "ws"` and a `rusm_rs::ws::serve` handler
+(`open`/`message`/`close`) — one sandboxed process per connection (the TS twin is
+`export default websocket({ open, message, close })` from `rusm-ts`; the Go twin is
+`web.WebSocket{ Open, Message, Close }.Serve()`). See
 [the serving model](./concepts/serving-model.md).
 
 ## Process management from inside a component

@@ -142,7 +142,8 @@ A WebSocket component (one process per connection):
 func run() {
 	web.WebSocket{
 		Open:    func(c web.Conn) { c.Send([]byte("welcome")) },
-		Message: func(c web.Conn, data []byte) { c.Send(data) }, // echo
+		Message: func(c web.Conn, data []byte) { c.Send(data) }, // echo this connection's frame
+		Close:   func(c web.Conn) {},                            // disconnect — clean or dropped
 	}.Serve()
 }
 ```

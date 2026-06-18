@@ -49,17 +49,17 @@ What each cell scaffolds:
   `fn(Request, Params, Sse)` to stream SSE) **plus a `[serve.routes]` subtable** on
   that listener's `[[serve]]` entry in `rusm.toml`, mapping `"METHOD /path"` →
   `"api#action"`. No `main`, no router, no `wit/` dir — routing is declarative config.
-- **Rust WS** — a `ws::serve({ open, message })` handler (one sandboxed process per
-  connection); no `[serve.routes]`.
+- **Rust WS** — a `ws::serve` handler (`open`/`message`/`close`, one sandboxed process
+  per connection); no `[serve.routes]`.
 - **TypeScript HTTP/SSE** — a zero-dependency web-standard
   `export default function handle(request): Response` (a `wasi:http` per-request
   component); it does its own dispatch, so no `[serve.routes]`.
-- **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message })` helper.
+- **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message, close })` helper.
 - **Go HTTP/SSE** — a `web.NewHandlers()` component (each `h.Handle("name", …)` /
   `h.HandleSSE("name", …)` is a routable action; normal Go, no bindings boilerplate)
   **plus a `[serve.routes]` subtable**, exactly like Rust — compiled via TinyGo.
-- **Go WS** — a `web.WebSocket{ Open, Message }.Serve()` handler (one sandboxed process
-  per connection); no `[serve.routes]`.
+- **Go WS** — a `web.WebSocket{ Open, Message, Close }.Serve()` handler (one sandboxed
+  process per connection); no `[serve.routes]`.
 - **Generic (`--lang generic`)** — no source is generated; you drop a pre-built
   **wasip2** component into `components/api/` (a scaffolded `README.md` states the
   expected interface: `wasi:http/incoming-handler` for HTTP/SSE, a `rusm:runtime`

@@ -79,9 +79,13 @@ write returns `false`. Go's `web.Sse` mirrors this — `sse.Data(bytes)` and
 
 ## Platform owns / you write
 
-- **Platform owns:** the streaming `text/event-stream` head, the **bounded,
-  back-pressured** byte stream from the guest into the chunked HTTP body, disconnect
-  detection (a failed write returns `false`), and reclaim on exit.
+- **Platform owns:** the **bounded, back-pressured** byte stream from the guest into the
+  chunked HTTP body, disconnect detection (a failed write returns `false`), reclaim on
+  exit, and **SSE transport correctness** — `Cache-Control: no-cache` is added for you,
+  and on a `protocol = "sse"` listener a reply that isn't `text/event-stream` fails loud
+  (500) instead of silently serving a broken stream. The Rust and Go SDKs set the
+  `text/event-stream` head for you; a hand-written TS `fetch` sets it itself, so that
+  contract check is what catches a forgotten header.
 - **You write:** the event loop — produce events, react to a `false` write by stopping.
 
 ## Lifecycle events

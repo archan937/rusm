@@ -70,7 +70,7 @@ the action dispatch; the developer writes only handler functions:
 
 TypeScript serving uses web standards instead (the macro is Rust): HTTP/SSE
 `export default` a `fetch`-shaped handler (SSE returns a `ReadableStream` body); WS uses
-`export default websocket({ open, message })`, one worker per connection.
+`export default websocket({ open, message, close })`, one worker per connection.
 
 ## How it works
 

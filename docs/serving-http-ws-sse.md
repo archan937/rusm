@@ -16,7 +16,7 @@
 > | | HTTP | WS | SSE |
 > |---|---|---|---|
 > | **Rust** | ✅ `#[rusm_rs::handlers]` actions | ✅ `rusm-rs` worker | ✅ 3-arg `Sse` action |
-> | **TypeScript** | ✅ `export default` `fetch` handler | ✅ `websocket({ open, message })` | ✅ `Response(ReadableStream)` |
+> | **TypeScript** | ✅ `export default` `fetch` handler | ✅ `websocket({ open, message, close })` | ✅ `Response(ReadableStream)` |
 
 RUSM runs a component as a high-throughput **HTTP(S) / WS(S) / SSE server** — a
 sandboxed, supervised handler answering requests. The whole serving model rests on one
@@ -106,7 +106,7 @@ listen = "127.0.0.1:8080"
 "POST /users"                  = "api#create"
 "GET  /users/:id/posts/:post"  = "api#post"      # multiple params
 "GET  /files/*"                = "files#serve"   # trailing * captures the tail
-"GET  /events/:room"           = "api#events"    # an SSE action (see below)
+"GET  /feed/:name"             = "api#events"    # an SSE action (see below)
 ```
 
 - **`:name`** captures one path segment as a parameter, read in the handler via
@@ -156,11 +156,11 @@ pub mod api {
         Response::new(201, req.body).header("content-type", "application/json")
     }
 
-    // GET /events/:room ->  "api#events"  — a 3-arg action streams SSE
+    // GET /feed/:name ->  "api#events"  — a 3-arg action streams SSE
     pub fn events(_req: Request, p: Params, sse: Sse) {
-        let room = p.get("room").unwrap_or("lobby").to_string();
+        let name = p.get("name").unwrap_or("feed").to_string();
         for n in 0.. {
-            if !sse.data(format!("{room} tick {n}").as_bytes()) {
+            if !sse.data(format!("{name} tick {n}\n").as_bytes()) {
                 break; // the client disconnected — stop
             }
         }
@@ -251,7 +251,7 @@ listen    = "127.0.0.1:8080"
 "GET  /"               = "api#home"
 "GET  /users/:id"      = "api#show"
 "POST /users"          = "api#create"
-"GET  /events/:room"   = "api#events"   # 3-arg action → SSE
+"GET  /feed/:name"     = "api#events"   # 3-arg action → SSE
 "GET  /static/*"       = "api#static"   # wildcard tail
 
 # The handler the routes name — declared in [components.<name>], carries its own
@@ -293,9 +293,9 @@ pub mod api {
     }
 
     pub fn events(_req: Request, p: Params, sse: Sse) {
-        let room = p.get("room").unwrap_or("lobby").to_string();
+        let name = p.get("name").unwrap_or("feed").to_string();
         for n in 0.. {
-            if !sse.data(format!("{room} tick {n}").as_bytes()) {
+            if !sse.data(format!("{name} tick {n}\n").as_bytes()) {
                 break;
             }
         }
@@ -307,7 +307,7 @@ pub mod api {
 rusm build           # cargo wasm32-wasip2 per components/*
 rusm serve           # binds 127.0.0.1:8080
 curl http://127.0.0.1:8080/users/42      # -> user 42
-curl -N http://127.0.0.1:8080/events/lobby   # -> a live SSE stream
+curl -N http://127.0.0.1:8080/feed/ticks     # -> a live SSE stream
 ```
 
 Start from a scaffold with **`rusm new <name>`** (a zero-dependency TS HTTP component,
@@ -365,11 +365,13 @@ process runs per connection (no pids, no manual mailbox):
 ```ts
 import { websocket } from "rusm-ts";
 
-const members: Socket[] = [];
+// One isolated process per connection, so reply to *this* socket here. A module-level
+// array would NOT broadcast — each connection has its own. To fan out across connections
+// use process-group tags (`Process.registerTag`/`whereisTag`); see the chat example.
 export default websocket({
-  open(s)        { members.push(s); s.send("welcome\n"); },
-  message(_s, d) { for (const m of members) m.send(d); },   // broadcast
-  close(s)       { const i = members.indexOf(s); if (i >= 0) members.splice(i, 1); },
+  open(s)       { s.send("welcome\n"); },
+  message(s, d) { s.send(d); },   // echo this connection's frame
+  close(_s)     { /* disconnect — clean or dropped */ },
 });
 ```
 
