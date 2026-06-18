@@ -121,9 +121,10 @@ sync-templates: ## Regenerate rusm-cli/templates/ — the vendored copy of the e
 	@find rusm-cli/templates -name Cargo.toml -exec sh -c 'mv "$$1" "$$1.tmpl"' _ {} \;
 	@echo "==> synced — \`cargo test -p rusm-cli template::\` guards against drift"
 
-# Already on crates.io? (200 → version exists.) The per-crate skip that makes publishing
-# resumable: a failed run re-runs cleanly and an already-uploaded version is never re-sent.
-crate_published = curl -fsS "https://crates.io/api/v1/crates/$$(basename $1)/$(VERSION)" >/dev/null 2>&1
+# Already on crates.io? (200 → that exact version exists; 404 → not yet.) The per-crate skip
+# that makes publishing resumable: a failed run re-runs cleanly and an already-uploaded
+# version is never re-sent. crates.io rejects requests without a User-Agent (403), so set one.
+crate_published = curl -fsS -A "rusm-make-publish" "https://crates.io/api/v1/crates/$$(basename $1)/$(VERSION)" >/dev/null 2>&1
 
 .PHONY: publish-dry
 publish-dry: ## Release pre-flight: dry-run each not-yet-published crate (no side effects)
