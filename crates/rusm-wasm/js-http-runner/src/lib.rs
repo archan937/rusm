@@ -23,20 +23,34 @@
 //! writes the Workers/Deno `export default { fetch }` shape. A static response is written
 //! in one shot; a `ReadableStream` body is pulled chunk-by-chunk and flushed as it's
 //! produced (back-pressured by the socket via blocking writes).
+//!
+//! Beyond `fetch`, a handler gets the actor-ABI subset a *request* handler can back: the
+//! `kv` global (durable storage, gated by `storage`), `console.*` → the platform log, and
+//! `Process.{self,send,whereis,whereisTag}` — so it can persist and **publish** to
+//! subscribers (e.g. notify open SSE streams), exactly like an actor component. It has no
+//! mailbox, so the receive/spawn/monitor ops are absent (the bridge's presence-guards
+//! install only the wired subset). The actor world is imported in WIT and satisfied by the
+//! same host linker as every component; the JS bridge is shared verbatim with the js-runner.
 
 use anyhow::{anyhow, Result};
-use rquickjs::{Array, Context, Ctx, Function, Object, Promise, Runtime, TypedArray};
+use rquickjs::{Array, Context, Ctx, Exception, Function, Object, Promise, Runtime, TypedArray};
 use std::cell::OnceCell;
 
 wit_bindgen::generate!({ world: "bindings", path: "wit", generate_all });
 
 use exports::wasi::http::incoming_handler::Guest;
+use rusm::runtime::actor;
 use wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
 use wasi::io::streams::OutputStream;
 
+// The actor bridge JS is shared verbatim with the js-runner (single source of truth) —
+// only the *backing* native `__*` ops differ (this runner wires the no-mailbox subset),
+// so `process.js`'s presence-guards expose exactly that subset here.
 const WEBAPI_JS: &str = include_str!("../../js-runner/bridge/webapi.js");
+const PROCESS_JS: &str = include_str!("../../js-runner/bridge/process.js");
+const KV_JS: &str = include_str!("../../js-runner/bridge/kv.js");
 const HTTP_JS: &str = include_str!("../bridge/http.js");
 /// wasi:io `blocking-write-and-flush` accepts at most 4096 bytes per call.
 const WRITE_CHUNK: usize = 4096;
@@ -70,12 +84,52 @@ fn with_warm<R>(f: impl FnOnce(&Ctx<'_>) -> R) -> R {
 /// request. (`__print` is a Rust closure; verified to survive the wizer snapshot.)
 fn boot_bridge(ctx: Ctx<'_>) {
     let g = ctx.globals();
-    g.set(
-        "__print",
-        Function::new(ctx.clone(), |s: String| eprintln!("{s}")).expect("define __print"),
-    )
-    .ok();
+    macro_rules! def {
+        ($name:expr, $func:expr) => {
+            g.set($name, Function::new(ctx.clone(), $func).expect($name))
+                .expect($name);
+        };
+    }
+    def!("__print", |s: String| eprintln!("{s}"));
+
+    // The actor-ABI subset a *request* handler can back: no mailbox, so storage, the
+    // platform logger, and the outbound/lookup ops (publish to subscribers, find a peer)
+    // — but no `receive`/`spawn`/`monitor`/tag-join. `process.js`'s presence-guards turn
+    // this set into exactly `Process.{self,send,whereis,whereisTag}`; `console.*` routes
+    // to `__log`; `kv` is gated by the component's `storage` capability.
+    def!("__own_pid", || actor::own_pid().to_string());
+    def!("__whereis", |n: String| actor::whereis(&n)
+        .map(|p| p.to_string())
+        .unwrap_or_default());
+    def!("__whereis_tag", |t: String| actor::whereis_tag(&t)
+        .into_iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>());
+    def!("__send_text", |to: String, s: String| actor::send(
+        to.parse().unwrap_or(0),
+        s.as_bytes()
+    ));
+    def!("__send", js_send);
+    def!("__log", |level: String, message: String| {
+        let level = match level.as_str() {
+            "error" => actor::LogLevel::Error,
+            "warn" => actor::LogLevel::Warn,
+            "debug" => actor::LogLevel::Debug,
+            _ => actor::LogLevel::Info,
+        };
+        actor::log(level, &message);
+    });
+    def!("__kv_get", js_kv_get);
+    def!("__kv_set", js_kv_set);
+    def!("__kv_delete", js_kv_delete);
+    def!("__kv_exists", js_kv_exists);
+    def!("__kv_list", js_kv_list);
+
+    // Bridge JS, in dependency order: webapi (console → `__log`), the actor `Process`
+    // (guarded to the wired subset), `kv`, then the HTTP glue.
     eval(&ctx, WEBAPI_JS, "webapi.js").expect("webapi.js");
+    eval(&ctx, PROCESS_JS, "process.js").expect("process.js");
+    eval(&ctx, KV_JS, "kv.js").expect("kv.js");
     eval(&ctx, HTTP_JS, "http.js").expect("http.js");
     eval(
         &ctx,
@@ -83,6 +137,32 @@ fn boot_bridge(ctx: Ctx<'_>) {
         "cjs-shim",
     )
     .expect("cjs-shim");
+}
+
+// Thin wit-bindgen glue mirroring the js-runner's (the bindings are crate-local generated
+// code, so the wrappers are necessarily per-crate; the JS logic above is the shared source).
+fn js_send(to: String, data: TypedArray<u8>) {
+    actor::send(to.parse().unwrap_or(0), data.as_bytes().unwrap_or(&[]));
+}
+fn js_kv_get(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<Option<TypedArray<'_, u8>>> {
+    match actor::kv_get(&bucket, &key) {
+        Ok(Some(bytes)) => Ok(Some(TypedArray::new(ctx, bytes)?)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(Exception::throw_message(&ctx, &e)),
+    }
+}
+fn js_kv_set(ctx: Ctx<'_>, bucket: String, key: String, value: TypedArray<u8>) -> rquickjs::Result<()> {
+    actor::kv_set(&bucket, &key, value.as_bytes().unwrap_or(&[]))
+        .map_err(|e| Exception::throw_message(&ctx, &e))
+}
+fn js_kv_delete(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<bool> {
+    actor::kv_delete(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
+}
+fn js_kv_exists(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<bool> {
+    actor::kv_exists(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
+}
+fn js_kv_list(ctx: Ctx<'_>, bucket: String) -> rquickjs::Result<Vec<String>> {
+    actor::kv_list(&bucket).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 
 /// Wizer's build-time entry point (`./build.sh` runs `wizer --init-func wizer_initialize`):

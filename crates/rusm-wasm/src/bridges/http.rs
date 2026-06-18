@@ -236,6 +236,19 @@ mod tests {
         String::from_utf8_lossy(&buf).into_owned()
     }
 
+    /// One raw HTTP/1.1 request (Connection: close) → the full response text.
+    async fn request(addr: std::net::SocketAddr, method: &str, path: &str, body: &str) -> String {
+        let req = format!(
+            "{method} {path} HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        conn.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
     /// Like [`get`], but returns the raw response bytes — so a non-ASCII body can be
     /// asserted exactly, not through a lossy (replacement-char) `String`.
     async fn get_bytes(addr: std::net::SocketAddr) -> Vec<u8> {
@@ -382,6 +395,81 @@ mod tests {
         );
 
         handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_typescript_http_handler_uses_kv_publish_and_console() {
+        use rusm_otp::Received;
+
+        // The js-http-runner now gives a TS `fetch` handler the actor subset a request
+        // handler can back: `kv` (persist), `Process.whereisTag`/`send` (publish to
+        // subscribers), and `console` → the platform log. This proves all three end-to-end
+        // — exactly the primitives a stateful TS HTTP API needs.
+        // An inline bundle is eval'd inside a CommonJS wrapper, so it uses `module.exports`
+        // (a built bundle would `export default`; Bun lowers it to this).
+        const BUNDLE: &str = r#"
+            module.exports.default = async function handle(request) {
+              const store = kv.bucket("items");
+              const url = new URL(request.url);
+              if (request.method === "POST") {
+                const item = await request.json();
+                store.set(item.id, item.text);              // kv persist
+                console.log("stored " + item.id);           // console → platform log
+                const payload = new TextEncoder().encode(item.text);
+                for (const pid of Process.whereisTag("items")) Process.send(pid, payload); // publish
+                return new Response("ok", { status: 201 });
+              }
+              const v = store.get(url.pathname.slice(1));    // GET /<id>
+              return v ? new Response(new TextDecoder().decode(v)) : new Response("missing", { status: 404 });
+            };
+        "#;
+        let path =
+            std::env::temp_dir().join(format!("rusm-kv-httpgap-{}.redb", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let rt = Runtime::new();
+        let wr = WasmRuntime::with_store(rt.clone(), &path).unwrap();
+
+        // A subscriber tagged "items" forwards each published payload to a channel.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sub = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let Received::Message(b) = ctx.recv().await {
+                    let _ = tx.send(b);
+                }
+            }
+        });
+        rt.register_tag("items", sub.pid());
+
+        let server = wr.http_server_js(BUNDLE, CapabilityProfile::Trusted.capabilities());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // POST: the handler persists to kv, publishes to the "items" tag, and logs.
+        let post = request(addr, "POST", "/items", r#"{"id":"1","text":"hello"}"#).await;
+        assert!(post.starts_with("HTTP/1.1 201"), "POST ok: {post}");
+
+        // The published payload reached the tagged subscriber — `Process.whereisTag` +
+        // `send` work from a TS HTTP handler.
+        let published = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a published message within 5s")
+            .expect("subscriber channel stays open");
+        assert_eq!(
+            published, b"hello",
+            "publish via whereisTag+send from a TS HTTP handler"
+        );
+
+        // A GET on a fresh per-request instance reads the persisted value back — `kv` is
+        // durable across the process-per-request instances.
+        let got = request(addr, "GET", "/1", "").await;
+        assert!(
+            got.starts_with("HTTP/1.1 200") && got.contains("hello"),
+            "kv persisted across requests: {got}"
+        );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

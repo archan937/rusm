@@ -1,0 +1,168 @@
+package rusm:runtime@0.1.0;
+
+/// The actor / process API a RUSM component imports. Composition is by **message
+/// passing** — components address each other by pid and send bytes; there is no
+/// static component-to-component wiring and no lattice. A Rust guest binds this
+/// with `wit-bindgen` (a TS guest via the planned Bun + rquickjs shell, no jco);
+/// both call the same functions.
+interface actor {
+    /// A process identifier (Erlang's pid).
+    type pid = u64;
+
+    /// A snapshot of a process, mirroring the host's `Process.info`.
+    record process-info {
+        pid: pid,
+        links: u32,
+        monitors: u32,
+        names: list<string>,
+        label: option<string>,
+        mailbox-depth: u32,
+        trap-exit: bool,
+    }
+
+    /// This process's own pid (Erlang's `self()`).
+    own-pid: func() -> pid;
+
+    /// Spawn a registered component (by the name it was registered under) as a new
+    /// process, returning its pid (Erlang's `spawn`). Capability-gated and
+    /// **non-escalating**: the child inherits the spawner's capabilities, never
+    /// more. `err` with a message if spawn is denied or the name is unknown.
+    spawn: func(component: string) -> result<pid, string>;
+
+    /// Spawn a **dynamic JS** instance of `component` — a node-declared *runner template*
+    /// (a capability profile with no fixed bundle) — whose JS bundle is fetched at runtime
+    /// from `source`: `url:<u>` / `http(s)://…`, or `kv:<bucket>/<key>` (the node's store).
+    /// The instance runs under `component`'s **declared** profile (operator policy — the
+    /// guest chooses the code, never the capabilities). Capability-gated: `spawn`, plus the
+    /// spawner's own `network` (for a `url:` source) or `storage` (for `kv:`) — so a
+    /// sandboxed guest can't drive arbitrary host fetches. `err` if denied, if `component`
+    /// is not a dynamic template, or if the source can't be loaded.
+    spawn-from: func(component: string, source: string) -> result<pid, string>;
+
+    /// Monitor a process: when `target` dies, this process receives a `__down`
+    /// message (Erlang's `monitor`) — the basis for a guest Supervisor.
+    monitor: func(target: pid);
+
+    /// Send a byte message to another process; silently dropped if it's gone
+    /// (like Erlang's `send`).
+    send: func(to: pid, message: list<u8>);
+
+    /// Receive the next message, suspending until one arrives (FIFO). The host
+    /// runs this asynchronously, so a blocked guest frees its scheduler thread.
+    receive: func() -> list<u8>;
+
+    /// Like [`receive`], but gives up after `timeout-ms` and returns `none` —
+    /// Erlang's `receive … after`. The basis for heartbeats and deadlines without
+    /// a busy loop: wait for the next message *or* the timeout, whichever comes
+    /// first. A monitored `__down` counts as a message (as it does for `receive`).
+    receive-timeout: func(timeout-ms: u64) -> option<list<u8>>;
+
+    /// Every live pid (Erlang's `Process.list/0`).
+    list-processes: func() -> list<pid>;
+
+    /// A snapshot of a process (Erlang's `Process.info/1`), or none if it's gone.
+    info: func(target: pid) -> option<process-info>;
+
+    /// Whether a process is alive (`Process.alive?/1`).
+    is-alive: func(target: pid) -> bool;
+
+    /// Kill a process (`Process.exit(pid, :kill)`). False if already gone.
+    kill: func(target: pid) -> bool;
+
+    /// Register / look up / release a name in the node registry.
+    register: func(name: string) -> bool;
+    whereis: func(name: string) -> option<pid>;
+    unregister: func(name: string) -> bool;
+
+    /// Attach a human-readable label for observability (`Process.set_label/1`).
+    set-label: func(label: string);
+
+    /// **Process-group tags** (Erlang's `pg`): join/leave **this** process (unprivileged),
+    /// enumerate live members, and terminate a whole group. `kill-tag` is gated by
+    /// process-control, like `kill`. Memberships release on exit.
+    register-tag: func(tag: string);
+    unregister-tag: func(tag: string);
+    whereis-tag: func(tag: string) -> list<pid>;
+    kill-tag: func(tag: string) -> u32;
+
+    /// Severity for [`log`] — maps to `console.{error,warn,log/info,debug}` (TS) and the
+    /// `log` crate's levels (Rust).
+    enum log-level {
+        error,
+        warn,
+        info,
+        debug,
+    }
+
+    /// Emit a log line through the **platform** logger. The host stamps the timestamp,
+    /// this process's component name (its label) + pid, and the severity colour, formats
+    /// it exactly like every other RUSM log line, and writes it to the node's log stream —
+    /// gated by the node's `[log] level`. The guest supplies only severity + message;
+    /// name, pid, and format are the platform's, so a developer never wires them.
+    /// `console.*` (TS) and the `log` crate (Rust) route here.
+    log: func(level: log-level, message: string);
+/// A restart strategy for [`supervise`].
+    enum supervise-strategy {
+        one-for-one,
+        one-for-all,
+        rest-for-one,
+    }
+
+    /// Supervise named child components: restart a dead child per `strategy`, with a
+    /// restart budget of at most `max-restarts` within `within-ms` (both `0` =
+    /// unlimited / over the whole lifetime). Returns the supervisor's pid.
+    /// Capability-gated like `spawn`; children inherit these capabilities, and the
+    /// supervisor is linked to the caller — if it gives up (or the caller dies) the
+    /// whole tree is torn down. This is the **one** restart implementation; the guest
+    /// `Supervisor` SDKs delegate to it.
+    supervise: func(strategy: supervise-strategy, children: list<string>, max-restarts: u32, within-ms: u32) -> result<pid, string>;
+
+    /// A handle to one byte stream this process owns (an id local to the process).
+    /// (`stream` is a reserved WIT keyword, hence `stream-id`.)
+    type stream-id = u64;
+
+    /// Open a Tokio-backpressured byte stream to another process: the read end is
+    /// delivered to `to` (it arrives via `stream-accept`), the write end is kept
+    /// here under the returned handle. `none` if `to` is already gone.
+    stream-open: func(to: pid) -> option<stream-id>;
+
+    /// Write one chunk to a stream, suspending if the buffer is full (the reader
+    /// applies natural back-pressure). `false` once the reader is gone / unknown id.
+    stream-write: func(handle: stream-id, chunk: list<u8>) -> bool;
+
+    /// Close the write end — the reader then sees end-of-stream.
+    stream-close: func(handle: stream-id);
+
+    /// Accept the next incoming byte stream, suspending until one arrives; returns
+    /// a handle for reading it. (Like `receive`, plain messages are skipped here.)
+    stream-accept: func() -> stream-id;
+
+    /// Read the next chunk from an accepted stream, suspending until one arrives.
+    /// `none` at end-of-stream (the writer was closed/dropped).
+    stream-read: func(handle: stream-id) -> option<list<u8>>;
+
+    /// Durable key-value storage — a sub-capability of the actor surface (like
+    /// `stream-*`), **gated by `storage`** (default-deny). Bytes in, bytes out,
+    /// namespaced by `bucket`; backed by an embedded store the node owns (no external
+    /// daemon). Each op `err`s with a message if storage is denied or unconfigured.
+    /// The host application owns the store's file; a guest just names buckets + keys.
+    kv-get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
+    kv-set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
+    kv-delete: func(bucket: string, key: string) -> result<bool, string>;
+    kv-exists: func(bucket: string, key: string) -> result<bool, string>;
+    kv-list: func(bucket: string) -> result<list<string>, string>;
+}
+
+/// A RUSM actor component: imports the actor API and exports an entry point the
+/// runtime calls to start the process.
+world process {
+    import actor;
+    export run: func();
+}
+
+/// Imports only — what the `rusm-rs` library generates. A guest crate generates
+/// the full `process` world and maps `actor` to this crate's bindings (so the
+/// interface is imported once), then `export!`s its `run`.
+world imports {
+    import actor;
+}

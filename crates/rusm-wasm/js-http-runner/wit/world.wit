@@ -1,8 +1,17 @@
-// The wasi:http `proxy` world the runner targets: imports the WASI surface a handler
-// needs (clocks, random, io, cli stdio + env) and exports `incoming-handler`. Pinned to
-// 0.2.6 (fetched coherent via `wkg`); `wit-bindgen` generates the bindings, then the build
-// wizer-snapshots the warm QuickJS engine and `wasm-tools component new` re-wraps wasi:http.
+// The js-http-runner's own world: a `wasi:http` proxy (it exports `incoming-handler` and
+// imports outbound `wasi:http` + the WASI surface a handler needs) that ALSO imports the
+// `rusm:runtime/actor` interface — so a TS `fetch` handler gets `kv` + the publish ops
+// (whereis/whereis-tag/send) + platform logging, exactly like an actor component. The
+// host wires the actor world for every component (see `bridges::wasip2::build_linker`),
+// and the no-mailbox ops work with the per-request store; the runner's bridge only
+// exposes that backable subset (no receive/spawn — a request handler has no mailbox).
+//
+// The `actor` interface itself is vendored byte-identical from the canonical
+// `crates/rusm-rs/wit/world.wit` in `world.wit` (guarded by a drift test); this file adds
+// only the runner-specific world, like the rusm-go SDK adds its `component` world.
 package local:js-http-runner;
+
 world bindings {
   include wasi:http/proxy@0.2.6;
+  import rusm:runtime/actor@0.1.0;
 }

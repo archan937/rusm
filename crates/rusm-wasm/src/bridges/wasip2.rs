@@ -1551,6 +1551,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_js_http_runner_vendors_the_canonical_actor_wit() {
+        // The js-http-runner imports the actor world so a TS `fetch` handler gets `kv` +
+        // the publish ops + platform logging; it vendors the actor WIT as a dep, which
+        // must stay byte-identical to the canonical rusm-rs world (the single source of
+        // truth). If this fails, re-copy crates/rusm-rs/wit/world.wit over the dep copy.
+        assert_eq!(
+            include_str!("../../js-http-runner/wit/deps/rusm-runtime/world.wit"),
+            include_str!("../../../rusm-rs/wit/world.wit"),
+            "js-http-runner/wit/deps/rusm-runtime/world.wit drifted from rusm-rs/wit/world.wit",
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_go_guest_logs_via_slog_and_the_standard_log_package() {
         // The Go guest logs the normal way — log/slog (with attrs and a group) and the
