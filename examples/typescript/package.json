@@ -1,0 +1,1 @@
+{ "name": "todo-board", "private": true, "dependencies": { "rusm-ts": "file:../../packages/rusm-ts" } }
