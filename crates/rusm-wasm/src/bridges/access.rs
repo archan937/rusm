@@ -5,8 +5,8 @@
 //! status coloured by class. Built on [`rusm_logfmt::platform_line`], so it reads as one
 //! stream with the lifecycle and guest logs, and gated by the node `[log] level` (shown
 //! at `info`+) — when logging is off the serving hot path pays a single atomic load. The
-//! three serving bridges ([`super::routed`], [`super::http`], [`super::ws`]) all emit
-//! through here, so an HTTP request, an SSE stream, and a WS upgrade read the same.
+//! serving bridges ([`super::routed`], [`super::http`], [`super::sse`], [`super::ws`]) all
+//! emit through here, so an HTTP request, an SSE stream, and a WS upgrade read the same.
 
 use rusm_logfmt as fmt;
 use rusm_otp::{LogLevel, Runtime};
@@ -68,19 +68,6 @@ pub(crate) fn ensure_no_cache<B>(response: &mut hyper::Response<B>) {
             hyper::header::HeaderValue::from_static("no-cache"),
         );
     }
-}
-
-/// Whether a listener declared `protocol = "sse"` produced a contract violation: a
-/// successful (2xx) reply that is **not** a `text/event-stream`. The host serves this as
-/// 500 rather than silently delivering a broken SSE endpoint — failing loud where a guest
-/// (notably a hand-written TS `fetch`) forgot the content-type. Always false for a plain
-/// HTTP listener (`require_sse == false`), and an error reply (a 4xx/5xx) is left alone.
-pub(crate) fn violates_sse_contract(
-    require_sse: bool,
-    status: u16,
-    headers: &hyper::HeaderMap,
-) -> bool {
-    require_sse && (200..300).contains(&status) && !is_event_stream(headers)
 }
 
 #[cfg(test)]
@@ -159,21 +146,5 @@ mod tests {
         let mut plain = response_with(Some("application/json"));
         ensure_no_cache(&mut plain);
         assert!(!plain.headers().contains_key(hyper::header::CACHE_CONTROL));
-    }
-
-    #[test]
-    fn violates_sse_contract_flags_only_a_non_event_stream_2xx_on_an_sse_listener() {
-        let sse = response_with(Some("text/event-stream"));
-        let json = response_with(Some("application/json"));
-
-        // The violation: an SSE listener returned a 2xx that isn't an event-stream.
-        assert!(violates_sse_contract(true, 200, json.headers()));
-        // Not a violation: it *is* an event-stream.
-        assert!(!violates_sse_contract(true, 200, sse.headers()));
-        // Not a violation: an error reply (4xx/5xx) is allowed to be plain.
-        assert!(!violates_sse_contract(true, 404, json.headers()));
-        assert!(!violates_sse_contract(true, 500, json.headers()));
-        // Never a violation on a plain HTTP listener.
-        assert!(!violates_sse_contract(false, 200, json.headers()));
     }
 }

@@ -83,26 +83,27 @@ pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let module_ident = &module.ident;
     // Each `pub fn` in the module is an action, dispatched by its name (the `#action` half
-    // of a `component#action` route). Arity selects the kind: a 2-arg `fn(Request, Params)
-    // -> Response` is buffered; a 3-arg `fn(Request, Params, Sse)` streams (SSE).
+    // of a `component#action` route): a `fn(Request, Params) -> Response`. (Server-Sent
+    // Events are a per-connection `rusm_rs::sse::serve` handler now, not a 3-arg action.)
     let arms = items.iter().filter_map(|item| match item {
         syn::Item::Fn(f) if matches!(f.vis, syn::Visibility::Public(_)) => {
             let name = &f.sig.ident;
             let action = name.to_string();
-            let body = if f.sig.inputs.len() == 3 {
-                quote! {
-                    ::rusm_rs::http::Outcome::Streamed(::std::boxed::Box::new(
-                        move |__sse| super::#module_ident::#name(__request, __params, __sse)
-                    ))
-                }
-            } else {
-                quote! {
-                    ::rusm_rs::http::Outcome::Buffered(
-                        super::#module_ident::#name(__request, __params)
+            if f.sig.inputs.len() != 2 {
+                return Some(
+                    syn::Error::new_spanned(
+                        &f.sig,
+                        "a #[handlers] action takes (Request, Params) -> Response; \
+                         for Server-Sent Events use a per-connection `rusm_rs::sse::serve` handler",
                     )
-                }
-            };
-            Some(quote! { #action => ::core::option::Option::Some(#body), })
+                    .into_compile_error(),
+                );
+            }
+            Some(quote! {
+                #action => ::core::option::Option::Some(
+                    super::#module_ident::#name(__request, __params)
+                ),
+            })
         }
         _ => None,
     });

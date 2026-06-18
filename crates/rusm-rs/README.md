@@ -48,12 +48,11 @@ unit, full isolation. Routing is declarative in each listener's `rusm.toml`
 `[serve.routes]` subtable (`"METHOD /path/:param" = "component#action"`), so handlers
 carry no router code.
 
-**HTTP / SSE** — a module of `pub fn`s under `#[rusm_rs::handlers]` (no `main`, no
-router; the macro generates the shell + dispatch). A 2-arg `fn(Request, Params) ->
-Response` action is buffered; a 3-arg `fn(Request, Params, Sse)` streams SSE:
+**HTTP** — a module of `pub fn(Request, Params) -> Response` under `#[rusm_rs::handlers]`
+(no `main`, no router; the macro generates the shell + dispatch):
 
 ```rust
-use rusm_rs::http::{Params, Request, Response, Sse};
+use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
 pub mod api {
@@ -62,14 +61,28 @@ pub mod api {
     pub fn show(_req: Request, p: Params) -> Response {            // GET /users/:id
         Response::text(format!("user {}\n", p.get("id").unwrap_or("?")))
     }
-
-    pub fn events(_req: Request, p: Params, sse: Sse) {            // 3 args → SSE
-        let label = p.get("label").unwrap_or("tick").to_string();
-        for n in 0.. {
-            if !sse.data(format!("{label} {n}\n").as_bytes()) { break; }
-        }
-    }
 }
+```
+
+**SSE** — implement `sse::Handler` (`open`/`message`/`close`) and `sse::serve` it; the host
+runs one isolated process per connection (the SSE twin of WS). Subscribe to an event source
+in `open` (e.g. a process-group tag), emit each pushed event with `Stream::data`; the
+platform owns the wire framing, keep-alive heartbeats, and disconnect:
+
+```rust
+use rusm_rs::sse::{self, Handler, Stream};
+
+#[derive(Default)]
+struct Feed;
+
+impl Handler for Feed {
+    fn open(&mut self, _s: &Stream) { rusm_rs::register_tag("todos"); }  // subscribe
+    fn message(&mut self, s: &Stream, ev: Vec<u8>) { s.data(&ev); }      // a published event → emit
+    fn close(&mut self, _s: &Stream) { /* disconnect — clean or dropped */ }
+}
+
+#[rusm_rs::main]
+fn main() { sse::serve(Feed::default()); }
 ```
 
 **WS** — implement `ws::Handler` (`open`/`message`/`close`, reply via `Connection::send`)

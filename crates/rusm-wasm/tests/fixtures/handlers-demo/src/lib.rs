@@ -1,7 +1,7 @@
 //! A per-request HTTP handler component: just `pub fn`s — no `main`, no router, no wire.
-//! The host resolves the route and dispatches the matched action here. A 3-arg action
-//! (taking `Sse`) streams Server-Sent Events.
-use rusm_rs::http::{Params, Request, Response, Sse};
+//! The host resolves the route and dispatches the matched action here. (Server-Sent
+//! Events are a per-connection `rusm_rs::sse::serve` handler now, not a 3-arg action.)
+use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
 pub mod demo {
@@ -13,28 +13,5 @@ pub mod demo {
 
     pub fn echo(req: Request, _p: Params) -> Response {
         Response::new(200, req.body)
-    }
-
-    pub fn ticks(_req: Request, _p: Params, sse: Sse) {
-        for n in 0..3 {
-            if !sse.data(format!("tick {n}").as_bytes()) {
-                break;
-            }
-        }
-    }
-
-    /// An **endless** SSE feed: it only stops when the client disconnects (the
-    /// back-pressured write returns `false`). The host's bounded byte-stream channel
-    /// parks this fiber when the consumer is slow — it never busy-spins — and the
-    /// process exits promptly on disconnect (no leak). Exercised by the
-    /// disconnect-teardown test.
-    pub fn firehose(_req: Request, _p: Params, sse: Sse) {
-        let mut n = 0u64;
-        loop {
-            if !sse.data(format!("ev {n}").as_bytes()) {
-                break;
-            }
-            n += 1;
-        }
     }
 }

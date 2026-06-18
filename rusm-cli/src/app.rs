@@ -22,7 +22,7 @@ use rusm_node::{
 };
 use rusm_otp::{ProcessHandle, Runtime};
 use rusm_wasm::{
-    Capabilities, CapabilityProfile, HttpServer, Resolver, Routed, WasmRuntime, WsServer,
+    Capabilities, CapabilityProfile, HttpServer, Resolver, Routed, SseServer, WasmRuntime, WsServer,
 };
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -346,27 +346,33 @@ pub async fn serve_apps(
         let addr = listener
             .local_addr()
             .with_context(|| format!("local address of `{label}`"))?;
-        let routed = spec.protocol.is_http() && !spec.routes.is_empty();
+        // Routed serving is HTTP-only: a `[serve.routes]` table dispatches each request to
+        // a matched handler action. SSE and WS are per-connection handlers (one named
+        // component, one process per connection), never routed.
+        let routed = matches!(spec.protocol, ServeProtocol::Http) && !spec.routes.is_empty();
         // Build the server up front so a load/compile error surfaces here (before we
         // claim the endpoint is up), then drive the accept loop on its own task.
         let task = if routed {
-            // Routed per-request HTTP/SSE: resolve this listener's routes, spawn the
-            // matched `[components.<name>]` handler fresh, dispatch the action.
+            // Routed per-request HTTP: resolve this listener's routes, spawn the matched
+            // `[components.<name>]` handler fresh, dispatch the action.
             let table = spec
                 .route_table()
                 .map_err(|e| anyhow!("invalid [serve.routes] for {}: {e}", spec.listen))?;
-            let mut server = wasm.routed_http_server(routed_resolver(table), caps_map.clone());
-            if spec.protocol.is_sse() {
-                server = server.require_event_stream();
-            }
-            tokio::spawn(server.serve(listener))
+            tokio::spawn(
+                wasm.routed_http_server(routed_resolver(table), caps_map.clone())
+                    .serve(listener),
+            )
         } else {
-            // No routes: a single named handler component — a WebSocket worker
-            // (per connection) or a handler-less `wasi:http` HTTP component.
+            // A single named handler component: a handler-less `wasi:http` HTTP component,
+            // an SSE handler, or a WebSocket worker — each one process per request/connection.
             let name = spec.name.as_deref().ok_or_else(|| {
+                let hint = if matches!(spec.protocol, ServeProtocol::Http) {
+                    ", or a `[serve.routes]` table for HTTP"
+                } else {
+                    ""
+                };
                 anyhow!(
-                    "the `{:?}` listener on {} needs a `name` (its handler component), \
-                     or a `[serve.routes]` table for HTTP/SSE",
+                    "the `{:?}` listener on {} needs a `name` (its handler component){hint}",
                     spec.protocol,
                     spec.listen
                 )
@@ -378,14 +384,16 @@ pub async fn serve_apps(
                 .map(|c| capabilities_for(&c.capability, profiles))
                 .unwrap_or_else(|| CapabilityProfile::Sandboxed.capabilities());
             let remote = remote_bundle(spec.source.as_deref(), wasm).await?;
-            if spec.protocol.is_http() {
-                let mut server = build_http_server(dir, wasm, name, caps, remote)?;
-                if spec.protocol.is_sse() {
-                    server = server.require_event_stream();
+            match spec.protocol {
+                ServeProtocol::Sse => {
+                    tokio::spawn(build_sse_server(dir, wasm, name, caps, remote)?.serve(listener))
                 }
-                tokio::spawn(server.serve(listener))
-            } else {
-                tokio::spawn(build_ws_server(dir, wasm, name, caps, remote)?.serve(listener))
+                ServeProtocol::Ws => {
+                    tokio::spawn(build_ws_server(dir, wasm, name, caps, remote)?.serve(listener))
+                }
+                ServeProtocol::Http => {
+                    tokio::spawn(build_http_server(dir, wasm, name, caps, remote)?.serve(listener))
+                }
             }
         };
         endpoints.push(ServedEndpoint {
@@ -477,6 +485,35 @@ fn build_ws_server(
         .with_context(|| format!("compiling component `{name}`"))?;
     let prepared = wasm.prepare_component(&component, "run")?;
     Ok(wasm.ws_server(&prepared, caps))
+}
+
+/// Builds an SSE server for `name` — the SSE twin of [`build_ws_server`]: a `.js` worker
+/// bundle (on the js-runner) before a `.wasm` actor component (one process per connection).
+fn build_sse_server(
+    dir: &Path,
+    wasm: &WasmRuntime,
+    name: &str,
+    caps: Capabilities,
+    remote: Option<Vec<u8>>,
+) -> Result<SseServer> {
+    if let Some(bundle) = remote {
+        return Ok(wasm.sse_server_js(bundle, caps));
+    }
+    let wasm_dir = dir.join("wasm");
+    let js_path = wasm_dir.join(format!("{name}.js"));
+    if js_path.is_file() {
+        let bundle =
+            std::fs::read(&js_path).with_context(|| format!("reading {}", js_path.display()))?;
+        return Ok(wasm.sse_server_js(bundle, caps));
+    }
+    let path = wasm_dir.join(format!("{name}.wasm"));
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("reading {} (run `rusm build`?)", path.display()))?;
+    let component = wasm
+        .compile_component(&bytes)
+        .with_context(|| format!("compiling component `{name}`"))?;
+    let prepared = wasm.prepare_component(&component, "run")?;
+    Ok(wasm.sse_server(&prepared, caps))
 }
 
 #[cfg(test)]

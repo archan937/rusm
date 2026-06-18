@@ -16,10 +16,10 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use http_body_util::{BodyExt, Full, StreamBody};
-use hyper::body::{Bytes, Frame};
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
 use hyper::{Response, StatusCode};
-use rusm_otp::{ProcessHandle, Received, Runtime, StreamHandle};
+use rusm_otp::{ProcessHandle, Received, Runtime};
 use serde::Deserialize;
 use wasmtime_wasi_http::io::TokioIo;
 
@@ -58,9 +58,6 @@ pub struct RoutedHttpServer {
     resolve: Resolver,
     /// The capability profile to spawn each handler component under, by name.
     caps: Arc<HashMap<String, Capabilities>>,
-    /// Listener declared `protocol = "sse"`: every 2xx reply must be a
-    /// `text/event-stream`, or the host fails loud (a manifest/handler contract check).
-    require_sse: bool,
 }
 
 impl WasmRuntime {
@@ -79,20 +76,11 @@ impl WasmRuntime {
             spawner: self.spawner.clone(),
             resolve,
             caps: Arc::new(caps),
-            require_sse: false,
         }
     }
 }
 
 impl RoutedHttpServer {
-    /// Mark this as an SSE listener (`protocol = "sse"`): every successful reply must be a
-    /// `text/event-stream`, or the host serves 500 (a contract check — see
-    /// [`super::access::violates_sse_contract`]).
-    pub fn require_event_stream(mut self) -> Self {
-        self.require_sse = true;
-        self
-    }
-
     /// Serve HTTP/1.1 on `listener` until it closes — one task per connection. Abort
     /// the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
@@ -115,9 +103,9 @@ impl RoutedHttpServer {
         }
     }
 
-    /// Serve one request and log it: `rusm http|sse <method> <path> → <status>` (gated by
-    /// `[log] level`). SSE is told apart from plain HTTP by the response content-type,
-    /// since both ride this path.
+    /// Serve one request and log it: `rusm http <method> <path> → <status>` (gated by
+    /// `[log] level`). Routed responses are buffered HTTP (SSE is served per-connection by
+    /// [`super::sse::SseServer`], not through here).
     async fn handle(
         &self,
         req: hyper::Request<hyper::body::Incoming>,
@@ -129,33 +117,13 @@ impl RoutedHttpServer {
             .map(|pq| pq.as_str())
             .unwrap_or("/")
             .to_string();
-        let mut response = match self.dispatch(req).await {
+        let response = match self.dispatch(req).await {
             Ok(response) => response,
             Err(never) => match never {}, // dispatch is infallible
         };
-        // SSE transport correctness, uniform across all guest languages: fail loud on a
-        // `protocol = "sse"` listener that produced a non-event-stream 2xx, else ensure an
-        // event-stream is never cached.
-        if super::access::violates_sse_contract(
-            self.require_sse,
-            response.status().as_u16(),
-            response.headers(),
-        ) {
-            response = error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "protocol=\"sse\" requires a text/event-stream response",
-            );
-        } else {
-            super::access::ensure_no_cache(&mut response);
-        }
-        let proto = if super::access::is_event_stream(response.headers()) {
-            "sse"
-        } else {
-            "http"
-        };
         super::access::log_request(
             &self.spawner.rt,
-            proto,
+            "http",
             &method,
             &path,
             response.status().as_u16(),
@@ -257,11 +225,6 @@ impl RoutedHttpServer {
 
         Ok(match rx.await {
             Ok(GatewayReply::Buffered(resp)) => build_response(resp),
-            Ok(GatewayReply::Streaming {
-                status,
-                headers,
-                handle,
-            }) => build_streaming_response(status, headers, handle),
             Ok(GatewayReply::Err(message)) => {
                 error_response(StatusCode::INTERNAL_SERVER_ERROR, &message)
             }
@@ -272,61 +235,30 @@ impl RoutedHttpServer {
 
 // ── The reply machinery: handler reply → HTTP response ────────────────────────
 //
-// An ephemeral Wasm-free **responder** process owns a `oneshot` and turns the
-// handler's reply into the HTTP response — a buffered body, or a streamed/SSE body
-// that drains the guest's byte stream directly into the chunked HTTP body.
+// An ephemeral Wasm-free **responder** process owns a `oneshot` and turns the handler's
+// (buffered) reply into the HTTP response.
 
 /// The handler's reply, as the responder hands it to the HTTP task.
 enum GatewayReply {
     /// A complete buffered response.
     Buffered(rusm_wire::Response),
-    /// A streaming response (SSE): the head, plus the guest's byte stream which the
-    /// HTTP task drains directly into a chunked body — no intermediate channel.
-    Streaming {
-        status: u16,
-        headers: Vec<(String, String)>,
-        handle: StreamHandle,
-    },
     /// The handler errored.
     Err(String),
 }
 
-/// A Wasm-free process that waits for the handler's reply and hands it to the HTTP
-/// task. For a streaming reply the guest sends the head, then opens a byte stream to
-/// us (`Received::Stream`); we forward the stream **handle** itself (already a
-/// back-pressured Tokio channel), so the HTTP body reads the guest directly.
+/// A Wasm-free process that waits for the handler's reply and hands it to the HTTP task.
 fn spawn_responder(rt: &Runtime, tx: tokio::sync::oneshot::Sender<GatewayReply>) -> ProcessHandle {
     rt.spawn(move |mut ctx| async move {
-        // The head reply (a plain message).
         let head = loop {
             match ctx.recv().await {
                 Received::Message(bytes) => break bytes,
                 _ => continue,
             }
         };
-        let resp = match parse_reply(&head) {
-            Ok(resp) => resp,
-            Err(err) => {
-                let _ = tx.send(GatewayReply::Err(err));
-                return;
-            }
-        };
-        if !resp.stream {
-            let _ = tx.send(GatewayReply::Buffered(resp));
-            return;
-        }
-        // Streaming: the guest opens a byte stream to us next; hand its read end to
-        // the HTTP task and exit (no forwarding loop).
-        loop {
-            if let Received::Stream(handle) = ctx.recv().await {
-                let _ = tx.send(GatewayReply::Streaming {
-                    status: resp.status,
-                    headers: resp.headers,
-                    handle,
-                });
-                return;
-            }
-        }
+        let _ = tx.send(match parse_reply(&head) {
+            Ok(resp) => GatewayReply::Buffered(resp),
+            Err(err) => GatewayReply::Err(err),
+        });
     })
 }
 
@@ -362,25 +294,6 @@ fn build_response(resp: rusm_wire::Response) -> Response<ResBody> {
         .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "invalid response"))
 }
 
-/// Build a chunked, streamed response by draining the guest's byte stream — each
-/// chunk becomes a body frame as it's produced (true SSE), with the stream's own
-/// Tokio back-pressure carrying through.
-fn build_streaming_response(
-    status: u16,
-    headers: Vec<(String, String)>,
-    handle: StreamHandle,
-) -> Response<ResBody> {
-    let body = futures_util::stream::unfold(handle, |mut handle| async move {
-        handle
-            .read()
-            .await
-            .map(|chunk| (Ok::<_, Infallible>(Frame::data(Bytes::from(chunk))), handle))
-    });
-    response_builder(status, headers)
-        .body(StreamBody::new(body).boxed())
-        .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "invalid response"))
-}
-
 fn error_response(status: StatusCode, message: &str) -> Response<ResBody> {
     Response::builder()
         .status(status)
@@ -397,7 +310,6 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::Arc;
-    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     // A `#[rusm_rs::handlers] pub mod demo` with `fn hello(_, params)` (→ "hi <name>")
@@ -454,7 +366,6 @@ mod tests {
         let table = RouteTable::from_map(&HashMap::from([
             ("GET /hello/:name".to_string(), "demo#hello".to_string()),
             ("POST /echo".to_string(), "demo#echo".to_string()),
-            ("GET /ticks".to_string(), "demo#ticks".to_string()),
         ]))
         .unwrap();
         let caps = HashMap::from([(
@@ -481,21 +392,6 @@ mod tests {
             "fresh instance per request: {again}"
         );
 
-        // A 3-arg (`Sse`) action streams a chunked text/event-stream body.
-        let ticks = request(addr, "GET", "/ticks", "").await;
-        let lower = ticks.to_lowercase();
-        assert!(ticks.starts_with("HTTP/1.1 200"), "got: {ticks}");
-        assert!(
-            lower.contains("text/event-stream") && lower.contains("transfer-encoding: chunked"),
-            "streamed SSE body: {ticks}"
-        );
-        for n in 0..3 {
-            assert!(
-                ticks.contains(&format!("data: tick {n}")),
-                "event {n}: {ticks}"
-            );
-        }
-
         // Unmatched path → 404; matched path, wrong method → 405.
         assert!(
             request(addr, "GET", "/nope", "")
@@ -508,51 +404,6 @@ mod tests {
                 .await
                 .starts_with("HTTP/1.1 405"),
             "matched path + wrong method is 405"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_sse_listener_adds_no_cache_and_rejects_a_non_event_stream() {
-        // A `protocol = "sse"` listener (`.require_event_stream()`): the host enforces SSE
-        // transport correctness on every reply — add `Cache-Control: no-cache` to the
-        // event-stream, and fail loud (500) on a route that returns a non-event-stream.
-        let wr = WasmRuntime::new(Runtime::new()).unwrap();
-        let prepared = wr
-            .prepare_component(&wr.compile_component(HANDLERS).unwrap(), "run")
-            .unwrap();
-        wr.register_component("demo", prepared);
-        let table = RouteTable::from_map(&HashMap::from([
-            ("GET /ticks".to_string(), "demo#ticks".to_string()),
-            ("GET /hello/:name".to_string(), "demo#hello".to_string()),
-        ]))
-        .unwrap();
-        let caps = HashMap::from([(
-            "demo".to_string(),
-            CapabilityProfile::Sandboxed.capabilities(),
-        )]);
-        let server = wr
-            .routed_http_server(resolver(table), caps)
-            .require_event_stream();
-        let addr = serve_on(server).await;
-
-        // A real SSE action: 200, text/event-stream, and the host-added `no-cache`.
-        let ticks = request(addr, "GET", "/ticks", "").await.to_lowercase();
-        assert!(ticks.starts_with("http/1.1 200"), "got: {ticks}");
-        assert!(ticks.contains("text/event-stream"), "is SSE: {ticks}");
-        assert!(
-            ticks.contains("cache-control: no-cache"),
-            "the host adds no-cache to an SSE stream: {ticks}"
-        );
-
-        // A buffered (non-event-stream) action on an SSE listener breaks the contract → 500.
-        let bad = request(addr, "GET", "/hello/alice", "").await;
-        assert!(
-            bad.starts_with("HTTP/1.1 500"),
-            "a non-event-stream reply on an sse listener fails loud: {bad}"
-        );
-        assert!(
-            bad.contains("text/event-stream"),
-            "the 500 explains the SSE contract: {bad}"
         );
     }
 
@@ -602,72 +453,6 @@ mod tests {
                 .await
                 .starts_with("HTTP/1.1 405"),
             "matched path + wrong method is 405"
-        );
-    }
-
-    /// Robustness guard: an **endless** SSE handler must be torn down the moment the
-    /// client disconnects — never leaked, never left spinning. The byte stream is a
-    /// bounded channel, so the producer parks under back-pressure (no busy loop) and
-    /// the write returns `false` once the reader is gone, ending the handler. We prove
-    /// it observably: the per-request process count returns to baseline after a drop.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_endless_sse_handler_is_torn_down_when_the_client_disconnects() {
-        let rt = Runtime::new();
-        let wr = WasmRuntime::new(rt.clone()).unwrap();
-        let prepared = wr
-            .prepare_component(&wr.compile_component(HANDLERS).unwrap(), "run")
-            .unwrap();
-        wr.register_component("demo", prepared);
-        let table = RouteTable::from_map(&HashMap::from([(
-            "GET /firehose".to_string(),
-            "demo#firehose".to_string(),
-        )]))
-        .unwrap();
-        let caps = HashMap::from([(
-            "demo".to_string(),
-            CapabilityProfile::Sandboxed.capabilities(),
-        )]);
-        let addr = serve_on(wr.routed_http_server(resolver(table), caps)).await;
-
-        let baseline = rt.process_count();
-
-        // Open the endless stream and read until the first event lands (handler live).
-        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
-        conn.write_all(b"GET /firehose HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
-        let mut seen = Vec::new();
-        let mut buf = [0u8; 512];
-        loop {
-            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
-                .await
-                .expect("first SSE event arrives in time")
-                .expect("socket read ok");
-            assert!(n > 0, "the endless feed produced data");
-            seen.extend_from_slice(&buf[..n]);
-            if String::from_utf8_lossy(&seen).contains("ev 0") {
-                break;
-            }
-        }
-        assert!(
-            rt.process_count() > baseline,
-            "the endless handler process is live while streaming"
-        );
-
-        // Disconnect: dropping the socket must end the handler — back-pressured write
-        // returns false, the loop breaks, the process exits. No leak, no spin.
-        drop(conn);
-        let mut reclaimed = false;
-        for _ in 0..100 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            if rt.process_count() <= baseline {
-                reclaimed = true;
-                break;
-            }
-        }
-        assert!(
-            reclaimed,
-            "the endless SSE handler must exit on client disconnect (it did not — leaked or spinning)"
         );
     }
 }
