@@ -27,7 +27,7 @@ numbers, with no new plumbing.
    observer; pure logic (`format`, `protocol`, `state`) unit-tested to 100%.
 6. **Harness & examples** — the benchmark runner, the deterministic synthetic source,
    and the observer detail-toggle (all in `bench/rusm-bench`); the runnable
-   [`embedded_node`](../../examples/embedding/embedded_node/) example embeds a node.
+   [`embedded_node`](https://github.com/archan937/rusm/tree/main/examples/embedding/embedded_node) example embeds a node.
 
 ## Concepts introduced
 
