@@ -9,6 +9,8 @@ vocabulary this chapter builds on.
 
 ## Shape (what you write)
 
+*The same shape, wired into a real app, is the `api` component of the todo-board examples — [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript/components/api) · [Rust](https://github.com/archan937/rusm/tree/main/examples/rust/components/api) · [Go](https://github.com/archan937/rusm/tree/main/examples/go/components/api).*
+
 ::: code-group
 
 ```rust [Rust]

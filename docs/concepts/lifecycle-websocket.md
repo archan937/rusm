@@ -7,6 +7,8 @@ model and failure vocabulary.
 
 ## Shape (what you write)
 
+*The same shape, wired into a real app, is the `chat` component of the todo-board examples — [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript/components/chat) · [Rust](https://github.com/archan937/rusm/tree/main/examples/rust/components/chat) · [Go](https://github.com/archan937/rusm/tree/main/examples/go/components/chat).*
+
 ::: code-group
 
 ```rust [Rust]

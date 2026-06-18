@@ -100,5 +100,11 @@ See the full [serving guide](../serving-http-ws-sse.md) for routing syntax, the
 the `[[serve]]` and `[serve.routes]` schema is in the
 [configuration reference](../reference-configuration.md).
 
+For a complete runnable app in each language, see the collaborative todo board —
+[TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript) ·
+[Rust](https://github.com/archan937/rusm/tree/main/examples/rust) ·
+[Go](https://github.com/archan937/rusm/tree/main/examples/go) — or scaffold one with
+`rusm new <name> --template todo-board`.
+
 > Phase 11. `rusm serve` hosts `rusm.toml [[serve]]` entries on real ports; serving TLS
 > is planned for Phase 12.

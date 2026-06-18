@@ -6,6 +6,13 @@ actor API and the same JSON wire — so a Rust client, a TypeScript service, and
 worker interoperate transparently. Each SDK speaks its language's *own* idioms — the
 concepts are shared, the surface is native.
 
+> **Runnable examples.** The same five-component app (HTTP + SSE + WS + a service + a
+> worker) is written idiomatically in each language — read or run
+> [examples/typescript](https://github.com/archan937/rusm/tree/main/examples/typescript),
+> [examples/rust](https://github.com/archan937/rusm/tree/main/examples/rust), and
+> [examples/go](https://github.com/archan937/rusm/tree/main/examples/go), or scaffold your
+> own with `rusm new <name> --template todo-board --lang ts|rust|go`.
+
 ## Rust guests (`rusm-rs`)
 
 Ergonomic `Pid` / `send` / `receive` / `spawn` / registry / `Stream`, plus a

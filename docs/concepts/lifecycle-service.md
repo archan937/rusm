@@ -8,6 +8,8 @@ vocabulary.
 
 ## Shape (what you write)
 
+*A complete service wired into a real app is the `store` component of the todo-board examples — [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript/components/store) · [Rust](https://github.com/archan937/rusm/tree/main/examples/rust/components/store) · [Go](https://github.com/archan937/rusm/tree/main/examples/go/components/store).*
+
 ::: code-group
 
 ```rust [Rust]

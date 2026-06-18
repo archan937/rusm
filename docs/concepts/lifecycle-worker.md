@@ -7,6 +7,8 @@ vocabulary.
 
 ## Shape (what you write)
 
+*A complete worker wired into a real app is the `reporter` component of the todo-board examples — [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript/components/reporter) · [Rust](https://github.com/archan937/rusm/tree/main/examples/rust/components/reporter) · [Go](https://github.com/archan937/rusm/tree/main/examples/go/components/reporter).*
+
 ::: code-group
 
 ```rust [Rust]

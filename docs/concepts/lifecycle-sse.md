@@ -10,6 +10,8 @@ publisher's broadcast fans out to every open stream (push, not polling). See the
 
 ## Shape (what you write)
 
+*The same shape, wired into a real app, is the `feed` component of the todo-board examples — [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript/components/feed) · [Rust](https://github.com/archan937/rusm/tree/main/examples/rust/components/feed) · [Go](https://github.com/archan937/rusm/tree/main/examples/go/components/feed).*
+
 ::: code-group
 
 ```rust [Rust]
