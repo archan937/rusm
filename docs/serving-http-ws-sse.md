@@ -15,8 +15,8 @@
 >
 > | | HTTP | WS | SSE |
 > |---|---|---|---|
-> | **Rust** | ✅ `#[rusm_rs::handlers]` actions | ✅ `rusm-rs` worker | ✅ 3-arg `Sse` action |
-> | **TypeScript** | ✅ `export default` `fetch` handler | ✅ `websocket({ open, message, close })` | ✅ `Response(ReadableStream)` |
+> | **Rust** | ✅ `#[rusm_rs::handlers]` actions | ✅ `ws::serve` handler | ✅ `sse::serve` handler |
+> | **TypeScript** | ✅ `export default` `fetch` handler | ✅ `websocket({ open, message, close })` | ✅ `sse({ open, message, close })` |
 
 RUSM runs a component as a high-throughput **HTTP(S) / WS(S) / SSE server** — a
 sandboxed, supervised handler answering requests. The whole serving model rests on one
@@ -82,16 +82,14 @@ service or `kv` is the durable back. Clean separation, no compromise on isolatio
 Routing lives in a per-listener TOML **`[serve.routes]`** subtable — never in handler
 code.
 
-**It applies to `http` and `sse` listeners only.** Both match each incoming request by
-**method + path** and dispatch to a `component#action` — **SSE is routed *exactly* like
-HTTP**; it differs only in the handler (a 3-arg streaming action — see the `Sse` API
-below), not in how it's routed. **WebSocket does not path-route.** A `ws` listener binds **one**
-component and spawns a fresh process of it **per connection** (each frame → that process's
-mailbox), so there is no path → action table; to serve different WS endpoints, bind a
-separate `[[serve]]` listener (port/path) per endpoint. A `[serve.routes]` table on a `ws`
-listener is ignored.
+**It applies to `http` listeners only.** A `http` listener matches each incoming request
+by **method + path** and dispatches to a `component#action`. **SSE and WebSocket do not
+path-route** — each binds **one** handler component and spawns a fresh process of it **per
+connection** (an inbound WS frame, or the SSE stream itself, → that process), so there is no
+path → action table; to serve different SSE/WS endpoints, bind a separate `[[serve]]`
+listener per endpoint. A `[serve.routes]` table on an `sse`/`ws` listener is ignored.
 
-Each `[[serve]]` HTTP/SSE listener has its own `[serve.routes]`, so multiple
+Each `[[serve]]` HTTP listener has its own `[serve.routes]`, so multiple
 listeners (e.g. a public API on `:8080` and an admin port on `:9090`) route
 independently. A key is `"METHOD /path/pattern"`; a value is `"component#action"`:
 
@@ -106,7 +104,6 @@ listen = "127.0.0.1:8080"
 "POST /users"                  = "api#create"
 "GET  /users/:id/posts/:post"  = "api#post"      # multiple params
 "GET  /files/*"                = "files#serve"   # trailing * captures the tail
-"GET  /feed/:name"             = "api#events"    # an SSE action (see below)
 ```
 
 - **`:name`** captures one path segment as a parameter, read in the handler via
@@ -135,12 +132,12 @@ wire/JSON plumbing — the macro generates the entire component shell (the `proc
 world, the `Guest` impl, `export!`) and the action dispatch.
 
 > **The TypeScript equivalent is web standards**, not this macro — a TS handler is an
-> `export default` `fetch`/`websocket`/`ReadableStream` function and does its own
-> dispatch (no `[serve.routes]`). See [TypeScript serving](#typescript-serving-web-standards)
+> `export default` `fetch` / `websocket({…})` / `sse({…})` and does its own dispatch
+> (no `[serve.routes]` for HTTP). See [TypeScript serving](#typescript-serving-web-standards)
 > below for the matching HTTP, SSE, and WS forms.
 
 ```rust
-use rusm_rs::http::{Params, Request, Response, Sse};
+use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
 pub mod api {
@@ -155,27 +152,13 @@ pub mod api {
     pub fn create(req: Request, _p: Params) -> Response {
         Response::new(201, req.body).header("content-type", "application/json")
     }
-
-    // GET /feed/:name ->  "api#events"  — a 3-arg action streams SSE
-    pub fn events(_req: Request, p: Params, sse: Sse) {
-        let name = p.get("name").unwrap_or("feed").to_string();
-        for n in 0.. {
-            if !sse.data(format!("{name} tick {n}\n").as_bytes()) {
-                break; // the client disconnected — stop
-            }
-        }
-    }
 }
 ```
 
-The route value `"api#show"` names module `api`, action `show`. The action signature
-decides the response shape:
-
-- **Buffered** — `fn(Request, Params) -> Response`. The action computes a complete
-  response; the host turns it into the HTTP reply.
-- **Streaming SSE** — `fn(Request, Params, Sse)` (returns nothing). Each request is its
-  own process, so the action may **block for the entire connection**, writing events as
-  they happen. When the action returns, the stream closes.
+The route value `"api#show"` names module `api`, action `show`. Each action is a
+**buffered** `fn(Request, Params) -> Response` — it computes a complete response and the
+host turns it into the HTTP reply. (Server-Sent Events are **not** a routed action — they
+are a per-connection handler, like WebSocket; see [SSE](#sse-a-per-connection-handler).)
 
 ### `Params` — captured path parameters
 
@@ -190,30 +173,35 @@ pub fn post(_req: Request, p: Params) -> Response {
 }
 ```
 
-### `Sse` — the streaming API
+### SSE — a per-connection handler {#sse-a-per-connection-handler}
 
-A 3-arg action receives an `Sse` handle to the live stream:
-
-- `sse.data(payload)` — write a `data: <payload>\n\n` event. Returns `false` once the
-  client is gone (so a `for` loop can `break`).
-- `sse.write(frame)` — write a raw, pre-framed SSE chunk (e.g. with `event:`/`id:`
-  fields).
-- `sse.run(heartbeat_ms, map)` — **live-tail** an event source: block receiving messages
-  (e.g. from a `[components.<name>]` pub/sub hub you subscribed to), passing each to `map`
-  (return a frame to emit, `None` to skip); on an idle `heartbeat_ms` it writes a
-  heartbeat comment. It returns on disconnect — let the action then end so the process
-  exits and a monitoring broker prunes this subscriber automatically.
+Server-Sent Events are served like WebSocket — **one sandboxed process per connection**,
+not a routed action. A `protocol = "sse"` listener names one handler component (no
+`[serve.routes]`); the handler subscribes to an event source in `open` (typically a
+**process-group tag**), emits each pushed event in `message`, and cleans up in `close`:
 
 ```rust
-pub fn live(_req: Request, _p: Params, sse: Sse) {
-    // subscribe this process to a pub/sub service, then live-tail it:
-    sse.run(15_000, |msg| Some(rusm_rs::http::data_frame(&msg)));
+use rusm_rs::sse::{self, Handler, Stream};
+
+struct Feed;
+impl Handler for Feed {
+    fn open(&mut self, _s: &Stream) { rusm_rs::register_tag("todos"); } // subscribe
+    fn message(&mut self, s: &Stream, ev: Vec<u8>) { s.data(&ev); }     // a published event → emit
+    fn close(&mut self, _s: &Stream) {}
 }
+
+#[rusm_rs::main]
+fn run() { sse::serve(Feed); }
 ```
 
-SSE streams are **Tokio-back-pressured end-to-end**: the guest's writer suspends when
-the consumer is slow, so a slow client slows the producer instead of growing memory —
-no busy-looping, no unbounded buffering. (See [byte streams](./concepts/byte-streams).)
+A publisher broadcasts to the tag — `whereis_tag("todos")` then `send` each pid — and
+every open stream's `message` fires (push, not polling). The **platform** owns the SSE
+wire (the `text/event-stream` head + `Cache-Control: no-cache`, `data:` framing, keep-alive
+heartbeats), the **bounded, back-pressured** body, and disconnect (the body's writer dies →
+`close` fires), so a slow client slows the producer instead of growing memory and an idle or
+endless feed never leaks. The TS twin is `export default sse({ open, message, close })`; the
+Go twin is `web.Sse{ Open, Message, Close }.Serve()`. See the
+[SSE lifecycle](./concepts/lifecycle-sse) and [byte streams](./concepts/byte-streams).
 
 ## `[[serve]]` — declaring a listener
 
@@ -251,7 +239,6 @@ listen    = "127.0.0.1:8080"
 "GET  /"               = "api#home"
 "GET  /users/:id"      = "api#show"
 "POST /users"          = "api#create"
-"GET  /feed/:name"     = "api#events"   # 3-arg action → SSE
 "GET  /static/*"       = "api#static"   # wildcard tail
 
 # The handler the routes name — declared in [components.<name>], carries its own
@@ -268,7 +255,7 @@ resident = true                   # boot-spawned + supervised
 `components/api/src/lib.rs`:
 
 ```rust
-use rusm_rs::http::{Params, Request, Response, Sse};
+use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
 pub mod api {
@@ -291,15 +278,6 @@ pub mod api {
     pub fn static_(_req: Request, p: Params) -> Response {
         Response::text(format!("serving {}\n", p.get("*").unwrap_or("")))
     }
-
-    pub fn events(_req: Request, p: Params, sse: Sse) {
-        let name = p.get("name").unwrap_or("feed").to_string();
-        for n in 0.. {
-            if !sse.data(format!("{name} tick {n}\n").as_bytes()) {
-                break;
-            }
-        }
-    }
 }
 ```
 
@@ -307,7 +285,6 @@ pub mod api {
 rusm build           # cargo wasm32-wasip2 per components/*
 rusm serve           # binds 127.0.0.1:8080
 curl http://127.0.0.1:8080/users/42      # -> user 42
-curl -N http://127.0.0.1:8080/feed/ticks     # -> a live SSE stream
 ```
 
 Start from a scaffold with **`rusm new <name>`** (a zero-dependency TS HTTP component,
@@ -342,21 +319,19 @@ export default function handle(request: Request): Response {
 (The Workers/Deno `export default { fetch }` shape is also accepted, so those components
 port over.)
 
-**SSE** — return a `Response` whose body is a `ReadableStream`; the runner pulls each
-chunk and flushes it incrementally (truly streamed, not buffered):
+**SSE** — `import { sse }` and export a per-connection handler set (the SSE twin of
+`websocket`); one TS process runs per connection. Subscribe to an event source in `open`
+(a process-group tag), emit each pushed event in `message` — the platform owns the
+`text/event-stream` wire, heartbeats, and disconnect:
 
 ```ts
-export default function handle(): Response {
-  let n = 0;
-  const enc = new TextEncoder();
-  const body = new ReadableStream({
-    pull(c) {
-      if (n >= 5) return c.close();
-      c.enqueue(enc.encode(`data: tick ${n++}\n\n`));
-    },
-  });
-  return new Response(body, { headers: { "content-type": "text/event-stream" } });
-}
+import { sse, Process } from "rusm-ts";
+
+export default sse({
+  open(stream)        { Process.registerTag("todos"); },  // subscribe
+  message(stream, ev) { stream.data(ev); },               // a published event → emit
+  close(stream)       { /* disconnect — clean or dropped */ },
+});
 ```
 
 **WS** — `import { websocket }` and export a per-connection handler set; one TS worker

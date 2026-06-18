@@ -539,8 +539,10 @@ curl http://127.0.0.1:8080/            # Hello from RUSM 👋
 curl http://127.0.0.1:8080/users/42    # user 42   (Rust, via the :id route)
 ```
 
-To adapt: add more `[serve.routes]` entries and matching `pub fn`s; stream **SSE** with a
-3-arg action `fn(Request, Params, Sse)` (set `protocol = "sse"`); or serve
+To adapt: add more `[serve.routes]` entries and matching `pub fn`s; stream **SSE** with
+`protocol = "sse"` and a `rusm_rs::sse::serve` handler (`open`/`message`/`close`, one
+process per connection — the TS twin is `export default sse({ open, message, close })`,
+the Go twin `web.Sse{ Open, Message, Close }.Serve()`); or serve
 **WebSocket** with `protocol = "ws"` and a `rusm_rs::ws::serve` handler
 (`open`/`message`/`close`) — one sandboxed process per connection (the TS twin is
 `export default websocket({ open, message, close })` from `rusm-ts`; the Go twin is

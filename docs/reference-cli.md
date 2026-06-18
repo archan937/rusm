@@ -44,20 +44,25 @@ rusm new api  --lang go --protocol ws  # a Go WebSocket handler
 
 What each cell scaffolds:
 
-- **Rust HTTP/SSE** — a `#[rusm_rs::handlers] pub mod api { … }` component (each
-  `pub fn` is a routable action; `fn(Request, Params) -> Response` for HTTP,
-  `fn(Request, Params, Sse)` to stream SSE) **plus a `[serve.routes]` subtable** on
-  that listener's `[[serve]]` entry in `rusm.toml`, mapping `"METHOD /path"` →
-  `"api#action"`. No `main`, no router, no `wit/` dir — routing is declarative config.
+- **Rust HTTP** — a `#[rusm_rs::handlers] pub mod api { … }` component (each `pub fn` is a
+  routable `fn(Request, Params) -> Response` action) **plus a `[serve.routes]` subtable** on
+  that listener's `[[serve]]` entry in `rusm.toml`, mapping `"METHOD /path"` → `"api#action"`.
+  No `main`, no router, no `wit/` dir — routing is declarative config.
+- **Rust SSE** — a `sse::serve` handler (`open`/`message`/`close`, one sandboxed process per
+  connection — the SSE twin of WS); no `[serve.routes]`.
 - **Rust WS** — a `ws::serve` handler (`open`/`message`/`close`, one sandboxed process
   per connection); no `[serve.routes]`.
-- **TypeScript HTTP/SSE** — a zero-dependency web-standard
+- **TypeScript HTTP** — a zero-dependency web-standard
   `export default function handle(request): Response` (a `wasi:http` per-request
   component); it does its own dispatch, so no `[serve.routes]`.
+- **TypeScript SSE** — the `rusm-ts` package's `export default sse({ open, message, close })`
+  helper (one process per connection).
 - **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message, close })` helper.
-- **Go HTTP/SSE** — a `web.NewHandlers()` component (each `h.Handle("name", …)` /
-  `h.HandleSSE("name", …)` is a routable action; normal Go, no bindings boilerplate)
-  **plus a `[serve.routes]` subtable**, exactly like Rust — compiled via TinyGo.
+- **Go HTTP** — a `web.NewHandlers()` component (each `h.Handle("name", …)` is a routable
+  buffered action; normal Go, no bindings boilerplate) **plus a `[serve.routes]` subtable**,
+  exactly like Rust — compiled via TinyGo.
+- **Go SSE** — a `web.Sse{ Open, Message, Close }.Serve()` handler (one process per
+  connection); no `[serve.routes]`.
 - **Go WS** — a `web.WebSocket{ Open, Message, Close }.Serve()` handler (one sandboxed
   process per connection); no `[serve.routes]`.
 - **Generic (`--lang generic`)** — no source is generated; you drop a pre-built

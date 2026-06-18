@@ -1,53 +1,59 @@
 # Lifecycle — SSE component
 
-A per-request **Server-Sent Events** handler: a 3-arg action `fn(Request, Params, Sse)`
-that streams a `text/event-stream` body for the life of one connection. Because each
-request is its own process, the action may block for the whole connection. See the
-[overview](./component-lifecycle.md) for the shared two-domain model and failure
-vocabulary.
+One sandboxed component process **per connection** — the SSE twin of the
+[WebSocket component](./lifecycle-websocket.md). SSE is one-way (server → client): the
+handler emits events; there are no inbound client frames. The host owns the response body
+and delivers events to the handler through its **mailbox** — typically a
+[process-group tag](./links-and-supervision.md) the handler subscribes to, so a
+publisher's broadcast fans out to every open stream (push, not polling). See the
+[overview](./component-lifecycle.md) for the shared two-domain model.
 
 ## Shape (what you write)
 
 ::: code-group
 
 ```rust [Rust]
-use rusm_rs::http::{Params, Request, Sse};
+use rusm_rs::sse::{self, Handler, Stream};
 
-#[rusm_rs::handlers]
-pub mod api {
-    use super::*;
-    // routed from `[serve.routes]`:  "GET /feed" = "api#feed"
-    pub fn feed(_req: Request, _p: Params, sse: Sse) {
-        for n in 0.. {
-            if !sse.data(format!("tick {n}").as_bytes()) {
-                break; // the client disconnected — stop cleanly
-            }
-        }
+struct Feed;
+impl Handler for Feed {
+    fn open(&mut self, _s: &Stream) {
+        rusm_rs::register_tag("todos"); // subscribe to the event source
     }
+    fn message(&mut self, s: &Stream, event: Vec<u8>) {
+        s.data(&event); // a published event → emit it
+    }
+    fn close(&mut self, _s: &Stream) {
+        // disconnect — clean or dropped (optional)
+    }
+}
+
+#[rusm_rs::main]
+fn run() {
+    sse::serve(Feed);
 }
 ```
 
 ```ts [TypeScript]
-// A wasi:http component returning a streaming text/event-stream body. The runtime
-// pulls events and applies back-pressure; closing the controller ends the stream.
-export default function handle(_request: Request): Response {
-  const enc = new TextEncoder();
-  let n = 0;
-  const body = new ReadableStream({
-    pull(controller) {
-      controller.enqueue(enc.encode(`data: tick ${n++}\n\n`));
-    },
-  });
-  return new Response(body, { headers: { "content-type": "text/event-stream" } });
-}
+import { sse, Process } from "rusm-ts";
+
+export default sse({
+  open(stream) {
+    Process.registerTag("todos"); // subscribe to the event source
+  },
+  message(stream, event) {
+    stream.data(event); // a published event → emit it
+  },
+  close(stream) {
+    // disconnect — clean or dropped (optional)
+  },
+});
 ```
 
 ```go [Go]
 package main
 
 import (
-	"fmt"
-
 	rusm "github.com/archan937/rusm/packages/rusm-go"
 	"github.com/archan937/rusm/packages/rusm-go/web"
 )
@@ -56,59 +62,53 @@ func init() { rusm.Run(run) }
 func main() {}
 
 func run() {
-	h := web.NewHandlers()
-	// routed from `[serve.routes]`:  "GET /feed" = "api#feed"
-	h.HandleSSE("feed", func(_ web.Request, _ web.Params, sse web.Sse) {
-		for n := 0; ; n++ {
-			if !sse.Data([]byte(fmt.Sprintf("tick %d", n))) {
-				break // the client disconnected — stop cleanly
-			}
-		}
-	})
-	h.Serve()
+	web.Sse{
+		Open:    func(s web.Stream) { rusm.RegisterTag("todos") },   // subscribe
+		Message: func(s web.Stream, ev []byte) { s.Data(ev) },       // a published event → emit
+		Close:   func(s web.Stream) {},                              // disconnect
+	}.Serve()
 }
 ```
 
 :::
 
-In Rust, `sse.data(bytes)` writes one `data:` event and `sse.run(heartbeat_ms, map)`
-live-tails a source (e.g. a pub/sub topic) with idle heartbeats — the loop ends when a
-write returns `false`. Go's `web.Sse` mirrors this — `sse.Data(bytes)` and
-`sse.Run(heartbeatMs, mapFn)`. In TypeScript the runtime drives the `ReadableStream`'s
-`pull`, parking it on back-pressure and ending it on disconnect — the same lifecycle.
+One handler instance per connection, so its state is *this connection's*. `open` and
+`close` are optional; only `message` is required. **Publishing** is the other half: any
+process broadcasts to the tag — `whereis_tag("todos")` then `send` each pid (the
+[pub/sub primitive](./links-and-supervision.md)) — and every open stream's `message`
+fires. A resident `[components.<name>]` service or an HTTP handler is the usual publisher.
 
 ## Platform owns / you write
 
-- **Platform owns:** the **bounded, back-pressured** byte stream from the guest into the
-  chunked HTTP body, disconnect detection (a failed write returns `false`), reclaim on
-  exit, and **SSE transport correctness** — `Cache-Control: no-cache` is added for you,
-  and on a `protocol = "sse"` listener a reply that isn't `text/event-stream` fails loud
-  (500) instead of silently serving a broken stream. The Rust and Go SDKs set the
-  `text/event-stream` head for you; a hand-written TS `fetch` sets it itself, so that
-  contract check is what catches a forgotten header.
-- **You write:** the event loop — produce events, react to a `false` write by stopping.
+- **Platform owns:** the `text/event-stream` head + `Cache-Control: no-cache`, the SSE
+  wire framing (each `data(...)` payload becomes a `data:` event), keep-alive `: ping`
+  heartbeats on idle, the **bounded, back-pressured** body, disconnect detection (the
+  writer process that owns the body dies → the handler, monitoring it, runs `close`), and
+  reclaim on exit (subscriptions auto-release).
+- **You write:** `open` (subscribe), `message` (emit each event with `stream.data`), and
+  optionally `close` (cleanup). Self-stop with `stream.close()`.
 
 ## Lifecycle events
 
 | Event | Platform domain | Application domain | Result |
 | --- | --- | --- | --- |
-| **Normal** (finite feed) | drains each event into the body; closes the body when you return | writes events, then returns | clean end-of-stream |
-| **Back-pressure** (consumer slow) | the bounded channel fills; the next write **parks the fiber** until drained | blocked inside `sse.data(…)`; resumes later | paced to the consumer — **never a busy-spin** |
-| **Client disconnect** | the stream reader drops, so the next write returns `false` | the loop `break`s; the process exits | prompt teardown; a broker that `monitor`ed it prunes on the `Down` |
-| **Connection error** (socket write fails mid-stream) | same as a disconnect — the write returns `false` | loop breaks | clean exit |
-| **Crash (trap)** mid-stream | the stream writer drops → the chunked body simply ends → the process is Crashed | the `panic!` / `.unwrap()` | a truncated stream; **only this connection** |
-| **Memory crash (OOM)** | the `StoreLimiter` cap trips a trap → body ends → Crashed | exceeded `max-memory-mb` | truncated stream; the instance is discarded |
+| **Open** | spawn → deliver msg 1 = writer pid → send the `text/event-stream` head | `open` subscribes (e.g. `register_tag`) | stream live, awaiting events |
+| **Event pushed** | a publisher's broadcast lands in the mailbox | `message` emits it via `stream.data` | one `data:` event flushed |
+| **Idle** | no event for the heartbeat window → the writer emits `: ping` | — | connection kept alive through proxies |
+| **Client disconnect** (close or dropped) | the body's reader drops → the writer dies → the monitored death surfaces | `close` fires once, then the process exits | socket closed; subscription released |
+| **Self-stop** | `stream.close()` ends the body | `close` fires; the handler returns | clean end-of-stream; the client sees EOF |
+| **Crash (trap)** | the process is Crashed; the writer + body torn down | the `panic!` / `.unwrap()` | a truncated stream; **only this connection** |
 
 ## Notes
 
-- **No spins, ever.** The byte stream is a bounded channel, so an *endless* feed is
-  paced by the consumer (the write parks the fiber) — it cannot peg a core. And a
-  disconnect always tears the process down. Both are **regression-guarded by a test**
-  (an endless feed + a forced disconnect, asserting the process count returns to
-  baseline).
-- **Live fan-out pattern.** Subscribe to a [service component](./lifecycle-service.md)
-  (a broker) and `sse.run(...)` to forward each published message. The service
-  `monitor`s subscribers, so this process's exit (on disconnect) prunes the
-  subscription automatically — crash-safe cleanup with no unsubscribe call.
+- **No spins, ever.** The body is a bounded channel: a slow consumer back-pressures the
+  writer (it parks), and a disconnect is detected immediately (the body channel's
+  `closed()` resolves), not only at the next heartbeat — so an idle or endless feed costs
+  ~nothing and never leaks. Regression-guarded by the disconnect-teardown test.
+- **Push, not polling.** Events arrive through the mailbox, so there's no poll loop and no
+  timer — the feed is exactly as live as its publisher. The same process-group tags power
+  [WebSocket](./lifecycle-websocket.md) broadcast and any 1→N fan-out.
+- **Shared state lives elsewhere.** Cross-connection state belongs in a
+  [service component](./lifecycle-service.md) or `kv`, never in the per-connection process.
 
 Prev: [HTTP component](./lifecycle-http.md) · Next: [WebSocket component](./lifecycle-websocket.md)

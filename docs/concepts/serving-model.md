@@ -42,14 +42,12 @@ per-request. A handler that needs state simply `call`s a service and shapes the 
 ## Declarative routing
 
 Routing lives in a per-listener `rusm.toml` **`[serve.routes]`** subtable — never in
-handler code — and applies to **`http` and `sse` listeners only**: both match by method
-+ path and dispatch to a `component#action` (**SSE routes exactly like HTTP** — only the
-handler differs, a 3-arg streaming action). **`ws` does not path-route**: a WebSocket
-listener binds one component, one process per connection, so there's no routes table
-(separate WS endpoints = separate `[[serve]]` listeners). Each `[[serve]]` HTTP/SSE
-listener has its own `[serve.routes]`, so multiple listeners (e.g. a public API and an
-admin port) route independently. A key is `"METHOD /path/pattern"`, a value is
-`"component#action"`:
+handler code — and applies to **`http` listeners only**: it matches by method + path and
+dispatches to a `component#action`. **`sse` and `ws` do not path-route**: each binds one
+component, one process per connection, so there's no routes table (separate SSE/WS
+endpoints = separate `[[serve]]` listeners). Each `[[serve]]` HTTP listener has its own
+`[serve.routes]`, so multiple listeners (e.g. a public API and an admin port) route
+independently. A key is `"METHOD /path/pattern"`, a value is `"component#action"`:
 
 - `:name` captures a path parameter (read via `Params::get("name")`);
 - a trailing `*` captures the remaining segments;
@@ -62,14 +60,12 @@ the method → **405**; no match → **404**.
 
 A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]` — no
 `main`, no router, no wire plumbing. The macro generates the whole component shell and
-the action dispatch; the developer writes only handler functions:
+the action dispatch; the developer writes only handler functions. Each action is a
+**buffered** `fn(Request, Params) -> Response`. (Server-Sent Events are a per-connection
+[`sse::serve`](./lifecycle-sse.md) handler — like WS — not a routed action.)
 
-- a 2-arg action `fn(Request, Params) -> Response` is **buffered**;
-- a 3-arg action `fn(Request, Params, Sse)` **streams SSE** — and since each request is
-  its own process, it may block for the whole connection.
-
-TypeScript serving uses web standards instead (the macro is Rust): HTTP/SSE
-`export default` a `fetch`-shaped handler (SSE returns a `ReadableStream` body); WS uses
+TypeScript serving uses web standards instead (the macro is Rust): HTTP
+`export default` a `fetch`-shaped handler, SSE `export default sse({…})`; WS uses
 `export default websocket({ open, message, close })`, one worker per connection.
 
 ## How it works

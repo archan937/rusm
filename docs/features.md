@@ -64,8 +64,8 @@ that teaches it.
   wildcard); the host gateway resolves it (most-specific wins; 405 on method mismatch,
   404 on no match). Rust handlers are `pub fn`s under `#[rusm_rs::handlers]` — no `main`,
   no router code.
-- **Streaming & async** — incremental SSE (a 3-arg `fn(Request, Params, Sse)` action
-  streams for the life of the connection), per-connection WS processes, Tokio
+- **Streaming & async** — SSE and WS as per-connection handler processes
+  (`open`/`message`/`close`, one process per connection, streaming for its life), Tokio
   back-pressure throughout.
 - **Shared state lives elsewhere** — never in the ephemeral serving instance: a
   long-lived `[components.<name>]` service (`resident = true`) reached over the actor API

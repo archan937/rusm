@@ -272,7 +272,6 @@ listen = "127.0.0.1:8080"
 "GET /" = "api#home"
 "GET /users/:id" = "api#show"
 "POST /users" = "api#create"
-"GET /events" = "api#events"       # an SSE action (3-arg handler) if `api` serves sse
 "GET /assets/*" = "api#assets"
 
 # A custom capability profile for the API handler

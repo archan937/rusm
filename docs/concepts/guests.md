@@ -16,15 +16,15 @@ cargo-component, no jco.
 
 ### Serving — `#[rusm_rs::handlers]`
 
-A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]` — **no
-`main`, no router, no wire plumbing.** The macro generates the component shell and the
-action dispatch; the route is named in that listener's
-[`[serve.routes]`](../serving-http-ws-sse.md) subtable as `"component#action"`. A 2-arg action
-is buffered; a 3-arg action streams SSE (each request is its own process, so it may
-block for the whole connection):
+A Rust serving component is a module of `pub fn(Request, Params) -> Response` under
+`#[rusm_rs::handlers]` — **no `main`, no router, no wire plumbing.** The macro generates
+the component shell and the action dispatch; the route is named in that listener's
+[`[serve.routes]`](../serving-http-ws-sse.md) subtable as `"component#action"`.
+(Server-Sent Events are a per-connection `rusm_rs::sse::serve` handler, not a routed
+action — see below.)
 
 ```rust
-use rusm_rs::http::{Params, Request, Response, Sse};
+use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
 pub mod api {
@@ -33,14 +33,6 @@ pub mod api {
     // GET /users/:id  ->  "api#show"
     pub fn show(_req: Request, p: Params) -> Response {
         Response::text(format!("user {}\n", p.get("id").unwrap_or("?")))
-    }
-
-    // GET /events/:room  ->  "api#events"  (3 args → SSE)
-    pub fn events(_req: Request, p: Params, sse: Sse) {
-        let room = p.get("room").unwrap_or("lobby").to_string();
-        for n in 0.. {
-            if !sse.data(format!("{room} tick {n}").as_bytes()) { break; } // disconnected
-        }
     }
 }
 ```
@@ -114,9 +106,9 @@ component shell is a three-line `init` + `main` + `run`; the bindings live in th
 `rusm build` compiles each `components/<name>/` with **TinyGo** to a `wasm32-wasip2`
 component (no `wit/` dir, no bindings boilerplate in your source).
 
-Serving mirrors Rust: HTTP/SSE are routed by `[serve.routes]` to named actions
-registered on a `web.Handlers`; WebSocket is one process per connection. A 2-arg-style
-`Handle` is buffered; `HandleSSE` streams SSE:
+Serving mirrors Rust: HTTP is routed by `[serve.routes]` to named actions registered on a
+`web.Handlers`; WebSocket and SSE are one process per connection ([`web.Sse`](./lifecycle-sse.md)).
+An `Handle` action is a buffered `func(Request, Params) Response`:
 
 ```go
 package main
@@ -134,15 +126,6 @@ func run() {
 	// GET /users/:id  ->  "api#show"
 	h.Handle("show", func(_ web.Request, p web.Params) web.Response {
 		return web.Text("user " + p.Get("id") + "\n")
-	})
-	// GET /events/:room  ->  "api#events"  (HandleSSE → SSE)
-	h.HandleSSE("events", func(_ web.Request, p web.Params, sse web.Sse) {
-		room := p.Get("room")
-		for n := 0; ; n++ {
-			if !sse.Data([]byte(fmt.Sprintf("%s tick %d", room, n))) {
-				break // disconnected
-			}
-		}
 	})
 	h.Serve()
 }
