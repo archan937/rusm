@@ -75,10 +75,11 @@ the same story for Rust and TS, interoperable because they share one JSON wire.
 ## Play with it
 
 ```sh
-# A two-component TS app (calc service + commander) — build with Bun, run on RUSM:
-cd examples/ts-app
+# The TypeScript todo board — a `store` service + a `reporter` worker that drives it
+# through the typed client (call + cast + streaming + callback). Build with Bun, run on RUSM:
+cd examples/typescript
 rusm build      # bun install (if needed) + bundle each components/<name>/index.ts
-rusm run        # → 2 + 3 = 5 / hi RUSM / counted: 1,2,3 / work done after 25/50/100
+rusm serve      # boots the resident reporter → logs the call / seed-callback / stream / cast
 rusm dev        # same, then watch & reload on edit
 ```
 
@@ -139,7 +140,7 @@ func run() {
 dispatch (sync + async handlers), a TS commander calling a service via the typed
 client (call + streaming + callback), the Rust `#[service]` macro driven end to end
 (call + streaming + callback), and a `Supervisor` (Rust **and** TS) restarting a
-killed child. The Bun-built `ts-app` example runs end to end; the component-storm
+killed child. The Bun-built `typescript` todo-board example runs end to end; the component-storm
 spawn path holds **~440k spawns/sec** (no regression from spawn-from-guest). The
 Wasm-free invariant still holds (no `wasmtime` under `rusm-otp`).
 

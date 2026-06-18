@@ -372,8 +372,9 @@ stream / callback args / `.cast` / `.stop()`), binary (`Uint8Array`) messages, a
 [byte streams](#streaming-from-a-component) are all typed by the **`rusm-ts` package**.
 The Web APIs the runner polyfills (`URL`, `TextEncoder`, `Headers`,
 `ReadableStream`, `console`) are typed by the standard `DOM` lib — add it to your
-`tsconfig.json` (`"lib": ["ES2022", "DOM"]`). See the runnable `ts-app` example
-(Bun-built service + commander, with streaming + a callback) and `host_ts_component`.
+`tsconfig.json` (`"lib": ["ES2022", "DOM"]`). See the runnable `typescript` todo-board
+example (its `store` service + `reporter` worker, with streaming + a callback) and
+`host_ts_component`.
 
 > **Outbound `fetch` works — capability-gated.** A guest granted network (the
 > `network-client` profile) can `fetch` over the host's `wasi:http` client — HTTPS,
