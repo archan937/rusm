@@ -6,7 +6,8 @@ use anyhow::Result;
 use pico_args::Arguments;
 
 /// One-line description of what `rusm` is, shown in the help header.
-const TAGLINE: &str = "an Erlang-inspired WebAssembly runtime — isolated, supervised processes";
+const TAGLINE: &str =
+    "An Erlang-inspired WebAssembly runtime powered by Rust — isolated, supervised processes";
 
 /// Where to send people for the long form.
 const DOCS_URL: &str = "https://github.com/archan937/rusm";
@@ -102,8 +103,8 @@ pub fn version() -> String {
 pub fn usage() -> String {
     let width = COMMANDS.iter().map(|c| c.name.len()).max().unwrap_or(0);
     let mut out = format!(
-        "{}\n{TAGLINE}\n\nUsage:\n  rusm <command> [options]\n\nCommands:\n",
-        version()
+        "RUSM {} - {TAGLINE}\n\nUsage:\n  rusm <command> [options]\n\nCommands:\n",
+        env!("CARGO_PKG_VERSION")
     );
     for c in COMMANDS {
         out.push_str(&format!(
@@ -187,7 +188,14 @@ mod tests {
     #[test]
     fn usage_has_a_header_and_lists_every_command_with_its_summary() {
         let u = usage();
-        assert!(u.starts_with("rusm "), "starts with the version header");
+        assert!(
+            u.starts_with("RUSM "),
+            "starts with the RUSM version header"
+        );
+        assert!(
+            u.contains(env!("CARGO_PKG_VERSION")),
+            "header shows the version"
+        );
         assert!(u.contains(TAGLINE));
         assert!(u.contains("Commands:"));
         assert!(u.contains("-V, --version"), "documents the version flag");
