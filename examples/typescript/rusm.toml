@@ -25,10 +25,14 @@ name = "chat"
 protocol = "ws"
 listen = "127.0.0.1:8082"
 
-# api and feed read/write the durable todo list; chat is stateless (tags only).
+# api/feed/store read/write the durable todo list; chat needs none; reporter spawns store.
 [capabilities.stateful]
 inherits = "sandboxed"       # default-deny base
 allow-storage = true         # + durable kv
+
+[capabilities.spawner]
+inherits = "sandboxed"
+allow-spawn = true           # the reporter spawns the store service
 
 [components.api]
 capability = "stateful"
@@ -38,3 +42,13 @@ capability = "stateful"
 
 [components.chat]
 capability = "sandboxed"
+
+# A service spawned on demand by the reporter (reached via the typed client); runs under
+# its own profile whoever spawns it.
+[components.store]
+capability = "stateful"
+
+# A resident worker: boot-spawned + supervised; drives the store through the typed client.
+[components.reporter]
+capability = "spawner"
+resident = true

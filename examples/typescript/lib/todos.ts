@@ -53,3 +53,31 @@ export function publish(): void {
   const payload = new TextEncoder().encode(snapshot());
   for (const pid of Process.whereisTag(FEED_TAG)) Process.send(pid, payload);
 }
+
+// ── High-level operations — the single source for both the `api` (in-process) and the
+// `store` service. Each persists then publishes the new list to subscribers. ──
+
+/** Add a todo and publish; returns the new todo. */
+export function create(text: string): Todo {
+  const todo: Todo = { id: nextId(), text, done: false };
+  save(todo);
+  publish();
+  return todo;
+}
+
+/** Flip a todo's `done` and publish; `null` if it doesn't exist. */
+export function setDone(id: number): Todo | null {
+  const todo = get(id);
+  if (!todo) return null;
+  todo.done = !todo.done;
+  save(todo);
+  publish();
+  return todo;
+}
+
+/** Delete a todo and publish; `false` if it didn't exist. */
+export function del(id: number): boolean {
+  const ok = remove(id);
+  if (ok) publish();
+  return ok;
+}

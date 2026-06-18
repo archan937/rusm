@@ -3,6 +3,7 @@
 // instance. Reads/writes the durable todo list and publishes every change to the feed's
 // subscribers. The data layer lives in ../../lib/todos (shared with the feed).
 import * as todos from "../../lib/todos";
+import { page } from "../../lib/page";
 
 const cors = {
   "access-control-allow-origin": "*",
@@ -21,6 +22,10 @@ export default async function handle(request: Request): Promise<Response> {
   const segments = url.pathname.split("/").filter(Boolean); // "/todos/3" → ["todos", "3"]
   const id = segments[1] !== undefined ? Number(segments[1]) : null;
 
+  // GET / — the self-explanatory web UI (what this app showcases + an interactive board).
+  if (request.method === "GET" && url.pathname === "/")
+    return new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } });
+
   // CORS preflight — so a browser app on another origin can talk to the API.
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
@@ -32,29 +37,23 @@ export default async function handle(request: Request): Promise<Response> {
     const body = (await request.json().catch(() => ({}))) as { text?: string };
     const text = body.text?.trim();
     if (!text) return json({ error: "text is required" }, 400);
-    const todo: todos.Todo = { id: todos.nextId(), text, done: false };
-    todos.save(todo);
+    const todo = todos.create(text);
     console.log(`created #${todo.id}: ${todo.text}`);
-    todos.publish();
     return json(todo, 201);
   }
 
   // PATCH /todos/:id — toggle done.
   if (request.method === "PATCH" && id !== null) {
-    const todo = todos.get(id);
+    const todo = todos.setDone(id);
     if (!todo) return json({ error: "no such todo" }, 404);
-    todo.done = !todo.done;
-    todos.save(todo);
     console.log(`toggled #${id} → ${todo.done ? "done" : "open"}`);
-    todos.publish();
     return json(todo);
   }
 
   // DELETE /todos/:id — remove.
   if (request.method === "DELETE" && id !== null) {
-    if (!todos.remove(id)) return json({ error: "no such todo" }, 404);
+    if (!todos.del(id)) return json({ error: "no such todo" }, 404);
     console.log(`deleted #${id}`);
-    todos.publish();
     return new Response(null, { status: 204, headers: cors });
   }
 

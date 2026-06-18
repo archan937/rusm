@@ -60,13 +60,13 @@ export interface ProcessApi {
 
 /** The result of a typed call: `await` it for the reply, or `for await` it to
  *  stream a generator handler's chunks. Function arguments become callbacks that
- *  stay in the caller — the service's invocations travel back as messages. */
+ *  stay in the caller — the service's invocations travel back as messages.
+ *
+ *  A method streams only when its handler is an **async generator** (what the runtime
+ *  streams); a method returning a value — including an array or other `Iterable`, which
+ *  is replied whole — is an ordinary `await` call. */
 export type RusmCall<R> =
-  R extends AsyncIterable<infer T>
-    ? AsyncIterable<T> & PromiseLike<void>
-    : R extends Iterable<infer T>
-      ? AsyncIterable<T> & PromiseLike<void>
-      : Promise<Awaited<R>>;
+  R extends AsyncIterable<infer T> ? AsyncIterable<T> & PromiseLike<void> : Promise<Awaited<R>>;
 
 /** A typed client over a spawned service: each exported function becomes a call
  *  (`await`) — or a stream (`for await`); `cast` is fire-and-forget. */

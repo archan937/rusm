@@ -95,6 +95,15 @@ test("DELETE /todos/:id removes a todo (204); 404 for an unknown id", async () =
   expect((await handle(req("DELETE", "/todos/1"))).status).toBe(404);
 });
 
+test("GET / serves the explanatory HTML page", async () => {
+  const res = await handle(req("GET", "/"));
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("text/html");
+  const body = await res.text();
+  expect(body).toContain("RUSM todo board");
+  expect(body).toContain("Live feed"); // explains what each part showcases
+});
+
 test("OPTIONS is a CORS preflight; an unknown route is 404", async () => {
   const pre = await handle(req("OPTIONS", "/todos"));
   expect(pre.status).toBe(204);
