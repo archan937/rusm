@@ -197,12 +197,10 @@ globalThis.__rusm_entry = function () {
   // (or a default handler function) as a stateful serving loop — module state
   // persists across requests because the instance is long-lived.
   if (globalThis.__rusm_role === "http") return __rusm_http_serve(h.default);
-  // A resident WebSocket server: `export default { websocket: { open, message,
-  // close } }` (Workers shape). One instance serves every connection, holding
-  // shared state; reply to a connection with `Process.send(conn, frame)`.
-  if (globalThis.__rusm_role === "ws") {
-    return __rusm_ws_serve(h.default && h.default.websocket);
-  }
+  // A per-connection WebSocket handler: `export default websocket({ open, message,
+  // close })` (an object carrying a `.websocket` lifecycle table). The host runs one
+  // sandboxed process per connection; we drive this connection's lifecycle.
+  if (h.default && h.default.websocket) return __rusm_ws_connection(h.default.websocket);
   const named = Object.keys(h).filter((k) => k !== "default" && typeof h[k] === "function");
   if (named.length) {
     const handlers = {};
@@ -277,22 +275,41 @@ async function __http_stream_response(req, response, body) {
   out.close();
 }
 
-// Resident WebSocket serving loop: each `{op, conn, data}` event from the host
-// gateway is dispatched to the guest's websocket handler. `conn` is the writer pid
-// (a BigInt) to reply to via `Process.send(conn, frame)`.
-async function __rusm_ws_serve(ws) {
-  if (!ws) return; // not a websocket handler — nothing to serve
+// Parse a monitor `__down` message (`{"__down":"<pid>","reason":...}`) into the dead
+// process's pid (a BigInt), or null for an ordinary message. The single source for
+// `__down` decoding in this bridge; a fast prefix check never parses ordinary frames.
+function __downPid(bytes) {
+  const PREFIX = '{"__down":"';
+  if (!bytes || bytes.length < PREFIX.length) return null;
+  for (let i = 0; i < PREFIX.length; i++) {
+    if (bytes[i] !== PREFIX.charCodeAt(i)) return null;
+  }
+  try {
+    const obj = JSON.parse(new TextDecoder().decode(bytes));
+    return obj && obj.__down != null ? BigInt(obj.__down) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Per-connection WebSocket lifecycle (mirrors the Rust `ws::serve` loop): the host runs
+// one process per connection, delivering the writer pid first (the reply target), then
+// each inbound frame. We `monitor` the writer — its death IS the disconnect, clean or
+// dropped — so the guest's `close` fires before this process exits. `conn` passed to the
+// callbacks is the writer pid (the SDK wraps it into a `Socket`).
+async function __rusm_ws_connection(ws) {
+  if (!ws || typeof ws.message !== "function") return; // not a websocket handler
+  const writer = BigInt(await Process.receiveText()); // message 1: the writer pid
+  Process.monitor(writer);
+  if (ws.open) await ws.open(writer);
   for (;;) {
-    // Binary event from the host gateway: [op: u8][conn: u64 LE][data…]. Read conn
-    // and slice the payload directly — no per-frame JSON.parse or number-array.
-    let buf;
-    try { buf = await Process.receive(); } catch { continue; }
-    if (!buf || buf.length < 9) continue;
-    const op = buf[0];
-    const conn = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getBigUint64(1, true);
-    if (op === 0) { if (ws.open) await ws.open(conn); }
-    else if (op === 1) { if (ws.message) await ws.message(conn, buf.subarray(9)); }
-    else if (op === 2) { if (ws.close) await ws.close(conn); }
+    let data;
+    try { data = await Process.receive(); } catch { return; }
+    if (__downPid(data) === writer) {
+      if (ws.close) await ws.close(writer);
+      return;
+    }
+    await ws.message(writer, data);
   }
 }
 

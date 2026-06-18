@@ -329,6 +329,48 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_typescript_ws_handler_fires_close_on_disconnect() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // An inline JS bundle in the `websocket({…})` shape rusm-ts emits — open/close
+        // report to a registered collector, message echoes. Proves the per-connection
+        // js-runner path drives open/message/close and fires `close` on disconnect (the
+        // shape that used to hit the dead resident `__rusm_role` branch and no-op).
+        const BUNDLE: &str = r#"
+            const report = (e) => { const c = Process.whereis("collector"); if (c !== null) Process.send(c, e); };
+            module.exports.default = {
+              websocket: {
+                open:    (conn)       => report("open"),
+                message: (conn, data) => Process.send(conn, data),
+                close:   (conn)       => report("close"),
+              },
+            };
+        "#;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let server = wr.ws_server_js(BUNDLE, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "open fires on connect");
+
+        ws.send(Message::text("hi ts")).await.unwrap();
+        assert_eq!(&ws.next().await.unwrap().unwrap().into_data()[..], b"hi ts");
+
+        ws.close(None).await.unwrap(); // disconnect
+        assert_eq!(next_event(&mut rx).await, b"close", "close fires on disconnect");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn echoes_a_websocket_message() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
