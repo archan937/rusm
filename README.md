@@ -174,8 +174,8 @@ process-per-request (HTTP/SSE) / process-per-connection (WS) — a fresh sandbox
 instance per unit of work, so head-of-line blocking is impossible by construction and
 a crash drops only that request; shared state lives in a `[components.<name>]` service
 (`resident = true`) or `kv`, never in the serving instance. A Rust handler is just named functions —
-`#[rusm_rs::handlers] pub mod api { pub fn home(req, params) -> Response { … } }` (a
-3-arg action taking `Sse` streams Server-Sent Events) — no `main`, no router code. Env
+`#[rusm_rs::handlers] pub mod api { pub fn home(req, params) -> Response { … } }` (SSE
+and WebSocket are per-connection `sse::serve` / `ws::serve` handlers) — no `main`, no router code. Env
 is resolved the Rust way — process env first, then `.env`. Full reference:
 **[configuration](docs/reference-configuration)**.
 

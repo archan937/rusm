@@ -49,8 +49,9 @@ by `rusm-node::RouteTable` and bridged into the routing-agnostic `rusm-wasm`
 the optimized spawn path → dispatch the action over the actor wire → buffered or
 chunked-streamed reply). **Handlers are named functions** ("actions"), no forced
 `main`: a Rust handler component is `#[rusm_rs::handlers] pub mod api { pub fn
-home(req, params) -> Response { … } }`; a 3-arg action `fn(Request, Params, Sse)`
-streams SSE over a **bounded, back-pressured** byte stream (parks under back-pressure —
+home(req, params) -> Response { … } }`; **SSE is a per-connection
+`rusm_rs::sse::serve` handler** (`open`/`message`/`close`, the SSE twin of WS — route-less,
+loaded by name like a WS component), streaming over a **bounded, back-pressured** byte stream (parks under back-pressure —
 never busy-spins — and exits on client disconnect, guarded by a routed
 disconnect-teardown test). **`rusm serve` is live**: it hosts `rusm.toml [[serve]]`
 entries (`name`, `protocol` = `http`|`sse`|`ws`, `listen`, `capability` = `sandboxed`
