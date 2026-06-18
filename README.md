@@ -39,6 +39,15 @@ rusm serve                   # → http://127.0.0.1:8080
 curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 ```
 
+**Or scaffold the full example app** — a collaborative todo board (HTTP CRUD + a live
+SSE feed + WebSocket chat + a resident `store` service driven by a worker), in
+TypeScript, Rust, or Go:
+
+```sh
+rusm new board --template todo-board   # add --lang rust or --lang go (default: ts)
+cd board && rusm build && rusm serve   # → open http://127.0.0.1:8080
+```
+
 ## Live benchmarks dashboard
 
 To watch the runtime flexed live, clone the repo and run the dashboard:
