@@ -346,23 +346,38 @@ pub async fn serve_apps(
         let addr = listener
             .local_addr()
             .with_context(|| format!("local address of `{label}`"))?;
-        // Routed serving is HTTP-only: a `[serve.routes]` table dispatches each request to
-        // a matched handler action. SSE and WS are per-connection handlers (one named
-        // component, one process per connection), never routed.
-        let routed = matches!(spec.protocol, ServeProtocol::Http) && !spec.routes.is_empty();
+        // Routed serving: a `[serve.routes]` table maps each request/connection's path to a
+        // handler component — per request for HTTP (`component#action`), per connection for
+        // ws/sse (the component *is* the handler, with captured path params in its context).
+        let routed = !spec.routes.is_empty();
         // Build the server up front so a load/compile error surfaces here (before we
         // claim the endpoint is up), then drive the accept loop on its own task.
         let task = if routed {
-            // Routed per-request HTTP: resolve this listener's routes, spawn the matched
-            // `[components.<name>]` handler fresh, dispatch the action.
+            // Resolve this listener's routes (the table is parsed per protocol:
+            // `component#action` for HTTP, bare `component` for ws/sse).
             let table = spec
                 .route_table()
                 .map_err(|e| anyhow!("invalid [serve.routes] for {}: {e}", spec.listen))?;
-            tokio::spawn(
-                wasm.routed_http_server(routed_resolver(table), caps_map.clone())
-                    .with_headers(spec.header_pairs())
-                    .serve(listener),
-            )
+            let resolver = routed_resolver(table);
+            let headers = spec.header_pairs();
+            match spec.protocol {
+                // Per-request HTTP: spawn the matched handler fresh, dispatch the action.
+                ServeProtocol::Http => tokio::spawn(
+                    wasm.routed_http_server(resolver, caps_map.clone())
+                        .with_headers(headers)
+                        .serve(listener),
+                ),
+                // Per-connection SSE: resolve the path to a handler component, capturing params.
+                ServeProtocol::Sse => tokio::spawn(
+                    wasm.routed_sse_server(resolver, caps_map.clone())
+                        .with_headers(headers)
+                        .serve(listener),
+                ),
+                // Per-connection WebSocket: same; an unmatched path refuses with 404.
+                ServeProtocol::Ws => {
+                    tokio::spawn(wasm.routed_ws_server(resolver, caps_map.clone()).serve(listener))
+                }
+            }
         } else {
             // A single named handler component: a handler-less `wasi:http` HTTP component,
             // an SSE handler, or a WebSocket worker — each one process per request/connection.
