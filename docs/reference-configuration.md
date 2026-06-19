@@ -137,6 +137,13 @@ one of two ways:
 | `listen` | string | — (required) | TCP address to bind, e.g. `"127.0.0.1:8080"`. |
 | `name` | string? | none | The single handler **component** for a listener with **no** `[serve.routes]` (a WebSocket listener, or a routes-less `wasi:http` HTTP component). Resolves to `./wasm/<name>.*`; its capability comes from a matching `[components.<name>]` entry, else `sandboxed`. **Omitted** for a routed HTTP/SSE listener — its routes name the handlers. |
 | `source` | string? | none | Load the named handler's (JS) bundle from a URL or `kv:` instead of `./wasm/<name>` — see [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
+| `subprotocols` | string[] | `[]` | *(ws)* Supported WebSocket subprotocols. The host negotiates the first client-offered one present, echoes it in the `101`, and surfaces it on the connection context. |
+| `max_connections` | int? | none | *(http · sse · ws)* Most concurrent connections served at once. At the cap a new connection is **dropped before the handshake/stream opens** (a flood can't pile up unbounded handler instances); a freed slot is reused. `None` = unlimited. |
+| `max_message_size` | int? | none | *(ws)* Largest inbound frame in bytes; a larger frame **closes the connection**. `None` = the transport default. |
+| `allowed_origins` | string[] | `[]` | *(ws)* `Origin` values permitted on the handshake — **CSWSH protection**. An unlisted/absent `Origin` is refused **`403`** before any process spawns. Empty = any origin. |
+
+See [Resource & security controls](./serving-http-ws-sse#resource-security-controls) for the
+WebSocket cap/size/origin details.
 
 > **Migration.** A `[[serve]]` entry is now a pure listener. Its old fields are gone:
 > `capability` (the handler's profile lives on its `[components.<name>]` entry),

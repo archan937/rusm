@@ -212,6 +212,33 @@ path is explicitly back-pressured (a bounded per-connection channel — a handle
 slow client parks); **binary** frames flow through the writer's mailbox, back-pressured by
 the socket itself (the writer awaits each `sink.send`). This is the same shape as SSE.
 
+**Resource & security controls.** A `[[serve]]` listener may bound what it accepts — all
+optional, all default-off (so existing manifests are unaffected):
+
+```toml
+[[serve]]
+name = "chat"
+protocol = "ws"
+listen = "127.0.0.1:8080"
+max_connections = 10000                       # cap concurrent connections (any protocol)
+max_message_size = 1048576                    # cap an inbound frame in bytes (WS)
+allowed_origins = ["https://app.example.com"] # restrict the handshake Origin (WS, CSWSH)
+```
+
+- **`max_connections`** *(http · sse · ws)* — the most connections the listener serves at
+  once. At the cap a new connection is **dropped before the handshake/stream opens**, so a
+  flood can't pile up unbounded handler instances; a freed slot is reused as connections
+  close. `None` (default) = unlimited.
+- **`max_message_size`** *(ws)* — the largest inbound frame, in bytes. A larger frame
+  **closes the connection** instead of allocating it. `None` (default) = the transport's
+  own limit.
+- **`allowed_origins`** *(ws)* — the `Origin` header values permitted on the handshake —
+  **cross-site WebSocket hijacking (CSWSH) protection**. A handshake from an unlisted (or
+  absent) `Origin` is refused with **`403`**, before any process is spawned. Empty
+  (default) = any origin (no check). (A browser still applies CORS to HTTP/SSE replies via
+  [`[serve.headers]`](./reference-configuration#serve-headers-per-listener-response-headers);
+  `Origin` checks are the WebSocket equivalent, since WS has no CORS preflight.)
+
 ## Handlers are named actions — no `main()`
 
 A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]`. The

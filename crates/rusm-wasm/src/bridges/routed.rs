@@ -60,6 +60,9 @@ pub struct RoutedHttpServer {
     caps: Arc<HashMap<String, Capabilities>>,
     /// The listener's `[serve.headers]` — merged into every response (e.g. CORS).
     headers: Arc<Vec<(String, String)>>,
+    /// Max concurrent connections (the listener's `max_connections`); at the cap a new
+    /// connection is dropped before it's served. `None` = unlimited.
+    max_connections: Option<usize>,
 }
 
 impl WasmRuntime {
@@ -79,6 +82,7 @@ impl WasmRuntime {
             resolve,
             caps: Arc::new(caps),
             headers: Arc::new(Vec::new()),
+            max_connections: None,
         }
     }
 }
@@ -91,16 +95,36 @@ impl RoutedHttpServer {
         self
     }
 
+    /// Cap concurrent connections; at the cap a new connection is dropped before it's
+    /// served (a flood can't pile up unbounded handler instances). `None` = unlimited.
+    pub fn with_max_connections(mut self, max: Option<usize>) -> Self {
+        self.max_connections = max;
+        self
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes — one task per connection. Abort
     /// the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
+        // A connection-cap semaphore (when set): a permit held for each connection's life.
+        let limiter = self
+            .max_connections
+            .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
         loop {
             let Ok((stream, _peer)) = listener.accept().await else {
                 break;
             };
+            // At the cap, drop the socket before serving it.
+            let permit = match &limiter {
+                Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                    Ok(p) => Some(p),
+                    Err(_) => continue,
+                },
+                None => None,
+            };
             stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
+                let _permit = permit; // released when this connection ends
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
                     async move { server.handle(req).await }

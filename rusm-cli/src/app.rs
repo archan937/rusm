@@ -365,18 +365,23 @@ pub async fn serve_apps(
                 ServeProtocol::Http => tokio::spawn(
                     wasm.routed_http_server(resolver, caps_map.clone())
                         .with_headers(headers)
+                        .with_max_connections(spec.max_connections)
                         .serve(listener),
                 ),
                 // Per-connection SSE: resolve the path to a handler component, capturing params.
                 ServeProtocol::Sse => tokio::spawn(
                     wasm.routed_sse_server(resolver, caps_map.clone())
                         .with_headers(headers)
+                        .with_max_connections(spec.max_connections)
                         .serve(listener),
                 ),
                 // Per-connection WebSocket: same; an unmatched path refuses with 404.
                 ServeProtocol::Ws => tokio::spawn(
                     wasm.routed_ws_server(resolver, caps_map.clone())
                         .with_subprotocols(spec.subprotocols.clone())
+                        .with_max_connections(spec.max_connections)
+                        .with_max_message_size(spec.max_message_size)
+                        .with_allowed_origins(spec.allowed_origins.clone())
                         .serve(listener),
                 ),
             }
@@ -407,16 +412,21 @@ pub async fn serve_apps(
                 ServeProtocol::Sse => tokio::spawn(
                     build_sse_server(dir, wasm, name, caps, remote)?
                         .with_headers(headers)
+                        .with_max_connections(spec.max_connections)
                         .serve(listener),
                 ),
                 ServeProtocol::Ws => tokio::spawn(
                     build_ws_server(dir, wasm, name, caps, remote)?
                         .with_subprotocols(spec.subprotocols.clone())
+                        .with_max_connections(spec.max_connections)
+                        .with_max_message_size(spec.max_message_size)
+                        .with_allowed_origins(spec.allowed_origins.clone())
                         .serve(listener),
                 ),
                 ServeProtocol::Http => tokio::spawn(
                     build_http_server(dir, wasm, name, caps, remote)?
                         .with_headers(headers)
+                        .with_max_connections(spec.max_connections)
                         .serve(listener),
                 ),
             }
@@ -755,6 +765,9 @@ mod tests {
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Vec::new(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -801,6 +814,9 @@ mod tests {
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Vec::new(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -851,6 +867,9 @@ mod tests {
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Vec::new(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &handlers, &HashMap::new())
             .await
@@ -893,6 +912,9 @@ mod tests {
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Vec::new(),
         }];
         let err = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await

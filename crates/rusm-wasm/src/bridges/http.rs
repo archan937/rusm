@@ -40,6 +40,9 @@ pub struct HttpServer {
     /// The listener's `[serve.headers]` — merged into every response (e.g. CORS / security
     /// headers). Empty by default.
     headers: Arc<Vec<(String, String)>>,
+    /// Max concurrent connections (the listener's `max_connections`); at the cap a new
+    /// connection is dropped before it's served. `None` = unlimited.
+    max_connections: Option<usize>,
 }
 
 impl WasmRuntime {
@@ -56,6 +59,7 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             caps,
             headers: Arc::new(Vec::new()),
+            max_connections: None,
         }
     }
 
@@ -92,16 +96,37 @@ impl HttpServer {
         self
     }
 
+    /// Cap concurrent connections; at the cap a new connection is dropped before it's
+    /// served (a flood can't pile up unbounded handler instances). `None` = unlimited.
+    pub fn with_max_connections(mut self, max: Option<usize>) -> Self {
+        self.max_connections = max;
+        self
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes (one connection per task, one
     /// component instance per request). Abort the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
+        // A connection-cap semaphore (when set): a permit held for each connection's life
+        // (until `serve_connection` completes), so the cap bounds live connections.
+        let limiter = self
+            .max_connections
+            .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
         loop {
             let Ok((stream, _peer)) = listener.accept().await else {
                 break;
             };
+            // At the cap, drop the socket before serving it.
+            let permit = match &limiter {
+                Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                    Ok(p) => Some(p),
+                    Err(_) => continue,
+                },
+                None => None,
+            };
             stream.set_nodelay(true).ok(); // low request latency, no Nagle batching
             let server = self.clone();
             tokio::spawn(async move {
+                let _permit = permit; // released when this connection ends
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
                     async move { server.handle(req).await }
@@ -524,6 +549,84 @@ mod tests {
                 "missing event {n}"
             );
         }
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_http_listener_caps_concurrent_connections() {
+        use std::time::Duration;
+
+        // `max_connections = 1`: one keep-alive connection held live holds the only slot, a
+        // second is dropped before any response, and once the first closes the slot frees up.
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_http(&wr.compile_component(HELLO).unwrap())
+            .unwrap();
+        let server = wr
+            .http_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_max_connections(Some(1));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // First connection: keep-alive (no `Connection: close`), held open after its request
+        // so its permit stays held while we test the cap.
+        let mut first = tokio::net::TcpStream::connect(addr).await.unwrap();
+        first
+            .write_all(b"GET / HTTP/1.1\r\nHost: rusm\r\n\r\n")
+            .await
+            .unwrap();
+        let mut head = [0u8; 1024];
+        let n = first.read(&mut head).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&head[..n]).starts_with("HTTP/1.1 200"),
+            "the first connection is served"
+        );
+
+        // Second, while the first is live: dropped at the cap — no response (EOF or reset).
+        let mut second = tokio::net::TcpStream::connect(addr).await.unwrap();
+        second
+            .write_all(b"GET / HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut sbuf = Vec::new();
+        let dropped = tokio::time::timeout(Duration::from_secs(5), second.read_to_end(&mut sbuf))
+            .await
+            .expect("the capped connection is dropped promptly");
+        assert!(
+            matches!(dropped, Ok(0)) || dropped.is_err(),
+            "a second connection at the cap gets no response, got {dropped:?}"
+        );
+        assert!(
+            sbuf.is_empty(),
+            "no HTTP head is written to a capped connection"
+        );
+
+        // Close the first → its permit releases → a new connection is served again.
+        drop(first);
+        let served = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+                conn.write_all(b"GET / HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+                let mut b = Vec::new();
+                if tokio::time::timeout(Duration::from_millis(300), conn.read_to_end(&mut b))
+                    .await
+                    .is_ok()
+                    && String::from_utf8_lossy(&b).starts_with("HTTP/1.1 200")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            served.is_ok(),
+            "the freed slot serves a new connection after the first releases it"
+        );
 
         handle.abort();
     }

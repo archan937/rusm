@@ -63,7 +63,7 @@ async fn echo_upgrade(
         return Ok(upgrade_required());
     };
     tokio::spawn(async move {
-        let Some(mut ws) = upgraded_ws(req).await else {
+        let Some(mut ws) = upgraded_ws(req, None).await else {
             return;
         };
         while let Some(Ok(message)) = ws.next().await {
@@ -87,11 +87,20 @@ pub(crate) fn ws_accept(req: &hyper::Request<hyper::body::Incoming>) -> Option<S
 }
 
 /// Complete the `Upgrade` and wrap the raw stream as a server-side `WebSocketStream`.
+/// `max_message_size` caps an inbound message/frame in bytes (a larger one closes the
+/// connection); `None` uses the transport default.
 pub(crate) async fn upgraded_ws(
     req: hyper::Request<hyper::body::Incoming>,
+    max_message_size: Option<usize>,
 ) -> Option<WebSocketStream<TokioIo<Upgraded>>> {
     let upgraded = hyper::upgrade::on(req).await.ok()?;
-    Some(WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await)
+    let config = max_message_size.map(|max| {
+        use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+        WebSocketConfig::default()
+            .max_message_size(Some(max))
+            .max_frame_size(Some(max))
+    });
+    Some(WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, config).await)
 }
 
 pub(crate) fn switching_protocols(
@@ -126,6 +135,15 @@ fn not_found() -> hyper::Response<Empty<Bytes>> {
         .unwrap()
 }
 
+/// A `403` for a handshake whose `Origin` isn't in the listener's allow-list (CSWSH
+/// protection) — the upgrade is refused before any process is spawned.
+fn forbidden() -> hyper::Response<Empty<Bytes>> {
+    hyper::Response::builder()
+        .status(403)
+        .body(Empty::new())
+        .unwrap()
+}
+
 /// Serves each WebSocket connection with a **WASM component process** — the actor
 /// way. A connection's inbound messages land in the component's mailbox (one
 /// message = one frame); its replies go to a per-connection **writer** process that
@@ -143,6 +161,14 @@ pub struct WsServer {
     /// Supported subprotocols (the listener's `subprotocols` list). On the handshake the
     /// first client-offered one present here is negotiated + echoed; empty = none.
     subprotocols: Arc<Vec<String>>,
+    /// Max concurrent connections (the listener's `max_connections`); at the cap a new
+    /// connection is dropped before the handshake. `None` = unlimited.
+    max_connections: Option<usize>,
+    /// Max inbound frame size in bytes (the listener's `max_message_size`); a larger frame
+    /// closes the connection instead of allocating. `None` = the transport default.
+    max_message_size: Option<usize>,
+    /// Allowed `Origin`s for the handshake (CSWSH protection); empty = any origin.
+    allowed_origins: Arc<Vec<String>>,
 }
 
 impl WasmRuntime {
@@ -158,6 +184,9 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             keepalive: WS_KEEPALIVE,
             subprotocols: Arc::new(Vec::new()),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Arc::new(Vec::new()),
         }
     }
 
@@ -175,6 +204,9 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             keepalive: WS_KEEPALIVE,
             subprotocols: Arc::new(Vec::new()),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Arc::new(Vec::new()),
         }
     }
 
@@ -196,6 +228,9 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             keepalive: WS_KEEPALIVE,
             subprotocols: Arc::new(Vec::new()),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Arc::new(Vec::new()),
         }
     }
 }
@@ -230,6 +265,37 @@ impl WsServer {
         self
     }
 
+    /// Cap concurrent connections; at the cap a new connection is dropped before the
+    /// handshake (a flood can't spawn unbounded handler instances). `None` = unlimited.
+    pub fn with_max_connections(mut self, max: Option<usize>) -> Self {
+        self.max_connections = max;
+        self
+    }
+
+    /// Cap the inbound frame size in bytes; a larger frame closes the connection. `None` =
+    /// the transport default.
+    pub fn with_max_message_size(mut self, max: Option<usize>) -> Self {
+        self.max_message_size = max;
+        self
+    }
+
+    /// Restrict the handshake to these `Origin`s (CSWSH protection); empty = any origin.
+    pub fn with_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.allowed_origins = Arc::new(origins);
+        self
+    }
+
+    /// Whether the request's `Origin` is allowed (always true when no allow-list is set).
+    fn origin_allowed(&self, req: &hyper::Request<hyper::body::Incoming>) -> bool {
+        if self.allowed_origins.is_empty() {
+            return true;
+        }
+        match req.headers().get("origin").and_then(|o| o.to_str().ok()) {
+            Some(origin) => self.allowed_origins.iter().any(|a| a == origin),
+            None => false, // an allow-list is set but the request carries no Origin
+        }
+    }
+
     /// Negotiate a subprotocol: the first one the client offers (its `Sec-WebSocket-Protocol`
     /// header, comma-separated) that this listener supports. `None` if the client offered
     /// none, none matched, or the listener supports none.
@@ -247,16 +313,38 @@ impl WsServer {
 
     /// Serve WebSockets on `listener` until it closes — one connection per task.
     pub async fn serve(self, listener: TcpListener) {
+        // A connection-cap semaphore (when `max_connections` is set): a permit is acquired
+        // before the handshake and held for the connection's whole life, so the cap bounds
+        // *live* connections, not just in-flight handshakes.
+        let limiter = self
+            .max_connections
+            .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
         loop {
             let Ok((stream, peer)) = listener.accept().await else {
                 break;
             };
+            // At the cap, drop the socket before the handshake — a flood can't spawn handlers.
+            let permit = match &limiter {
+                Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                    Ok(p) => Some(p),
+                    Err(_) => continue,
+                },
+                None => None,
+            };
             stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
+                // The permit moves through the (call-once-per-WS) service into `upgrade`,
+                // which hands it to the connection task; a `Mutex<Option<_>>` carries a
+                // move-once value through hyper's `Fn` service.
+                let permit = Arc::new(std::sync::Mutex::new(permit));
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
-                    async move { server.upgrade(req, Some(peer)).await }
+                    let permit = Arc::clone(&permit);
+                    async move {
+                        let permit = permit.lock().unwrap().take();
+                        server.upgrade(req, Some(peer), permit).await
+                    }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), service)
@@ -270,6 +358,7 @@ impl WsServer {
         &self,
         req: hyper::Request<hyper::body::Incoming>,
         peer: Option<std::net::SocketAddr>,
+        permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> Result<hyper::Response<Empty<Bytes>>, Infallible> {
         // Log the incoming WS request (gated by `[log] level`): a valid handshake as the
         // `101` upgrade, a non-WS request as the `426` we reject it with.
@@ -282,6 +371,11 @@ impl WsServer {
             .to_string();
         let log =
             |status| super::access::log_request(&self.spawner.rt, "ws", &method, &path, status);
+        // Reject a disallowed `Origin` before anything else (CSWSH): a `403`, no handshake.
+        if !self.origin_allowed(&req) {
+            log(403);
+            return Ok(forbidden());
+        }
         // Resolve the route first: an unmatched path is a `404` (no handshake). An unrouted
         // listener always matches its single handler.
         let Some(Resolved {
@@ -306,7 +400,9 @@ impl WsServer {
         let connection = super::conn::connection_info(&req, peer, params, subprotocol.clone());
         let server = self.clone();
         tokio::spawn(async move {
-            if let Some(ws) = upgraded_ws(req).await {
+            // Hold the connection-cap permit for the connection's whole life.
+            let _permit = permit;
+            if let Some(ws) = upgraded_ws(req, server.max_message_size).await {
                 server
                     .run_connection(ws, prepared, bundle, caps, connection)
                     .await;
@@ -1022,6 +1118,156 @@ mod tests {
         );
 
         ws.close(None).await.ok();
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_listener_rejects_a_disallowed_origin() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        // CSWSH protection: with an allow-list set, a handshake from an unlisted `Origin` is
+        // refused (403, no upgrade), while a listed one connects and the handler runs.
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_allowed_origins(vec!["https://app.example.com".to_string()]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // A foreign Origin is refused — the upgrade never happens.
+        let mut bad = format!("ws://{addr}/").into_client_request().unwrap();
+        bad.headers_mut()
+            .insert("origin", "https://evil.example".parse().unwrap());
+        assert!(
+            tokio_tungstenite::connect_async(bad).await.is_err(),
+            "a disallowed Origin is refused before the handshake"
+        );
+
+        // The allowed Origin connects and the handler's `open` fires.
+        let mut good = format!("ws://{addr}/").into_client_request().unwrap();
+        good.headers_mut()
+            .insert("origin", "https://app.example.com".parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(good).await.unwrap();
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"open",
+            "the allowed Origin completes the handshake"
+        );
+
+        ws.close(None).await.ok();
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_listener_closes_an_oversized_frame() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // `max_message_size` caps an inbound frame: a small frame echoes (the connection
+        // works), then a frame past the cap closes the connection rather than allocating it.
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_max_message_size(Some(8));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        // A small frame round-trips — the connection is healthy.
+        ws.send(Message::binary(b"hi".to_vec())).await.unwrap();
+        assert_eq!(&ws.next().await.unwrap().unwrap().into_data()[..], b"hi");
+
+        // A frame past the 8-byte cap tears the connection down (no echo of it).
+        ws.send(Message::binary(vec![b'x'; 64])).await.ok();
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match ws.next().await {
+                    None | Some(Err(_)) => break true,
+                    Some(Ok(m)) if m.is_close() => break true,
+                    Some(Ok(_)) => continue, // any queued small echo; keep reading
+                }
+            }
+        })
+        .await
+        .expect("the connection ends after the oversized frame");
+        assert!(ended, "an oversized frame closes the connection");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_listener_caps_concurrent_connections() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // `max_connections = 1`: the first connection is served, a second while it's live is
+        // dropped before the handshake, and once the first closes a new one is admitted again.
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_max_connections(Some(1));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // First connection: admitted (its `open` fires).
+        let (mut first, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "the first is admitted");
+
+        // Second, while the first is live: dropped at the cap (the socket closes mid-handshake).
+        assert!(
+            tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+                .await
+                .is_err(),
+            "a second connection is refused at the cap"
+        );
+
+        // Close the first → its permit releases → a new connection is admitted again.
+        first.close(None).await.ok();
+        assert_eq!(next_event(&mut rx).await, b"close", "the first tears down");
+        let admitted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok((ws, _)) = tokio_tungstenite::connect_async(format!("ws://{addr}/")).await
+                {
+                    break ws;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("a new connection is admitted after the first releases its slot");
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"open",
+            "the freed slot admits a new connection"
+        );
+        drop(admitted);
+
         handle.abort();
     }
 }

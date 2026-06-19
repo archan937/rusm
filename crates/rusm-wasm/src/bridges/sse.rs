@@ -64,6 +64,9 @@ pub struct SseServer {
     /// The listener's `[serve.headers]` — merged into every response head (e.g. CORS so a
     /// browser may read this cross-origin feed). Empty by default.
     headers: Arc<Vec<(String, String)>>,
+    /// Max concurrent connections (the listener's `max_connections`); at the cap a new
+    /// connection is dropped before the stream opens. `None` = unlimited.
+    max_connections: Option<usize>,
 }
 
 impl WasmRuntime {
@@ -78,6 +81,7 @@ impl WasmRuntime {
             },
             spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
+            max_connections: None,
         }
     }
 
@@ -93,6 +97,7 @@ impl WasmRuntime {
             },
             spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
+            max_connections: None,
         }
     }
 
@@ -113,6 +118,7 @@ impl WasmRuntime {
             },
             spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
+            max_connections: None,
         }
     }
 }
@@ -125,16 +131,39 @@ impl SseServer {
         self
     }
 
+    /// Cap concurrent streams; at the cap a new connection is dropped before the stream
+    /// opens (a flood can't spawn unbounded handler instances). `None` = unlimited.
+    pub fn with_max_connections(mut self, max: Option<usize>) -> Self {
+        self.max_connections = max;
+        self
+    }
+
     /// Serve SSE on `listener` until it closes — one connection per task. Abort the task
     /// driving this to stop.
     pub async fn serve(self, listener: TcpListener) {
+        // A connection-cap semaphore (when `max_connections` is set): a permit is held for
+        // the stream's whole life (until `serve_connection` completes), so the cap bounds
+        // *live* streams. SSE keeps its connection task alive for the stream, so the permit
+        // simply rides in that task — no hand-off through the service (unlike WS).
+        let limiter = self
+            .max_connections
+            .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
         loop {
             let Ok((stream, peer)) = listener.accept().await else {
                 break;
             };
+            // At the cap, drop the socket before the stream opens — a flood can't spawn handlers.
+            let permit = match &limiter {
+                Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                    Ok(p) => Some(p),
+                    Err(_) => continue,
+                },
+                None => None,
+            };
             stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
+                let _permit = permit; // released when this connection's stream ends
                 let rt = server.spawner.rt.clone();
                 // The per-connection processes (handler + its writer) spawned while serving
                 // this connection. SSE is one-way with no inbound read channel, so the
@@ -1117,6 +1146,78 @@ mod tests {
         assert!(body.contains("id: 42"), "ts id framed: {body}");
         assert!(body.contains("event: greeting"), "ts event framed: {body}");
         assert!(body.contains("data: hello"), "ts data framed: {body}");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_sse_listener_caps_concurrent_streams() {
+        // `max_connections = 1`: the first stream opens, a second while it's live is dropped
+        // before the stream opens (the socket closes with no response head), and once the
+        // first disconnects a new stream is admitted again — the freed slot is reusable.
+        const SSE_FEED: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_feed.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_FEED).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .sse_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_max_connections(Some(1));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // First stream: admitted (its `open` fires).
+        let mut first = tokio::net::TcpStream::connect(addr).await.unwrap();
+        first
+            .write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(next_event(&mut rx).await, b"open", "the first is admitted");
+
+        // Second, while the first is live: dropped at the cap — the socket closes with no
+        // response (read returns EOF immediately, no HTTP head).
+        let mut second = tokio::net::TcpStream::connect(addr).await.unwrap();
+        second
+            .write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        // The socket is dropped before any response: a clean EOF (0 bytes) or a connection
+        // reset (the server discards the unread request) — never an HTTP head.
+        let mut buf = Vec::new();
+        let dropped = tokio::time::timeout(Duration::from_secs(5), second.read_to_end(&mut buf))
+            .await
+            .expect("the capped connection is dropped promptly");
+        assert!(
+            matches!(dropped, Ok(0)) || dropped.is_err(),
+            "a second stream at the cap gets no response (dropped), got {dropped:?}"
+        );
+        assert!(
+            buf.is_empty(),
+            "no HTTP head is written to a capped connection"
+        );
+
+        // Close the first → its permit releases → a new stream is admitted again.
+        drop(first);
+        assert_eq!(next_event(&mut rx).await, b"close", "the first tears down");
+        let admitted = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+                conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+                // The freed slot admits it once the first's permit has dropped; `open` fires.
+                if let Ok(ev) = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
+                    assert_eq!(ev.as_deref(), Some(&b"open"[..]));
+                    break conn;
+                }
+            }
+        })
+        .await
+        .expect("a new stream is admitted after the first releases its slot");
+        drop(admitted);
 
         handle.abort();
     }

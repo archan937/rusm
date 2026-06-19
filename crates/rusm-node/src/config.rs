@@ -294,6 +294,23 @@ pub struct ServeSpec {
     /// Ignored for non-`ws` listeners.
     #[serde(default)]
     pub subprotocols: Vec<String>,
+    /// Maximum **concurrent connections** this listener accepts (the `[[serve]]`
+    /// `max_connections`). At the cap, a new connection is dropped (a flood can't spawn
+    /// unbounded handler instances). `None` (default) = unlimited.
+    #[serde(default)]
+    pub max_connections: Option<usize>,
+    /// Maximum inbound **message/frame size** in bytes (the `[[serve]]` `max_message_size`).
+    /// For WebSocket, a larger frame closes the connection rather than allocating it.
+    /// `None` (default) = the transport's own limit. (Allowed `Origin`s, when set, gate the
+    /// WebSocket handshake — see `allowed_origins`.)
+    #[serde(default)]
+    pub max_message_size: Option<usize>,
+    /// Allowed `Origin` header values for a WebSocket handshake (the `[[serve]]`
+    /// `allowed_origins`), e.g. `["https://app.example.com"]` — cross-site WebSocket
+    /// hijacking (CSWSH) protection. Empty (default) = any origin (no check). Ignored for
+    /// non-`ws` listeners.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 impl ServeSpec {
@@ -691,6 +708,40 @@ mod tests {
             cfg.serve[1].header_pairs().is_empty(),
             "no headers by default"
         );
+    }
+
+    #[test]
+    fn parses_per_listener_resource_and_security_controls() {
+        // A WS listener's resource/security controls (`max_connections`, `max_message_size`,
+        // `allowed_origins`) parse onto their `[[serve]]` entry; all default off so existing
+        // manifests are unaffected.
+        let cfg = NodeConfig::from_toml(
+            r#"
+            [[serve]]
+            name = "ws"
+            protocol = "ws"
+            listen = "127.0.0.1:8081"
+            max_connections = 1024
+            max_message_size = 65536
+            allowed_origins = ["https://app.example.com"]
+
+            [[serve]]
+            name = "plain"
+            protocol = "http"
+            listen = "127.0.0.1:8080"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.serve[0].max_connections, Some(1024));
+        assert_eq!(cfg.serve[0].max_message_size, Some(65536));
+        assert_eq!(
+            cfg.serve[0].allowed_origins,
+            vec!["https://app.example.com".to_string()]
+        );
+        // All three default off (unlimited / transport default / any origin).
+        assert_eq!(cfg.serve[1].max_connections, None);
+        assert_eq!(cfg.serve[1].max_message_size, None);
+        assert!(cfg.serve[1].allowed_origins.is_empty());
     }
 
     #[test]
