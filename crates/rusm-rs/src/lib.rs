@@ -166,6 +166,82 @@ pub fn kill_tag(tag: &str) -> u32 {
     actor::kill_tag(tag)
 }
 
+/// The HTTP context of a **per-connection** WebSocket or SSE handler — the request that
+/// opened this connection. Fixed for the connection's life; read it in your handler's
+/// `open` (via [`ws::Connection::info`] / [`sse::Stream::info`], or [`connection`] directly).
+/// A normal process (not a connection handler) has no context — [`connection`] returns
+/// `None`, and these accessors on a defaulted value are empty.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConnectionInfo {
+    method: String,
+    path: String,
+    query: String,
+    params: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
+    remote_addr: String,
+    subprotocol: Option<String>,
+}
+
+impl ConnectionInfo {
+    /// Request method, uppercased (`GET`, …).
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+    /// Path without the query string (`/events/plan/pages/42`).
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+    /// Raw query string without the leading `?` (empty when absent).
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+    /// All route parameters captured from the listener's `[serve.routes]` pattern.
+    pub fn params(&self) -> &[(String, String)] {
+        &self.params
+    }
+    /// One captured route parameter by name (`:plan` → `param("plan")`).
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+    /// All request headers (lowercased names, arrival order; a name may repeat).
+    pub fn headers(&self) -> &[(String, String)] {
+        &self.headers
+    }
+    /// The first value of header `name` (case-insensitive), or `None`.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+    /// Peer socket address (`ip:port`), empty if the transport can't report one.
+    pub fn remote_addr(&self) -> &str {
+        &self.remote_addr
+    }
+    /// The negotiated WebSocket subprotocol, if any (always `None` for SSE).
+    pub fn subprotocol(&self) -> Option<&str> {
+        self.subprotocol.as_deref()
+    }
+}
+
+/// This process's [`ConnectionInfo`] when it is a per-connection WebSocket/SSE handler, or
+/// `None` for every other process. A WS/SSE handler usually reads it through
+/// [`ws::Connection::info`] / [`sse::Stream::info`] rather than calling this directly.
+pub fn connection() -> Option<ConnectionInfo> {
+    actor::connection().map(|c| ConnectionInfo {
+        method: c.method,
+        path: c.path,
+        query: c.query,
+        params: c.params,
+        headers: c.headers,
+        remote_addr: c.remote_addr,
+        subprotocol: c.subprotocol,
+    })
+}
+
 /// Whether a pid is still alive (subject to capability).
 pub fn is_alive(pid: Pid) -> bool {
     actor::is_alive(pid.0)

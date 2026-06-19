@@ -21,6 +21,7 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 
 use super::{HttpCaps, WasiHost};
+use crate::actor::ConnectionInfo;
 use crate::caps::{Capabilities, CapabilityProfile};
 use crate::{Spawner, WasmRuntime};
 
@@ -161,11 +162,28 @@ impl Spawner {
             .map(|_| caps.clone());
         let spawner = Arc::clone(self);
         let prepared = prepared.clone();
-        let handle = self.rt.spawn(move |ctx| run(spawner, prepared, caps, ctx));
+        let handle = self.rt.spawn(move |ctx| run(spawner, prepared, caps, ctx, None));
         if let (Some(label), Some(caps)) = (label, &log_caps) {
             self.record_spawn(handle.pid(), label, caps);
         }
         handle
+    }
+
+    /// Spawns a prepared component as a **per-connection serving handler** (WebSocket or
+    /// SSE), carrying the connection's [`ConnectionInfo`] into its store so the guest can
+    /// read it via the `connection` actor op. The serving twin of [`spawn_component`]; the
+    /// handshake (writer pid as message 1) is unchanged, so this is purely additive — the
+    /// context rides in per-instance state, not the mailbox.
+    pub(crate) fn spawn_connection(
+        self: &Arc<Self>,
+        prepared: &PreparedComponent,
+        caps: Capabilities,
+        connection: ConnectionInfo,
+    ) -> ProcessHandle {
+        let spawner = Arc::clone(self);
+        let prepared = prepared.clone();
+        self.rt
+            .spawn(move |ctx| run(spawner, prepared, caps, ctx, Some(connection)))
     }
 
     /// Spawns a component registered by `name` under its **declared** profile — the
@@ -259,6 +277,7 @@ fn build_store(
     wasi: WasiCtx,
     caps: Capabilities,
     ctx: Context,
+    connection: Option<ConnectionInfo>,
 ) -> Store<WasiHost> {
     let host = WasiHost {
         wasi,
@@ -268,6 +287,7 @@ fn build_store(
             allow_network: caps.network_allowed(),
         },
         pid: ctx.pid().raw(),
+        connection,
         caps,
         rt: spawner.rt.clone(),
         ctx: Some(ctx),
@@ -284,7 +304,13 @@ fn build_store(
     store
 }
 
-async fn run(spawner: Arc<Spawner>, prepared: PreparedComponent, caps: Capabilities, ctx: Context) {
+async fn run(
+    spawner: Arc<Spawner>,
+    prepared: PreparedComponent,
+    caps: Capabilities,
+    ctx: Context,
+    connection: Option<ConnectionInfo>,
+) {
     let pid = ctx.pid();
     let wasi = match caps.build_wasi() {
         Ok(wasi) => wasi,
@@ -296,7 +322,7 @@ async fn run(spawner: Arc<Spawner>, prepared: PreparedComponent, caps: Capabilit
     // Choose the pooled (fast) tier or the on-demand overflow tier. `_slot` holds a
     // pooled reservation for this process's lifetime (dropped when `run` returns).
     let (engine, pre, entry, _slot) = select_tier(&spawner, prepared);
-    let mut store = build_store(spawner, &engine, wasi, caps, ctx);
+    let mut store = build_store(spawner, &engine, wasi, caps, ctx, connection);
 
     let outcome = async {
         let instance = pre.instantiate_async(&mut store).await?;
@@ -330,7 +356,7 @@ async fn run_command(
         }
     };
     let engine = spawner.engine.clone();
-    let mut store = build_store(spawner, &engine, wasi, caps, ctx);
+    let mut store = build_store(spawner, &engine, wasi, caps, ctx, None);
 
     let outcome = async {
         let command = pre.instantiate_async(&mut store).await?;
@@ -424,6 +450,7 @@ mod tests {
                 allow_network: caps.network_allowed(),
             },
             pid: 0,
+            connection: None,
             caps,
             rt: rt.clone(),
             ctx: None,

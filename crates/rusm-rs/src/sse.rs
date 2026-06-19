@@ -22,6 +22,7 @@ use crate::Pid;
 pub struct Stream {
     writer: Pid,
     done: Cell<bool>,
+    info: crate::ConnectionInfo,
 }
 
 impl Stream {
@@ -29,6 +30,12 @@ impl Stream {
     /// disconnect).
     pub fn writer(&self) -> Pid {
         self.writer
+    }
+
+    /// This stream's request context — method, path, query, route params, headers, and
+    /// peer address (e.g. `stream.info().param("plan")` or the `last-event-id` header).
+    pub fn info(&self) -> &crate::ConnectionInfo {
+        &self.info
     }
 
     /// Emit one event to the client. The platform frames it as a `data:` SSE event;
@@ -78,6 +85,7 @@ pub fn serve<H: Handler>(mut handler: H) {
     let stream = Stream {
         writer,
         done: Cell::new(false),
+        info: crate::connection().unwrap_or_default(),
     };
     // The writer owns the response body, so its death *is* the client disconnect;
     // monitoring it turns that into the `close` callback.

@@ -103,7 +103,7 @@ impl SseServer {
     /// driving this to stop.
     pub async fn serve(self, listener: TcpListener) {
         loop {
-            let Ok((stream, _peer)) = listener.accept().await else {
+            let Ok((stream, peer)) = listener.accept().await else {
                 break;
             };
             stream.set_nodelay(true).ok();
@@ -124,7 +124,7 @@ impl SseServer {
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
                     let slot = Arc::clone(&slot);
-                    async move { server.handle(req, slot).await }
+                    async move { server.handle(req, slot, Some(peer)).await }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
@@ -159,6 +159,7 @@ impl SseServer {
         &self,
         req: hyper::Request<hyper::body::Incoming>,
         procs: Arc<std::sync::Mutex<Vec<(Pid, Pid)>>>,
+        peer: Option<std::net::SocketAddr>,
     ) -> Result<Response<ResBody>, Infallible> {
         let method = req.method().as_str().to_string();
         let path = req
@@ -168,6 +169,11 @@ impl SseServer {
             .unwrap_or("/")
             .to_string();
         super::access::log_request(&self.spawner.rt, "sse", &method, &path, 200);
+
+        // Capture the connection context for the handler's `connection` op. SSE has no
+        // subprotocol; route params are captured by the resolver (empty for an unrouted
+        // listener — added with ws/sse routing).
+        let connection = super::conn::connection_info(&req, peer, Vec::new(), None);
 
         let rt = self.spawner.rt.clone();
         let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(BODY_CAPACITY);
@@ -203,9 +209,9 @@ impl SseServer {
 
         // The sandboxed handler. For a JS bundle the runner's first message is the bundle;
         // the writer pid then lands as the guest's first receive (the WS handshake).
-        let component = self
-            .spawner
-            .spawn_component(&self.prepared, self.caps.clone(), None);
+        let component =
+            self.spawner
+                .spawn_connection(&self.prepared, self.caps.clone(), connection);
         if let Some(bundle) = &self.bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }

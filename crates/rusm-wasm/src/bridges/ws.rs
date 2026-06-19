@@ -161,7 +161,7 @@ impl WsServer {
     /// Serve WebSockets on `listener` until it closes — one connection per task.
     pub async fn serve(self, listener: TcpListener) {
         loop {
-            let Ok((stream, _peer)) = listener.accept().await else {
+            let Ok((stream, peer)) = listener.accept().await else {
                 break;
             };
             stream.set_nodelay(true).ok();
@@ -169,7 +169,7 @@ impl WsServer {
             tokio::spawn(async move {
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
-                    async move { server.upgrade(req).await }
+                    async move { server.upgrade(req, Some(peer)).await }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), service)
@@ -182,6 +182,7 @@ impl WsServer {
     async fn upgrade(
         &self,
         req: hyper::Request<hyper::body::Incoming>,
+        peer: Option<std::net::SocketAddr>,
     ) -> Result<hyper::Response<Empty<Bytes>>, Infallible> {
         // Log the incoming WS request (gated by `[log] level`): a valid handshake as the
         // `101` upgrade, a non-WS request as the `426` we reject it with.
@@ -199,17 +200,25 @@ impl WsServer {
             return Ok(upgrade_required());
         };
         log(101);
+        // Capture the connection context before `upgraded_ws` consumes the request. Route
+        // params are empty for an unrouted listener (filled by ws/sse routing); subprotocol
+        // negotiation lands with the WS frame work.
+        let connection = super::conn::connection_info(&req, peer, Vec::new(), None);
         let server = self.clone();
         tokio::spawn(async move {
             if let Some(ws) = upgraded_ws(req).await {
-                server.run_connection(ws).await;
+                server.run_connection(ws, connection).await;
             }
         });
         Ok(switching_protocols(accept))
     }
 
     /// Wire one upgraded connection to a fresh component process.
-    async fn run_connection(&self, ws: WebSocketStream<TokioIo<Upgraded>>) {
+    async fn run_connection(
+        &self,
+        ws: WebSocketStream<TokioIo<Upgraded>>,
+        connection: crate::actor::ConnectionInfo,
+    ) {
         let (mut sink, mut stream) = ws.split();
         let rt = self.spawner.rt.clone();
 
@@ -227,9 +236,9 @@ impl WsServer {
         // bundle itself; the writer pid then lands as the guest's first receive.
         // (Per-connection handlers aren't named in the platform lifecycle log — the
         // server doesn't carry the serve name; add it to `WsServer` if that's wanted.)
-        let component = self
-            .spawner
-            .spawn_component(&self.prepared, self.caps.clone(), None);
+        let component =
+            self.spawner
+                .spawn_connection(&self.prepared, self.caps.clone(), connection);
         if let Some(bundle) = &self.bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }

@@ -7,6 +7,7 @@
 //! convention) and makes "add a WASI version" a local change.
 
 pub(crate) mod access;
+pub(crate) mod conn;
 pub(crate) mod http;
 pub(crate) mod routed;
 pub(crate) mod sse;
@@ -48,6 +49,10 @@ pub(crate) struct WasiHost {
     pub(crate) http_hooks: HttpCaps,
     /// The owning process's pid (for `own-pid`, `register`, `set-label`).
     pub(crate) pid: u64,
+    /// The HTTP connection context, when this process is a per-connection WebSocket/SSE
+    /// handler the serving bridge spawned for one accepted connection; `None` for every
+    /// other process. Backs the `connection` actor op (read once in the handler's `open`).
+    pub(crate) connection: Option<crate::actor::ConnectionInfo>,
     /// This process's capabilities: the source of truth for its memory ceiling,
     /// whether it may control other processes, whether it may spawn, and the
     /// ceiling any child it spawns inherits (a child is never broader).
@@ -150,6 +155,7 @@ mod tests {
                 allow_network: false,
             },
             pid: 0,
+            connection: None,
             caps,
             rt: Runtime::new(),
             ctx: None,

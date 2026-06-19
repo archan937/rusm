@@ -14,12 +14,19 @@ pub use crate::send_bytes as send;
 /// to the client by writing frames; the host's writer process owns the actual sink.
 pub struct Connection {
     writer: Pid,
+    info: crate::ConnectionInfo,
 }
 
 impl Connection {
     /// The connection's writer pid (the reply target).
     pub fn writer(&self) -> Pid {
         self.writer
+    }
+
+    /// This connection's request context — method, path, query, route params, headers,
+    /// peer address, and negotiated subprotocol (e.g. `conn.info().param("room")`).
+    pub fn info(&self) -> &crate::ConnectionInfo {
+        &self.info
     }
 
     /// Send one frame back to the client. Dropped if the socket has closed.
@@ -55,7 +62,10 @@ pub fn serve<H: Handler>(mut handler: H) {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0));
-    let conn = Connection { writer };
+    let conn = Connection {
+        writer,
+        info: crate::connection().unwrap_or_default(),
+    };
     // The writer process owns the socket, so its death *is* the disconnect (clean close
     // or dropped connection alike); monitoring it turns that into the `close` callback.
     crate::monitor(writer);
