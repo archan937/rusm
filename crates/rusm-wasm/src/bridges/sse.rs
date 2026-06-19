@@ -24,6 +24,9 @@ use hyper_util::rt::TokioIo;
 use rusm_otp::{Pid, Received};
 use tokio::net::TcpListener;
 
+use std::collections::HashMap;
+
+use super::routed::{Resolver, Routed};
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner, WasmRuntime};
 
@@ -46,19 +49,35 @@ const CLOSE_GRACE: Duration = Duration::from_millis(200);
 /// `send`) instead of the body buffering without limit.
 const BODY_CAPACITY: usize = 64;
 
+/// Where an SSE connection's handler comes from: one fixed component for every connection
+/// (an unrouted listener), or a `[serve.routes]` table that resolves the connection's path
+/// to a registered handler component, capturing path params for its connection context.
+#[derive(Clone)]
+enum Source {
+    /// One handler for every connection (no `[serve.routes]`); no path params.
+    Single {
+        prepared: PreparedComponent,
+        /// `Some` for a **TS/JS bundle** on the js-runner (sent as the runner's first
+        /// message, so the writer pid lands as the guest's *first* `Process.receive()`).
+        bundle: Option<Arc<Vec<u8>>>,
+        caps: Capabilities,
+    },
+    /// `[serve.routes]` routing: resolve the path to a registered handler component, with
+    /// the captured params flowing to its connection context. `caps` keys the per-component
+    /// capability profile by name.
+    Routed {
+        resolve: Resolver,
+        caps: Arc<HashMap<String, Capabilities>>,
+    },
+}
+
 /// Serves each SSE connection with a **WASM component process** — the actor way, mirroring
 /// [`super::ws::WsServer`]. The handler emits events to a per-connection **writer** process
 /// that owns the chunked response body. Cheap to clone — one task per connection.
 #[derive(Clone)]
 pub struct SseServer {
-    prepared: PreparedComponent,
-    /// `Some` when the handler is a **TS/JS bundle** on the shared js-runner: the bundle
-    /// is sent as the runner's first message (its protocol), so the writer pid lands as
-    /// the guest's *first* `Process.receive()`. `None` = a plain `rusm:runtime` component
-    /// that gets the writer pid as message 1 directly.
-    bundle: Option<Arc<Vec<u8>>>,
+    source: Source,
     spawner: Arc<Spawner>,
-    caps: Capabilities,
     /// The listener's `[serve.headers]` — merged into every response head (e.g. CORS so a
     /// browser may read this cross-origin feed). Empty by default.
     headers: Arc<Vec<(String, String)>>,
@@ -66,13 +85,15 @@ pub struct SseServer {
 
 impl WasmRuntime {
     /// Build an SSE server that runs `prepared` (a `rusm:runtime` actor component) as the
-    /// handler process for each connection, under `caps`.
+    /// handler process for **every** connection, under `caps` (an unrouted listener).
     pub fn sse_server(&self, prepared: &PreparedComponent, caps: Capabilities) -> SseServer {
         SseServer {
-            prepared: prepared.clone(),
-            bundle: None,
+            source: Source::Single {
+                prepared: prepared.clone(),
+                bundle: None,
+                caps,
+            },
             spawner: Arc::clone(&self.spawner),
-            caps,
             headers: Arc::new(Vec::new()),
         }
     }
@@ -82,16 +103,71 @@ impl WasmRuntime {
     /// The guest's first `Process.receive()` is the writer pid, then each pushed event.
     pub fn sse_server_js(&self, bundle: impl Into<Vec<u8>>, caps: Capabilities) -> SseServer {
         SseServer {
-            prepared: self.js_runner().clone(),
-            bundle: Some(Arc::new(bundle.into())),
+            source: Source::Single {
+                prepared: self.js_runner().clone(),
+                bundle: Some(Arc::new(bundle.into())),
+                caps,
+            },
             spawner: Arc::clone(&self.spawner),
-            caps,
+            headers: Arc::new(Vec::new()),
+        }
+    }
+
+    /// Build a **routed** SSE server: each connection's path resolves (via `resolve`, the
+    /// listener's `[serve.routes]`) to a registered handler component, spawned per
+    /// connection with the captured path params in its connection context. `caps` gives
+    /// each handler component's capability profile, keyed by name. A path that matches no
+    /// route is answered `404` (no stream opened).
+    pub fn routed_sse_server(
+        &self,
+        resolve: Resolver,
+        caps: HashMap<String, Capabilities>,
+    ) -> SseServer {
+        SseServer {
+            source: Source::Routed {
+                resolve,
+                caps: Arc::new(caps),
+            },
+            spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
         }
     }
 }
 
 impl SseServer {
+    /// Resolve a request to its handler: the prepared component, its optional JS bundle,
+    /// the capability profile to run it under, and the captured route params. `None` when
+    /// a routed listener has no matching route (→ `404`). An unrouted listener always
+    /// matches its single handler, with no params.
+    fn resolve(
+        &self,
+        method: &str,
+        path: &str,
+    ) -> Option<(
+        PreparedComponent,
+        Option<Arc<Vec<u8>>>,
+        Capabilities,
+        Vec<(String, String)>,
+    )> {
+        match &self.source {
+            Source::Single {
+                prepared,
+                bundle,
+                caps,
+            } => Some((prepared.clone(), bundle.clone(), caps.clone(), Vec::new())),
+            Source::Routed { resolve, caps } => match resolve(method, path) {
+                Routed::Found {
+                    component, params, ..
+                } => {
+                    let entry = self.spawner.lookup(&component)?;
+                    let caps = caps.get(&component).cloned()?;
+                    Some((entry.prepared, entry.bundle, caps, params))
+                }
+                Routed::MethodNotAllowed | Routed::NotFound => None,
+            },
+        }
+    }
+
     /// Add the listener's `[serve.headers]` (the response-policy headers merged into each
     /// SSE head — e.g. CORS).
     pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
@@ -168,12 +244,19 @@ impl SseServer {
             .map(|pq| pq.as_str())
             .unwrap_or("/")
             .to_string();
+
+        // Resolve which handler serves this connection (and capture its route params).
+        // An unrouted listener always matches its one handler; a routed listener answers
+        // `404` for a path that matches no route — no stream is opened.
+        let Some((prepared, bundle, caps, params)) = self.resolve(&method, &path) else {
+            super::access::log_request(&self.spawner.rt, "sse", &method, &path, 404);
+            return Ok(not_found());
+        };
         super::access::log_request(&self.spawner.rt, "sse", &method, &path, 200);
 
-        // Capture the connection context for the handler's `connection` op. SSE has no
-        // subprotocol; route params are captured by the resolver (empty for an unrouted
-        // listener — added with ws/sse routing).
-        let connection = super::conn::connection_info(&req, peer, Vec::new(), None);
+        // Capture the connection context for the handler's `connection` op (SSE has no
+        // subprotocol); the route params come from the resolver above.
+        let connection = super::conn::connection_info(&req, peer, params, None);
 
         let rt = self.spawner.rt.clone();
         let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(BODY_CAPACITY);
@@ -209,10 +292,8 @@ impl SseServer {
 
         // The sandboxed handler. For a JS bundle the runner's first message is the bundle;
         // the writer pid then lands as the guest's first receive (the WS handshake).
-        let component =
-            self.spawner
-                .spawn_connection(&self.prepared, self.caps.clone(), connection);
-        if let Some(bundle) = &self.bundle {
+        let component = self.spawner.spawn_connection(&prepared, caps, connection);
+        if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }
         rt.send(component.pid(), writer.pid().raw().to_string().into_bytes());
@@ -240,6 +321,16 @@ impl SseServer {
         super::access::apply_extra_headers(&mut response, &self.headers);
         Ok(response)
     }
+}
+
+/// A `404` for a routed SSE listener whose path matched no route — a plain buffered body,
+/// not an event stream (no handler was spawned).
+fn not_found() -> Response<ResBody> {
+    Response::builder()
+        .status(404)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(http_body_util::Full::new(Bytes::from_static(b"not found")).boxed())
+        .expect("404 response builds")
 }
 
 /// Frame a raw event payload as one SSE event — each line its own `data:` field, a blank
@@ -386,6 +477,114 @@ mod tests {
         );
 
         drop(conn);
+        handle.abort();
+    }
+
+    /// Bridge a manifest per-connection [`rusm_node::RouteTable`] into the engine's
+    /// routing-agnostic [`Resolver`] — exactly what `rusm-cli` does for a routed listener.
+    fn resolver(table: rusm_node::RouteTable) -> Resolver {
+        Arc::new(move |method: &str, path: &str| match table.resolve(method, path) {
+            rusm_node::Resolution::Found {
+                component,
+                action,
+                params,
+            } => Routed::Found {
+                component,
+                action,
+                params,
+            },
+            rusm_node::Resolution::MethodNotAllowed => Routed::MethodNotAllowed,
+            rusm_node::Resolution::NotFound => Routed::NotFound,
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_routed_sse_listener_captures_path_params_for_the_handler() {
+        // A `[serve.routes]` SSE listener resolves the connection's path to a registered
+        // handler component and captures path params into its connection context — proving
+        // path-parameterised SSE end-to-end (the linchpin for multi-entity feeds).
+        const SSE_CONN: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_CONN).unwrap(), "run")
+            .unwrap();
+        wr.register_component("events", prepared);
+
+        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([
+            (
+                "GET /events/:plan/:collection/:id".to_string(),
+                "events".to_string(),
+            ),
+        ]))
+        .unwrap();
+        let caps = std::collections::HashMap::from([(
+            "events".to_string(),
+            CapabilityProfile::Trusted.capabilities(),
+        )]);
+        let server = wr.routed_sse_server(resolver(table), caps);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(
+            b"GET /events/p7/pages/42 HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+        // The handler reports the params captured from the route pattern.
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"GET /events/p7/pages/42 q= plan=p7 host=rusm",
+            "the routed listener captured :plan and delivered it to the handler"
+        );
+
+        drop(conn);
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_routed_sse_listener_404s_an_unmatched_path() {
+        // A path matching no route opens no stream — a plain 404, no handler spawned.
+        const SSE_CONN: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_CONN).unwrap(), "run")
+            .unwrap();
+        wr.register_component("events", prepared);
+        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([(
+            "GET /events/:plan".to_string(),
+            "events".to_string(),
+        )]))
+        .unwrap();
+        let caps = std::collections::HashMap::from([(
+            "events".to_string(),
+            CapabilityProfile::Trusted.capabilities(),
+        )]);
+        let server = wr.routed_sse_server(resolver(table), caps);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /nope HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+            .await
+            .expect("response in time")
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&buf).starts_with("HTTP/1.1 404"),
+            "unmatched path → 404, got: {}",
+            String::from_utf8_lossy(&buf).lines().next().unwrap_or("")
+        );
         handle.abort();
     }
 
