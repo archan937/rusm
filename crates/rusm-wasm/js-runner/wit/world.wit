@@ -41,6 +41,9 @@ interface actor {
     /// Send a **text** WebSocket frame on this connection (binary is a plain `send`).
     ws-send-text: func(payload: list<u8>) -> bool;
 
+    /// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
+    ws-close: func(code: u16, reason: string);
+
     /// Spawn a registered component by name as a new process (Erlang's `spawn`).
     /// Capability-gated and non-escalating; `err` if denied or the name is unknown.
     spawn: func(component: string) -> result<pid, string>;

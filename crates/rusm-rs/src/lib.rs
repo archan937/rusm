@@ -264,6 +264,12 @@ pub(crate) fn ws_send_text(payload: &[u8]) -> bool {
     actor::ws_send_text(payload)
 }
 
+/// Close this WebSocket connection with a status `code` + `reason` (used by
+/// [`ws::Connection::close`]). No-op for a non-WebSocket process.
+pub(crate) fn ws_close(code: u16, reason: &str) {
+    actor::ws_close(code, reason);
+}
+
 thread_local! {
     /// Messages the RPC client set aside while awaiting a reply, so the app's own
     /// `receive` still sees them (the guest is single-threaded — one mailbox).

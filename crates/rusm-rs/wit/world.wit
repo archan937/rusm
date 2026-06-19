@@ -47,6 +47,11 @@ interface actor {
     /// it keeps sending binary frames exactly as before.
     ws-send-text: func(payload: list<u8>) -> bool;
 
+    /// Close this WebSocket connection with a status `code` (e.g. 1000 normal, 1011 error)
+    /// and a `reason` — a server-initiated close frame, after which the connection tears
+    /// down. No-op for a non-WebSocket process.
+    ws-close: func(code: u16, reason: string);
+
     /// Spawn a registered component (by the name it was registered under) as a new
     /// process, returning its pid (Erlang's `spawn`). Capability-gated and
     /// **non-escalating**: the child inherits the spawner's capabilities, never

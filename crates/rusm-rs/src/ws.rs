@@ -40,6 +40,13 @@ impl Connection {
     pub fn send_text(&self, text: &str) -> bool {
         crate::ws_send_text(text.as_bytes())
     }
+
+    /// Close this connection with a WebSocket status `code` (e.g. `1000` normal) + `reason`
+    /// — a server-initiated close frame, after which the handler's `close` fires and the
+    /// process exits.
+    pub fn close(&self, code: u16, reason: &str) {
+        crate::ws_close(code, reason);
+    }
 }
 
 /// A per-connection WebSocket handler. There is one handler instance per connection,

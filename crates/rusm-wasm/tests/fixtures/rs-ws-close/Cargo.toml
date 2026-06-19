@@ -1,0 +1,24 @@
+# A WebSocket handler (rusm-rs) that closes with a status code + reason via
+# Connection::close — proving the additive ws-close op. Built for wasm32-wasip2, checked in
+# as rs_ws_close.wasm. Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/rs_ws_close.wasm ../rs_ws_close.wasm
+[workspace]
+
+[package]
+name = "rs-ws-close"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "rs_ws_close"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"

@@ -181,12 +181,12 @@ impl Spawner {
         prepared: &PreparedComponent,
         caps: Capabilities,
         connection: ConnectionInfo,
-        ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+        ws_out: Option<tokio::sync::mpsc::Sender<crate::bridges::conn::WsOut>>,
     ) -> ProcessHandle {
         let spawner = Arc::clone(self);
         let prepared = prepared.clone();
         self.rt
-            .spawn(move |ctx| run(spawner, prepared, caps, ctx, Some(connection), ws_text))
+            .spawn(move |ctx| run(spawner, prepared, caps, ctx, Some(connection), ws_out))
     }
 
     /// Spawns a component registered by `name` under its **declared** profile — the
@@ -281,7 +281,7 @@ fn build_store(
     caps: Capabilities,
     ctx: Context,
     connection: Option<ConnectionInfo>,
-    ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    ws_out: Option<tokio::sync::mpsc::Sender<crate::bridges::conn::WsOut>>,
 ) -> Store<WasiHost> {
     let host = WasiHost {
         wasi,
@@ -292,7 +292,7 @@ fn build_store(
         },
         pid: ctx.pid().raw(),
         connection,
-        ws_text,
+        ws_out,
         caps,
         rt: spawner.rt.clone(),
         ctx: Some(ctx),
@@ -315,7 +315,7 @@ async fn run(
     caps: Capabilities,
     ctx: Context,
     connection: Option<ConnectionInfo>,
-    ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    ws_out: Option<tokio::sync::mpsc::Sender<crate::bridges::conn::WsOut>>,
 ) {
     let pid = ctx.pid();
     let wasi = match caps.build_wasi() {
@@ -328,7 +328,7 @@ async fn run(
     // Choose the pooled (fast) tier or the on-demand overflow tier. `_slot` holds a
     // pooled reservation for this process's lifetime (dropped when `run` returns).
     let (engine, pre, entry, _slot) = select_tier(&spawner, prepared);
-    let mut store = build_store(spawner, &engine, wasi, caps, ctx, connection, ws_text);
+    let mut store = build_store(spawner, &engine, wasi, caps, ctx, connection, ws_out);
 
     let outcome = async {
         let instance = pre.instantiate_async(&mut store).await?;
@@ -457,7 +457,7 @@ mod tests {
             },
             pid: 0,
             connection: None,
-            ws_text: None,
+            ws_out: None,
             caps,
             rt: rt.clone(),
             ctx: None,

@@ -8,6 +8,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use super::routed::{Resolver, Routed};
+
+/// A control frame a WebSocket handler emits to its connection's writer — the typed channel
+/// that backs `ws-send-text` and `ws-close` (binary frames take the plain `send`→writer
+/// path). One bounded channel for both, so a slow client back-pressures either uniformly.
+pub(crate) enum WsOut {
+    /// A text frame (the bytes are UTF-8).
+    Text(Vec<u8>),
+    /// A close frame with a status code + reason, then the writer ends the connection.
+    Close(u16, String),
+}
 use crate::actor::ConnectionInfo;
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner};

@@ -27,7 +27,7 @@ use tokio_tungstenite::WebSocketStream;
 
 use std::collections::HashMap;
 
-use super::conn::{Resolved, Source};
+use super::conn::{Resolved, Source, WsOut};
 use super::routed::Resolver;
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner, WasmRuntime};
@@ -187,9 +187,9 @@ impl WasmRuntime {
 /// handler that ignores the disconnect.
 const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// Bound on a connection's pending **text** frames (the `ws-send-text` channel) — a slow
-/// client back-pressures the handler (it parks on send) instead of buffering without limit.
-const WS_TEXT_CAPACITY: usize = 64;
+/// Bound on a connection's pending control frames (the `ws-send-text` / `ws-close` channel)
+/// — a slow client back-pressures the handler (it parks on send), never buffering unbounded.
+const WS_OUT_CAPACITY: usize = 64;
 
 impl WsServer {
     /// Serve WebSockets on `listener` until it closes — one connection per task.
@@ -277,7 +277,7 @@ impl WsServer {
         // `send` to the writer pid, the unchanged path), **text** frames on a bounded channel
         // the handler feeds via `ws-send-text` (the bound back-pressures a slow client). All
         // IO stays out of the sandboxed component.
-        let (text_tx, mut text_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(WS_TEXT_CAPACITY);
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<WsOut>(WS_OUT_CAPACITY);
         let writer = rt.spawn(move |mut ctx| async move {
             loop {
                 tokio::select! {
@@ -289,14 +289,27 @@ impl WsServer {
                         }
                         None => break, // mailbox closed / a non-message signal
                     },
-                    text = text_rx.recv() => match text {
-                        Some(payload) => {
+                    out = out_rx.recv() => match out {
+                        // A text frame (ws-send-text).
+                        Some(WsOut::Text(payload)) => {
                             let text = String::from_utf8_lossy(&payload).into_owned();
                             if sink.send(Message::text(text)).await.is_err() {
                                 break;
                             }
                         }
-                        None => break, // handler gone (its ws-send-text sender dropped)
+                        // A server-initiated close with a code + reason (ws-close), then end.
+                        Some(WsOut::Close(code, reason)) => {
+                            use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+                            use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
+                            let _ = sink
+                                .send(Message::Close(Some(CloseFrame {
+                                    code: CloseCode::from(code),
+                                    reason: reason.into(),
+                                })))
+                                .await;
+                            break;
+                        }
+                        None => break, // handler gone (its control sender dropped)
                     },
                 }
             }
@@ -308,7 +321,7 @@ impl WsServer {
         // server doesn't carry the serve name; add it to `WsServer` if that's wanted.)
         let component = self
             .spawner
-            .spawn_connection(&prepared, caps, connection, Some(text_tx));
+            .spawn_connection(&prepared, caps, connection, Some(out_tx));
         if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }
@@ -753,6 +766,47 @@ mod tests {
         assert_eq!(reply.into_text().unwrap().as_str(), "hi ts");
 
         ws.close(None).await.ok();
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_handler_can_close_with_a_code_and_reason() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // A handler calling Connection::close must send a Close frame carrying the status
+        // code + reason — proving the additive ws-close op.
+        const WS_CLOSE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_close.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_CLOSE).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        ws.send(Message::binary(b"go".to_vec())).await.unwrap();
+        match ws.next().await.unwrap().unwrap() {
+            Message::Close(Some(frame)) => {
+                assert_eq!(
+                    u16::from(frame.code),
+                    1000,
+                    "the close code reaches the client"
+                );
+                assert_eq!(
+                    frame.reason.as_str(),
+                    "bye",
+                    "the close reason reaches the client"
+                );
+            }
+            other => panic!("expected a Close frame, got {other:?}"),
+        }
+
         handle.abort();
     }
 }

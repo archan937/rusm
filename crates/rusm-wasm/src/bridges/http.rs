@@ -128,7 +128,7 @@ impl HttpServer {
             // The wasi:http per-request path exposes the request through wasi:http itself,
             // not the actor `connection` op; that op is for per-connection ws/sse handlers.
             connection: None,
-            ws_text: None,
+            ws_out: None,
             caps: self.caps.clone(),
             rt: self.spawner.rt.clone(),
             ctx: None,

@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use rusm_otp::{stream, Context, ExitReason, Pid, Received, Runtime, Strategy};
 
+use crate::bridges::conn::WsOut;
 use crate::bridges::WasiHost;
 
 wasmtime::component::bindgen!({
@@ -52,9 +53,17 @@ impl actor::Host for WasiHost {
     /// bounded channel is closed (the client disconnected). The bound back-pressures a
     /// handler that outruns a slow client — it parks on `send` rather than buffering.
     async fn ws_send_text(&mut self, payload: Vec<u8>) -> bool {
-        match &self.ws_text {
-            Some(tx) => tx.send(payload).await.is_ok(),
+        match &self.ws_out {
+            Some(tx) => tx.send(WsOut::Text(payload)).await.is_ok(),
             None => false,
+        }
+    }
+
+    /// Close this WebSocket connection with a status `code` + `reason` (a server-initiated
+    /// close frame), then the connection tears down. No-op for a non-WebSocket process.
+    async fn ws_close(&mut self, code: u16, reason: String) {
+        if let Some(tx) = &self.ws_out {
+            let _ = tx.send(WsOut::Close(code, reason)).await;
         }
     }
 
