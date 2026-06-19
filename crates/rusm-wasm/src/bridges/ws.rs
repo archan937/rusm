@@ -178,6 +178,9 @@ pub struct WsServer {
     /// Negotiate **permessage-deflate** when the client offers it (the listener's
     /// `compression`). `false` = never compressed.
     compress: bool,
+    /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
+    /// before the handshake (`wss`). `None` = plain `ws`.
+    tls: Option<Arc<super::tls::TlsAcceptor>>,
 }
 
 impl WasmRuntime {
@@ -197,6 +200,7 @@ impl WasmRuntime {
             max_message_size: None,
             allowed_origins: Arc::new(Vec::new()),
             compress: false,
+            tls: None,
         }
     }
 
@@ -218,6 +222,7 @@ impl WasmRuntime {
             max_message_size: None,
             allowed_origins: Arc::new(Vec::new()),
             compress: false,
+            tls: None,
         }
     }
 
@@ -243,6 +248,7 @@ impl WasmRuntime {
             max_message_size: None,
             allowed_origins: Arc::new(Vec::new()),
             compress: false,
+            tls: None,
         }
     }
 }
@@ -303,6 +309,12 @@ impl WsServer {
         self
     }
 
+    /// Terminate TLS on each connection with this acceptor (`wss`); `None` = plain `ws`.
+    pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
+        self.tls = tls;
+        self
+    }
+
     /// Whether the request's `Origin` is allowed (always true when no allow-list is set).
     fn origin_allowed(&self, req: &hyper::Request<hyper::body::Incoming>) -> bool {
         if self.allowed_origins.is_empty() {
@@ -349,9 +361,13 @@ impl WsServer {
                 },
                 None => None,
             };
-            stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
+                // TCP_NODELAY + TLS termination (when configured) off the accept loop. The
+                // upgrade rides over whatever IO this is — `hyper::upgrade::on` abstracts it.
+                let Ok(io) = super::tls::MaybeTlsStream::accept(stream, &server.tls).await else {
+                    return; // a failed TLS handshake drops just this connection
+                };
                 // The permit moves through the (call-once-per-WS) service into `upgrade`,
                 // which hands it to the connection task; a `Mutex<Option<_>>` carries a
                 // move-once value through hyper's `Fn` service.
@@ -365,7 +381,7 @@ impl WsServer {
                     }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), service)
+                    .serve_connection(TokioIo::new(io), service)
                     .with_upgrades()
                     .await;
             });
@@ -1311,6 +1327,70 @@ mod tests {
         );
         drop(admitted);
 
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn serves_wss_over_native_tls() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use futures_util::{SinkExt, StreamExt};
+        use rusm_otp::Runtime;
+        use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName};
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+        use tokio_tungstenite::tungstenite::Message;
+
+        // A WebSocket listener with TLS serves `wss`: the upgrade rides over a TLS-terminated
+        // connection, and an echoed frame round-trips. Proves the `with_upgrades`-over-TLS path.
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let acceptor = crate::tls_acceptor(
+            cert.serialize_pem().unwrap().as_bytes(),
+            cert.serialize_private_key_pem().as_bytes(),
+        )
+        .unwrap();
+        let cert_der = CertificateDer::from(cert.serialize_der().unwrap());
+
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_tls(Some(Arc::new(acceptor)));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // TLS-connect (trusting the self-signed cert), then do the WS handshake over it.
+        let mut roots = RootCertStore::empty();
+        roots.add(cert_der).unwrap();
+        let provider = Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
+        let config = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let tls = connector
+            .connect(ServerName::try_from("localhost").unwrap(), tcp)
+            .await
+            .expect("the TLS handshake succeeds");
+        let (mut ws, _) = tokio_tungstenite::client_async("ws://localhost/", tls)
+            .await
+            .expect("the WebSocket handshake completes over TLS");
+
+        ws.send(Message::text("over tls")).await.unwrap();
+        assert_eq!(
+            &ws.next().await.unwrap().unwrap().into_data()[..],
+            b"over tls",
+            "the frame echoes back over wss"
+        );
+
+        ws.close(None).await.ok();
         handle.abort();
     }
 

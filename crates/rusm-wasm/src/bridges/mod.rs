@@ -12,6 +12,7 @@ pub(crate) mod conn;
 pub(crate) mod http;
 pub(crate) mod routed;
 pub(crate) mod sse;
+pub(crate) mod tls;
 pub(crate) mod wasip1;
 pub(crate) mod wasip2;
 pub(crate) mod wasip3;

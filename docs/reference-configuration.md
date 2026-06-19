@@ -142,10 +142,37 @@ one of two ways:
 | `max_message_size` | int? | none | *(ws)* Largest inbound frame in bytes; a larger frame **closes the connection**. `None` = the transport default. |
 | `allowed_origins` | string[] | `[]` | *(ws)* `Origin` values permitted on the handshake — **CSWSH protection**. An unlisted/absent `Origin` is refused **`403`** before any process spawns. Empty = any origin. |
 | `compression` | bool | `false` | Compress eligible replies the client accepts: **gzip** for routed HTTP handler responses + the SSE event stream, **permessage-deflate** for WebSocket. The handler-less `wasi:http` path sets its own encoding. |
+| `tls` | table | none | Serve this listener over **TLS** (`https`/`wss`) — a [`[serve.tls]`](#servetls-listener-tls) subtable with `cert`/`key` PEM paths. Omitted = plain TCP. |
 
 See [Resource & security controls](./serving-http-ws-sse#resource-security-controls) for the
-WebSocket cap/size/origin details, and [Compression](./serving-http-ws-sse#compression) for
-what `compression` covers.
+WebSocket cap/size/origin details, [Compression](./serving-http-ws-sse#compression) for what
+`compression` covers, and [TLS](./serving-http-ws-sse#tls) for `https`/`wss`.
+
+## `[serve.tls]` — listener TLS {#servetls-listener-tls}
+
+An optional subtable on a `[[serve]]` listener (it attaches to the most recent `[[serve]]`):
+the certificate + key that turn the listener into `https` (HTTP/SSE) or `wss` (WebSocket).
+The host terminates TLS on each connection before HTTP — rustls + ring, the same stack as the
+cluster transport.
+
+```toml
+[[serve]]
+name = "api"
+protocol = "http"
+listen = "0.0.0.0:8443"
+
+[serve.tls]
+cert = "certs/server.pem"   # PEM certificate chain (leaf first), relative to the app dir
+key  = "certs/server.key"   # PEM private key (PKCS#8 / RSA / SEC1)
+```
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `cert` | string | Path to the PEM certificate chain (leaf first), relative to the app directory. |
+| `key` | string | Path to the PEM private key. |
+
+A missing or invalid cert/key fails `rusm serve` at startup (before the port is reported up),
+never silently falling back to plaintext.
 
 > **Migration.** A `[[serve]]` entry is now a pure listener. Its old fields are gone:
 > `capability` (the handler's profile lives on its `[components.<name>]` entry),

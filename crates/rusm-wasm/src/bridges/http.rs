@@ -43,6 +43,9 @@ pub struct HttpServer {
     /// Max concurrent connections (the listener's `max_connections`); at the cap a new
     /// connection is dropped before it's served. `None` = unlimited.
     max_connections: Option<usize>,
+    /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
+    /// before hyper (`https`). `None` = plain HTTP.
+    tls: Option<Arc<super::tls::TlsAcceptor>>,
 }
 
 impl WasmRuntime {
@@ -60,6 +63,7 @@ impl WasmRuntime {
             caps,
             headers: Arc::new(Vec::new()),
             max_connections: None,
+            tls: None,
         }
     }
 
@@ -103,6 +107,12 @@ impl HttpServer {
         self
     }
 
+    /// Terminate TLS on each connection with this acceptor (`https`); `None` = plain HTTP.
+    pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
+        self.tls = tls;
+        self
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes (one connection per task, one
     /// component instance per request). Abort the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
@@ -123,17 +133,21 @@ impl HttpServer {
                 },
                 None => None,
             };
-            stream.set_nodelay(true).ok(); // low request latency, no Nagle batching
             let server = self.clone();
             tokio::spawn(async move {
-                let _permit = permit; // released when this connection ends
+                // Set TCP_NODELAY + terminate TLS (when configured) in the task, off the accept
+                // loop — a slow TLS handshake can't stall accepting other connections.
+                let Ok(io) = super::tls::MaybeTlsStream::accept(stream, &server.tls).await else {
+                    return; // a failed TLS handshake drops just this connection (+ its permit)
+                };
+                let _permit = permit; // held until this connection ends
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
                     async move { server.handle(req).await }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
-                    .serve_connection(TokioIo::new(stream), service)
+                    .serve_connection(TokioIo::new(io), service)
                     .await;
             });
         }
@@ -301,6 +315,63 @@ mod tests {
         let mut buf = Vec::new();
         conn.read_to_end(&mut buf).await.unwrap();
         buf
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn serves_https_over_native_tls() {
+        // A listener with TLS serves the same component over `https`: a self-signed cert
+        // terminates on the host, and a rustls client that trusts it round-trips a request.
+        use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName};
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_http(&wr.compile_component(HELLO).unwrap())
+            .unwrap();
+
+        // A self-signed cert for "localhost" → the listener's acceptor + the client's trust root.
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let acceptor = crate::tls_acceptor(
+            cert.serialize_pem().unwrap().as_bytes(),
+            cert.serialize_private_key_pem().as_bytes(),
+        )
+        .unwrap();
+        let cert_der = CertificateDer::from(cert.serialize_der().unwrap());
+
+        let server = wr
+            .http_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_tls(Some(std::sync::Arc::new(acceptor)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        // A rustls client that trusts only the self-signed cert.
+        let mut roots = RootCertStore::empty();
+        roots.add(cert_der).unwrap();
+        let provider = std::sync::Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
+        let config = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(std::sync::Arc::new(config));
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut tls = connector
+            .connect(ServerName::try_from("localhost").unwrap(), tcp)
+            .await
+            .expect("the TLS handshake succeeds against the self-signed cert");
+
+        tls.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        tls.read_to_end(&mut buf).await.unwrap();
+        let resp = String::from_utf8_lossy(&buf);
+        assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
+        assert!(resp.contains("hello from RUSM"), "TLS-served body: {resp}");
+
+        handle.abort();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

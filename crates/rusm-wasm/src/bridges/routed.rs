@@ -65,6 +65,9 @@ pub struct RoutedHttpServer {
     max_connections: Option<usize>,
     /// gzip eligible responses the client accepts (the listener's `compression`).
     compress: bool,
+    /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
+    /// before hyper (`https`). `None` = plain HTTP.
+    tls: Option<Arc<super::tls::TlsAcceptor>>,
 }
 
 impl WasmRuntime {
@@ -86,6 +89,7 @@ impl WasmRuntime {
             headers: Arc::new(Vec::new()),
             max_connections: None,
             compress: false,
+            tls: None,
         }
     }
 }
@@ -101,6 +105,12 @@ impl RoutedHttpServer {
     /// gzip eligible responses the client accepts (the listener's `compression`).
     pub fn with_compression(mut self, on: bool) -> Self {
         self.compress = on;
+        self
+    }
+
+    /// Terminate TLS on each connection with this acceptor (`https`); `None` = plain HTTP.
+    pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
+        self.tls = tls;
         self
     }
 
@@ -130,17 +140,20 @@ impl RoutedHttpServer {
                 },
                 None => None,
             };
-            stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
-                let _permit = permit; // released when this connection ends
+                // TCP_NODELAY + TLS termination (when configured) off the accept loop.
+                let Ok(io) = super::tls::MaybeTlsStream::accept(stream, &server.tls).await else {
+                    return; // a failed TLS handshake drops just this connection (+ its permit)
+                };
+                let _permit = permit; // held until this connection ends
                 let service = hyper::service::service_fn(move |req| {
                     let server = server.clone();
                     async move { server.handle(req).await }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
-                    .serve_connection(TokioIo::new(stream), service)
+                    .serve_connection(TokioIo::new(io), service)
                     .await;
             });
         }

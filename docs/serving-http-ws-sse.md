@@ -272,6 +272,28 @@ The handler-less **`wasi:http`** path (a TS `export default { fetch }`) owns its
 response — which may stream — so it sets its own `content-encoding`; platform compression
 covers the paths the platform itself frames (routed HTTP, SSE, WS).
 
+## TLS — `https` / `wss` {#tls}
+
+Add a [`[serve.tls]`](./reference-configuration#servetls-listener-tls) cert/key to a listener
+and it serves over TLS — `https` for HTTP/SSE, `wss` for WebSocket. The host terminates TLS on
+each connection *before* HTTP, so routing, the connection context, compression, caps, and the
+per-connection process model are all unchanged; only the transport is encrypted.
+
+```toml
+[[serve]]
+name = "api"
+protocol = "http"
+listen = "0.0.0.0:8443"
+
+[serve.tls]
+cert = "certs/server.pem"
+key  = "certs/server.key"
+```
+
+rustls + ring (the same stack as the cluster transport); the handshake runs in the
+per-connection task, off the accept loop, so a slow client can't stall new connections. A
+bad cert/key path fails `rusm serve` at startup rather than serving plaintext.
+
 ## Handlers are named actions — no `main()`
 
 A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]`. The

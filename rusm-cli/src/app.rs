@@ -350,6 +350,9 @@ pub async fn serve_apps(
         // handler component — per request for HTTP (`component#action`), per connection for
         // ws/sse (the component *is* the handler, with captured path params in its context).
         let routed = !spec.routes.is_empty();
+        // Build the listener's TLS acceptor (when it declares `[serve.tls]`) once, shared by
+        // every connection it serves — a bad cert/key path fails here, before we claim "up".
+        let tls = build_serve_tls(dir, spec)?;
         // Build the server up front so a load/compile error surfaces here (before we
         // claim the endpoint is up), then drive the accept loop on its own task.
         let task = if routed {
@@ -367,6 +370,7 @@ pub async fn serve_apps(
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
                         .with_compression(spec.compression)
+                        .with_tls(tls.clone())
                         .serve(listener),
                 ),
                 // Per-connection SSE: resolve the path to a handler component, capturing params.
@@ -375,6 +379,7 @@ pub async fn serve_apps(
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
                         .with_compression(spec.compression)
+                        .with_tls(tls.clone())
                         .serve(listener),
                 ),
                 // Per-connection WebSocket: same; an unmatched path refuses with 404.
@@ -385,6 +390,7 @@ pub async fn serve_apps(
                         .with_max_message_size(spec.max_message_size)
                         .with_allowed_origins(spec.allowed_origins.clone())
                         .with_compression(spec.compression)
+                        .with_tls(tls.clone())
                         .serve(listener),
                 ),
             }
@@ -417,6 +423,7 @@ pub async fn serve_apps(
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
                         .with_compression(spec.compression)
+                        .with_tls(tls.clone())
                         .serve(listener),
                 ),
                 ServeProtocol::Ws => tokio::spawn(
@@ -426,12 +433,14 @@ pub async fn serve_apps(
                         .with_max_message_size(spec.max_message_size)
                         .with_allowed_origins(spec.allowed_origins.clone())
                         .with_compression(spec.compression)
+                        .with_tls(tls.clone())
                         .serve(listener),
                 ),
                 ServeProtocol::Http => tokio::spawn(
                     build_http_server(dir, wasm, name, caps, remote)?
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
+                        .with_tls(tls.clone())
                         .serve(listener),
                 ),
             }
@@ -444,6 +453,22 @@ pub async fn serve_apps(
         });
     }
     Ok(endpoints)
+}
+
+/// Build a listener's TLS acceptor from its `[serve.tls]` cert/key (PEM paths, relative to
+/// the app dir). `None` when the listener declares no TLS. A missing/invalid PEM is an error,
+/// surfaced before the endpoint is reported up.
+fn build_serve_tls(dir: &Path, spec: &ServeSpec) -> Result<Option<Arc<rusm_wasm::TlsAcceptor>>> {
+    let Some(tls) = &spec.tls else {
+        return Ok(None);
+    };
+    let cert = std::fs::read(dir.join(&tls.cert))
+        .with_context(|| format!("reading TLS cert {} for `{}`", tls.cert, spec.listen))?;
+    let key = std::fs::read(dir.join(&tls.key))
+        .with_context(|| format!("reading TLS key {} for `{}`", tls.key, spec.listen))?;
+    let acceptor = rusm_wasm::tls_acceptor(&cert, &key)
+        .with_context(|| format!("building TLS for `{}`", spec.listen))?;
+    Ok(Some(Arc::new(acceptor)))
 }
 
 /// Bridge a listener's [`RouteTable`] into the engine's routing-agnostic [`Resolver`]
@@ -774,6 +799,7 @@ mod tests {
             max_message_size: None,
             allowed_origins: Vec::new(),
             compression: false,
+            tls: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -824,6 +850,7 @@ mod tests {
             max_message_size: None,
             allowed_origins: Vec::new(),
             compression: false,
+            tls: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -878,6 +905,7 @@ mod tests {
             max_message_size: None,
             allowed_origins: Vec::new(),
             compression: false,
+            tls: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &handlers, &HashMap::new())
             .await
@@ -924,6 +952,7 @@ mod tests {
             max_message_size: None,
             allowed_origins: Vec::new(),
             compression: false,
+            tls: None,
         }];
         let err = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await

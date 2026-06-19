@@ -70,6 +70,9 @@ pub struct SseServer {
     /// gzip the event stream for a client that accepts it (the listener's `compression`) —
     /// the writer compresses + flushes per event, so nothing buffers. `false` = plain.
     compress: bool,
+    /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
+    /// before hyper (`https`/SSE-over-TLS). `None` = plain.
+    tls: Option<Arc<super::tls::TlsAcceptor>>,
 }
 
 impl WasmRuntime {
@@ -86,6 +89,7 @@ impl WasmRuntime {
             headers: Arc::new(Vec::new()),
             max_connections: None,
             compress: false,
+            tls: None,
         }
     }
 
@@ -103,6 +107,7 @@ impl WasmRuntime {
             headers: Arc::new(Vec::new()),
             max_connections: None,
             compress: false,
+            tls: None,
         }
     }
 
@@ -125,6 +130,7 @@ impl WasmRuntime {
             headers: Arc::new(Vec::new()),
             max_connections: None,
             compress: false,
+            tls: None,
         }
     }
 }
@@ -150,6 +156,12 @@ impl SseServer {
         self
     }
 
+    /// Terminate TLS on each connection with this acceptor; `None` = plain.
+    pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
+        self.tls = tls;
+        self
+    }
+
     /// Serve SSE on `listener` until it closes — one connection per task. Abort the task
     /// driving this to stop.
     pub async fn serve(self, listener: TcpListener) {
@@ -172,11 +184,14 @@ impl SseServer {
                 },
                 None => None,
             };
-            stream.set_nodelay(true).ok();
             let server = self.clone();
             tokio::spawn(async move {
                 let _permit = permit; // released when this connection's stream ends
                 let rt = server.spawner.rt.clone();
+                // TCP_NODELAY + TLS termination (when configured), off the accept loop.
+                let Ok(io) = super::tls::MaybeTlsStream::accept(stream, &server.tls).await else {
+                    return; // a failed TLS handshake drops just this connection
+                };
                 // The per-connection processes (handler + its writer) spawned while serving
                 // this connection. SSE is one-way with no inbound read channel, so the
                 // handler can't see a client disconnect itself — but hyper surfaces it by
@@ -195,7 +210,7 @@ impl SseServer {
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
-                    .serve_connection(TokioIo::new(stream), service)
+                    .serve_connection(TokioIo::new(io), service)
                     .await;
                 // `serve_connection` completed = the client disconnected (hyper surfaces it
                 // by finishing the future, even for an idle stream). Reap each per-connection

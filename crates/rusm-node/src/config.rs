@@ -320,6 +320,22 @@ pub struct ServeSpec {
     /// stream), so it sets its own encoding. `false` (default) = no compression.
     #[serde(default)]
     pub compression: bool,
+    /// Serve this listener over **TLS** (`https`/`wss`), the `[serve.tls]` subtable with
+    /// `cert`/`key` PEM paths. The host terminates TLS on each connection before HTTP/SSE/WS.
+    /// Omitted (default) = plain TCP.
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+}
+
+/// A listener's TLS material — PEM file paths for the certificate chain + private key (the
+/// `[serve.tls]` subtable). When present, the listener serves `https`/`wss`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TlsConfig {
+    /// Path to the PEM certificate chain (leaf first), relative to the app directory.
+    pub cert: String,
+    /// Path to the PEM private key (PKCS#8 / RSA / SEC1).
+    pub key: String,
 }
 
 impl ServeSpec {
@@ -754,6 +770,35 @@ mod tests {
         assert_eq!(cfg.serve[1].max_message_size, None);
         assert!(cfg.serve[1].allowed_origins.is_empty());
         assert!(!cfg.serve[1].compression);
+        assert!(cfg.serve[0].tls.is_none() && cfg.serve[1].tls.is_none());
+    }
+
+    #[test]
+    fn parses_a_tls_listener() {
+        // `[serve.tls]` attaches its cert/key to the listener (the `https`/`wss` opt-in);
+        // a listener without it stays plain TCP.
+        let cfg = NodeConfig::from_toml(
+            r#"
+            [[serve]]
+            name = "api"
+            protocol = "http"
+            listen = "127.0.0.1:8443"
+
+            [serve.tls]
+            cert = "certs/server.pem"
+            key = "certs/server.key"
+
+            [[serve]]
+            name = "plain"
+            protocol = "http"
+            listen = "127.0.0.1:8080"
+            "#,
+        )
+        .unwrap();
+        let tls = cfg.serve[0].tls.as_ref().expect("tls parsed");
+        assert_eq!(tls.cert, "certs/server.pem");
+        assert_eq!(tls.key, "certs/server.key");
+        assert!(cfg.serve[1].tls.is_none(), "plain listener has no tls");
     }
 
     #[test]
