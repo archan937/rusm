@@ -24,6 +24,21 @@ func (s Stream) Info() rusm.ConnectionInfo { return s.info }
 // dropped if the client has disconnected.
 func (s Stream) Data(payload []byte) { rusm.SendBytes(s.writer, payload) }
 
+// Emit sends a rich SSE event — Data plus an optional event Name, ID (echoed by the client
+// as Last-Event-ID on reconnect), and Retry backoff (each omitted when "" / 0). Returns
+// false if the client has disconnected. (Data is the data:-only shortcut.)
+func (s Stream) Emit(e Event) bool { return rusm.SseSend(e.Data, e.Name, e.ID, e.Retry) }
+
+// Event is a rich SSE event for Stream.Emit. ID is echoed by the client as Last-Event-ID;
+// Name is the SSE event type; Retry is the reconnect backoff in ms. Empty ID/Name and a
+// zero Retry are omitted.
+type Event struct {
+	Data  []byte
+	ID    string
+	Name  string
+	Retry uint32
+}
+
 // Close ends the stream and this process (a server-initiated close). Sse.Close then
 // fires once — the same teardown as a client disconnect.
 func (s Stream) Close() { *s.done = true }

@@ -24,6 +24,10 @@ func wasmimport_WsSendText(payload0 *uint8, payload1 uint32) (result0 uint32)
 //go:noescape
 func wasmimport_WsClose(code0 uint32, reason0 *uint8, reason1 uint32)
 
+//go:wasmimport rusm:runtime/actor@0.1.0 sse-send
+//go:noescape
+func wasmimport_SseSend(data0 *uint8, data1 uint32, event0 uint32, event1 *uint8, event2 uint32, id0 uint32, id1 *uint8, id2 uint32, retry0 uint32, retry1 uint32) (result0 uint32)
+
 //go:wasmimport rusm:runtime/actor@0.1.0 spawn
 //go:noescape
 func wasmimport_Spawn(component0 *uint8, component1 uint32, result *cm.Result[string, Pid, string])

@@ -71,6 +71,27 @@ func WsSendText(payload []byte) bool { return actor.WsSendText(cm.ToList(payload
 // web.Conn.Close). No-op for a non-WebSocket process.
 func WsClose(code uint16, reason string) { actor.WsClose(code, reason) }
 
+// SseSend emits a rich SSE event (used by web.Stream.Emit): data plus an event name, id,
+// and retry — each omitted when "" / 0. Returns false if this is not an SSE handler or the
+// client disconnected.
+func SseSend(data []byte, event, id string, retry uint32) bool {
+	return actor.SseSend(cm.ToList(data), optString(event), optString(id), optU32(retry))
+}
+
+func optString(s string) cm.Option[string] {
+	if s == "" {
+		return cm.None[string]()
+	}
+	return cm.Some(s)
+}
+
+func optU32(n uint32) cm.Option[uint32] {
+	if n == 0 {
+		return cm.None[uint32]()
+	}
+	return cm.Some(n)
+}
+
 // Send JSON-encodes msg and sends it — the wire shared with rusm-ts and rusm-rs.
 func Send(to Pid, msg any) error {
 	b, err := json.Marshal(msg)

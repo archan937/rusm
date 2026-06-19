@@ -237,8 +237,18 @@ impl SseServer {
                                 break;
                             }
                         }
-                        Received::Down { .. } => break, // handler exited — end the body
-                        _ => {}                         // ignore streams / other signals
+                        // Handler exited (self-close or crash). On a clean self-close it may
+                        // have queued rich events on the separate channel just before exiting;
+                        // flush those (they'd otherwise lose the race with this Down) then end.
+                        Received::Down { .. } => {
+                            while let Ok(e) = sse_rx.try_recv() {
+                                if tx.send(sse_event_frame(&e)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                        _ => {} // ignore streams / other signals
                     },
                     // A rich event (`sse-send`): id:/event:/retry:/data: framing.
                     event = sse_rx.recv() => match event {
@@ -1044,6 +1054,37 @@ mod tests {
         assert!(body.contains("id: 42"), "id framed: {body}");
         assert!(body.contains("event: greeting"), "event framed: {body}");
         assert!(body.contains("data: hello"), "data framed: {body}");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_sse_handler_emits_a_rich_event() {
+        // The Go SDK twin: web.Stream.Emit must frame id:/event:/data: — RS/Go parity.
+        const GO_SSE_EVENT: &[u8] = include_bytes!("../../tests/fixtures/go_sse_event.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_SSE_EVENT).unwrap(), "run")
+            .unwrap();
+        let server = wr.sse_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /events HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+            .await
+            .expect("the stream ends after the handler closes")
+            .expect("socket read ok");
+        let body = String::from_utf8_lossy(&buf);
+        assert!(body.contains("id: 42"), "go id framed: {body}");
+        assert!(body.contains("event: greeting"), "go event framed: {body}");
+        assert!(body.contains("data: hello"), "go data framed: {body}");
 
         handle.abort();
     }

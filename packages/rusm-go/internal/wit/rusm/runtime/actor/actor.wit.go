@@ -227,6 +227,30 @@ func WsClose(code uint16, reason string) {
 	return
 }
 
+// SseSend represents the imported function "sse-send".
+//
+// Emit a **rich** SSE event on this connection: `data` plus optional `event` (a named
+// event type), `id` (the event id the client echoes as `Last-Event-ID` on reconnect
+// —
+// the basis for resumption), and `retry` (client reconnect backoff, ms). The plain
+// `data:`-only path is a regular `send` to the writer pid. Returns `false` if this
+// is
+// not an SSE handler or the client has disconnected. Additive.
+//
+//	sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry:
+//	option<u32>) -> bool
+//
+//go:nosplit
+func SseSend(data cm.List[uint8], event cm.Option[string], id cm.Option[string], retry cm.Option[uint32]) (result bool) {
+	data0, data1 := cm.LowerList(data)
+	event0, event1, event2 := lower_OptionString(event)
+	id0, id1, id2 := lower_OptionString(id)
+	retry0, retry1 := lower_OptionU32(retry)
+	result0 := wasmimport_SseSend((*uint8)(data0), (uint32)(data1), (uint32)(event0), (*uint8)(event1), (uint32)(event2), (uint32)(id0), (*uint8)(id1), (uint32)(id2), (uint32)(retry0), (uint32)(retry1))
+	result = (bool)(cm.U32ToBool((uint32)(result0)))
+	return
+}
+
 // Spawn represents the imported function "spawn".
 //
 // Spawn a registered component (by the name it was registered under) as a new
