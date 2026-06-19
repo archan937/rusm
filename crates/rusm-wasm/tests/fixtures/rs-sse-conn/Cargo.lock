@@ -224,7 +224,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rs-sse-feed"
+name = "rs-sse-conn"
 version = "0.0.0"
 dependencies = [
  "rusm-rs",
