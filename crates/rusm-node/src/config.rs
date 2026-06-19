@@ -242,6 +242,13 @@ impl ServeProtocol {
     pub fn is_sse(self) -> bool {
         matches!(self, Self::Sse)
     }
+
+    /// Whether this protocol runs **one handler process per connection** (WebSocket and
+    /// SSE) rather than per request (HTTP). Per-connection routes name a bare handler
+    /// component (no `#action`); HTTP routes name `component#action`.
+    pub fn is_per_connection(self) -> bool {
+        matches!(self, Self::Ws | Self::Sse)
+    }
 }
 
 /// One `[[serve]]` entry: a network listener hosted on its own port. HTTP/SSE
@@ -284,9 +291,14 @@ pub struct ServeSpec {
 
 impl ServeSpec {
     /// The compiled [`RouteTable`] for this listener's `[serve.routes]` map (errors on a
-    /// malformed entry). Empty when no routes are declared.
+    /// malformed entry). Empty when no routes are declared. Per-connection listeners
+    /// (ws/sse) take a bare-`component` route value; HTTP takes `component#action`.
     pub fn route_table(&self) -> Result<crate::routes::RouteTable, String> {
-        crate::routes::RouteTable::from_map(&self.routes)
+        if self.protocol.is_per_connection() {
+            crate::routes::RouteTable::from_handler_map(&self.routes)
+        } else {
+            crate::routes::RouteTable::from_map(&self.routes)
+        }
     }
 
     /// This listener's `[serve.headers]` as ordered pairs (for the serving bridges).

@@ -55,9 +55,23 @@ pub struct RouteTable {
 }
 
 impl RouteTable {
-    /// Compile the raw `[routes]` map (`"METHOD /path" => "component#action"`). Returns a
-    /// clear error on a malformed key (no method/path) or value (no `#`).
+    /// Compile a **per-request HTTP** `[routes]` map (`"METHOD /path" => "component#action"`).
+    /// Returns a clear error on a malformed key (no method/path) or value (no `#`).
     pub fn from_map(raw: &HashMap<String, String>) -> Result<RouteTable, String> {
+        Self::compile(raw, true)
+    }
+
+    /// Compile a **per-connection** (WebSocket/SSE) `[routes]` map: the value is just the
+    /// handler **component** (`"GET /events/:plan" => "events"`) — there is no `#action`,
+    /// since the component *is* the connection handler. Captured path params still flow to
+    /// the handler via its connection context. Otherwise like [`from_map`].
+    pub fn from_handler_map(raw: &HashMap<String, String>) -> Result<RouteTable, String> {
+        Self::compile(raw, false)
+    }
+
+    /// Shared compile for both shapes; `require_action` distinguishes the per-request HTTP
+    /// `component#action` value from the per-connection bare-`component` value.
+    fn compile(raw: &HashMap<String, String>, require_action: bool) -> Result<RouteTable, String> {
         let mut routes = Vec::with_capacity(raw.len());
         for (key, target) in raw {
             let (method, path) = key
@@ -71,19 +85,29 @@ impl RouteTable {
             if !path.starts_with('/') {
                 return Err(format!("route `{key}` path must start with `/`"));
             }
-            let (component, action) = target
-                .split_once('#')
-                .ok_or_else(|| format!("route target `{target}` must be `component#action`"))?;
-            if component.is_empty() || action.is_empty() {
-                return Err(format!(
-                    "route target `{target}` must be `component#action`"
-                ));
-            }
+            let (component, action) = if require_action {
+                let (component, action) = target.split_once('#').ok_or_else(|| {
+                    format!("route target `{target}` must be `component#action`")
+                })?;
+                if component.is_empty() || action.is_empty() {
+                    return Err(format!("route target `{target}` must be `component#action`"));
+                }
+                (component.to_string(), action.to_string())
+            } else {
+                let component = target.trim();
+                if component.is_empty() || component.contains('#') {
+                    return Err(format!(
+                        "route target `{target}` must be a component name \
+                         (a per-connection ws/sse handler takes no `#action`)"
+                    ));
+                }
+                (component.to_string(), String::new())
+            };
             routes.push(Route {
                 method,
                 pattern: parse_pattern(path),
-                component: component.to_string(),
-                action: action.to_string(),
+                component,
+                action,
             });
         }
         Ok(RouteTable { routes })
@@ -234,6 +258,48 @@ mod tests {
                 ("id".into(), "x".into()),
             ]
         );
+    }
+
+    #[test]
+    fn per_connection_routes_take_a_bare_component_and_capture_params() {
+        // ws/sse routes name the handler component only (no `#action`) — the component is
+        // the connection handler — but path params are still captured for its context.
+        let map = [
+            ("GET /events/:plan/:collection/:id", "events"),
+            ("GET /stream/:app", "stream"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let t = RouteTable::from_handler_map(&map).unwrap();
+
+        let r = t.resolve("GET", "/events/p7/pages/42");
+        let (component, action, params) = found(&r);
+        assert_eq!(component, "events");
+        assert_eq!(action, "", "per-connection routes have no action");
+        assert_eq!(
+            params,
+            &[
+                ("plan".into(), "p7".into()),
+                ("collection".into(), "pages".into()),
+                ("id".into(), "42".into()),
+            ]
+        );
+        let stream = t.resolve("GET", "/stream/app-1");
+        let (component, _, params) = found(&stream);
+        assert_eq!(component, "stream");
+        assert_eq!(params, &[("app".into(), "app-1".into())]);
+    }
+
+    #[test]
+    fn per_connection_route_rejects_an_action() {
+        // A `#action` in a per-connection route value is a mistake (no action concept).
+        let map = [("GET /stream/:app", "stream#open")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let err = RouteTable::from_handler_map(&map).unwrap_err();
+        assert!(err.contains("no `#action`"), "clear error: {err}");
     }
 
     #[test]
