@@ -754,6 +754,7 @@ mod tests {
             name: Some("api".to_string()),
             source: None,
             headers: Default::default(),
+            subprotocols: Vec::new(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -799,6 +800,7 @@ mod tests {
             name: Some("echo".to_string()),
             source: None,
             headers: Default::default(),
+            subprotocols: Vec::new(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -848,6 +850,7 @@ mod tests {
             name: None,
             source: None,
             headers: Default::default(),
+            subprotocols: Vec::new(),
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &handlers, &HashMap::new())
             .await
@@ -889,6 +892,7 @@ mod tests {
             name: Some("ghost".to_string()),
             source: None,
             headers: Default::default(),
+            subprotocols: Vec::new(),
         }];
         let err = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await

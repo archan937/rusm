@@ -195,10 +195,22 @@ impl ws::Handler for Chat {
 }
 ```
 
-`send_text`/`sendText`/`SendText` returns `false` if the socket has already closed. The
-text/close path is back-pressured (a bounded per-connection channel), so a handler that
-outruns a slow client parks rather than buffering without limit. An inbound frame reaches
-the handler as bytes; the handler interprets it per its own protocol.
+`send_text`/`sendText`/`SendText` returns `false` if the socket has already closed.
+
+**Subprotocol.** A `[[serve]]` WebSocket listener may declare `subprotocols = ["graphql-ws",
+…]`; the host negotiates the first client-offered one present, echoes it in the `101`, and
+surfaces it on the connection context (`info().subprotocol()`).
+
+**Keep-alive.** An idle connection gets a periodic server **ping** (default 30s), so
+idle-reaping proxies don't drop it; inbound client pings are auto-ponged by the platform.
+
+**Inbound frames & back-pressure — by design.** An inbound frame reaches the handler as
+**bytes**; the handler interprets it per its own protocol (a WS protocol is single-type in
+practice — JSON-as-text or a binary codec — so a per-frame text/binary tag would be noise,
+and adding one can't be done without breaking the additive guarantee). The **text/close**
+path is explicitly back-pressured (a bounded per-connection channel — a handler outrunning a
+slow client parks); **binary** frames flow through the writer's mailbox, back-pressured by
+the socket itself (the writer awaits each `sink.send`). This is the same shape as SSE.
 
 ## Handlers are named actions — no `main()`
 
