@@ -26,7 +26,8 @@ use tokio::net::TcpListener;
 
 use std::collections::HashMap;
 
-use super::routed::{Resolver, Routed};
+use super::conn::Source;
+use super::routed::Resolver;
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner, WasmRuntime};
 
@@ -48,28 +49,6 @@ const CLOSE_GRACE: Duration = Duration::from_millis(200);
 /// Body channel depth — bounded, so a slow client back-pressures the writer (it parks on
 /// `send`) instead of the body buffering without limit.
 const BODY_CAPACITY: usize = 64;
-
-/// Where an SSE connection's handler comes from: one fixed component for every connection
-/// (an unrouted listener), or a `[serve.routes]` table that resolves the connection's path
-/// to a registered handler component, capturing path params for its connection context.
-#[derive(Clone)]
-enum Source {
-    /// One handler for every connection (no `[serve.routes]`); no path params.
-    Single {
-        prepared: PreparedComponent,
-        /// `Some` for a **TS/JS bundle** on the js-runner (sent as the runner's first
-        /// message, so the writer pid lands as the guest's *first* `Process.receive()`).
-        bundle: Option<Arc<Vec<u8>>>,
-        caps: Capabilities,
-    },
-    /// `[serve.routes]` routing: resolve the path to a registered handler component, with
-    /// the captured params flowing to its connection context. `caps` keys the per-component
-    /// capability profile by name.
-    Routed {
-        resolve: Resolver,
-        caps: Arc<HashMap<String, Capabilities>>,
-    },
-}
 
 /// Serves each SSE connection with a **WASM component process** — the actor way, mirroring
 /// [`super::ws::WsServer`]. The handler emits events to a per-connection **writer** process
@@ -135,39 +114,6 @@ impl WasmRuntime {
 }
 
 impl SseServer {
-    /// Resolve a request to its handler: the prepared component, its optional JS bundle,
-    /// the capability profile to run it under, and the captured route params. `None` when
-    /// a routed listener has no matching route (→ `404`). An unrouted listener always
-    /// matches its single handler, with no params.
-    fn resolve(
-        &self,
-        method: &str,
-        path: &str,
-    ) -> Option<(
-        PreparedComponent,
-        Option<Arc<Vec<u8>>>,
-        Capabilities,
-        Vec<(String, String)>,
-    )> {
-        match &self.source {
-            Source::Single {
-                prepared,
-                bundle,
-                caps,
-            } => Some((prepared.clone(), bundle.clone(), caps.clone(), Vec::new())),
-            Source::Routed { resolve, caps } => match resolve(method, path) {
-                Routed::Found {
-                    component, params, ..
-                } => {
-                    let entry = self.spawner.lookup(&component)?;
-                    let caps = caps.get(&component).cloned()?;
-                    Some((entry.prepared, entry.bundle, caps, params))
-                }
-                Routed::MethodNotAllowed | Routed::NotFound => None,
-            },
-        }
-    }
-
     /// Add the listener's `[serve.headers]` (the response-policy headers merged into each
     /// SSE head — e.g. CORS).
     pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
@@ -248,7 +194,13 @@ impl SseServer {
         // Resolve which handler serves this connection (and capture its route params).
         // An unrouted listener always matches its one handler; a routed listener answers
         // `404` for a path that matches no route — no stream is opened.
-        let Some((prepared, bundle, caps, params)) = self.resolve(&method, &path) else {
+        let Some(super::conn::Resolved {
+            prepared,
+            bundle,
+            caps,
+            params,
+        }) = self.source.resolve(&self.spawner, &method, &path)
+        else {
             super::access::log_request(&self.spawner.rt, "sse", &method, &path, 404);
             return Ok(not_found());
         };
@@ -349,6 +301,7 @@ fn sse_data_frame(payload: &[u8]) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bridges::routed::Routed;
     use crate::{CapabilityProfile, WasmRuntime};
     use rusm_otp::Runtime;
     use std::time::Duration;

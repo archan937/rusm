@@ -3,9 +3,79 @@
 //! connection's context is captured. The handler reads it back through the `connection`
 //! actor op (set on the store by [`Spawner::spawn_connection`]).
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
+use super::routed::{Resolver, Routed};
 use crate::actor::ConnectionInfo;
+use crate::caps::Capabilities;
+use crate::{PreparedComponent, Spawner};
+
+/// Where a per-connection serving handler (WebSocket or SSE) comes from — shared by both
+/// bridges so they resolve a connection identically. Either one fixed component for every
+/// connection (an unrouted listener), or a `[serve.routes]` table resolving the path to a
+/// registered handler component with captured params.
+#[derive(Clone)]
+pub(crate) enum Source {
+    /// One handler for every connection (no `[serve.routes]`); no path params.
+    Single {
+        prepared: PreparedComponent,
+        /// `Some` for a TS/JS bundle on the js-runner (sent as the runner's first message).
+        bundle: Option<Arc<Vec<u8>>>,
+        caps: Capabilities,
+    },
+    /// `[serve.routes]` routing: resolve the path to a registered handler component, with
+    /// captured params flowing to its connection context. `caps` keys the per-component
+    /// capability profile by name.
+    Routed {
+        resolve: Resolver,
+        caps: Arc<HashMap<String, Capabilities>>,
+    },
+}
+
+/// A resolved connection handler: the component to spawn, its optional JS bundle, the
+/// capability profile to run it under, and the captured route params.
+pub(crate) struct Resolved {
+    pub(crate) prepared: PreparedComponent,
+    pub(crate) bundle: Option<Arc<Vec<u8>>>,
+    pub(crate) caps: Capabilities,
+    pub(crate) params: Vec<(String, String)>,
+}
+
+impl Source {
+    /// Resolve a connection to its handler. `None` when a routed listener has no matching
+    /// route (the caller answers `404`); an unrouted listener always matches its single
+    /// handler with no params.
+    pub(crate) fn resolve(&self, spawner: &Spawner, method: &str, path: &str) -> Option<Resolved> {
+        match self {
+            Source::Single {
+                prepared,
+                bundle,
+                caps,
+            } => Some(Resolved {
+                prepared: prepared.clone(),
+                bundle: bundle.clone(),
+                caps: caps.clone(),
+                params: Vec::new(),
+            }),
+            Source::Routed { resolve, caps } => match resolve(method, path) {
+                Routed::Found {
+                    component, params, ..
+                } => {
+                    let entry = spawner.lookup(&component)?;
+                    Some(Resolved {
+                        prepared: entry.prepared,
+                        bundle: entry.bundle,
+                        caps: caps.get(&component).cloned()?,
+                        params,
+                    })
+                }
+                Routed::MethodNotAllowed | Routed::NotFound => None,
+            },
+        }
+    }
+}
 
 /// Capture the connection context from `req`: method, the path and query split apart,
 /// every header (names are already lowercased by `http`, kept in arrival order so a

@@ -25,6 +25,10 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
+use std::collections::HashMap;
+
+use super::conn::{Resolved, Source};
+use super::routed::Resolver;
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner, WasmRuntime};
 
@@ -107,6 +111,15 @@ pub(crate) fn upgrade_required() -> hyper::Response<Empty<Bytes>> {
         .unwrap()
 }
 
+/// A `404` for a routed WebSocket listener whose path matched no route — the handshake is
+/// refused before any upgrade.
+fn not_found() -> hyper::Response<Empty<Bytes>> {
+    hyper::Response::builder()
+        .status(404)
+        .body(Empty::new())
+        .unwrap()
+}
+
 /// Serves each WebSocket connection with a **WASM component process** — the actor
 /// way. A connection's inbound messages land in the component's mailbox (one
 /// message = one frame); its replies go to a per-connection **writer** process that
@@ -115,25 +128,21 @@ pub(crate) fn upgrade_required() -> hyper::Response<Empty<Bytes>> {
 /// connection's processes — never the listener or other sockets.
 #[derive(Clone)]
 pub struct WsServer {
-    prepared: PreparedComponent,
-    /// `Some` when the handler is a **TS/JS bundle** on the shared js-runner: the
-    /// bundle is sent as the runner's first message (its protocol), so the writer
-    /// pid becomes the guest's *first* `Process.receive()`. `None` = a plain
-    /// `rusm:runtime` component that gets the writer pid as message 1 directly.
-    bundle: Option<Arc<Vec<u8>>>,
+    source: Source,
     spawner: Arc<Spawner>,
-    caps: Capabilities,
 }
 
 impl WasmRuntime {
     /// Build a WebSocket server that runs `prepared` (a `rusm:runtime` actor
-    /// component) as the handler process for each connection, under `caps`.
+    /// component) as the handler process for **every** connection, under `caps`.
     pub fn ws_server(&self, prepared: &PreparedComponent, caps: Capabilities) -> WsServer {
         WsServer {
-            prepared: prepared.clone(),
-            bundle: None,
+            source: Source::Single {
+                prepared: prepared.clone(),
+                bundle: None,
+                caps,
+            },
             spawner: Arc::clone(&self.spawner),
-            caps,
         }
     }
 
@@ -143,10 +152,31 @@ impl WasmRuntime {
     /// first `Process.receive()` is the writer pid, then each inbound frame.
     pub fn ws_server_js(&self, bundle: impl Into<Vec<u8>>, caps: Capabilities) -> WsServer {
         WsServer {
-            prepared: self.js_runner().clone(),
-            bundle: Some(Arc::new(bundle.into())),
+            source: Source::Single {
+                prepared: self.js_runner().clone(),
+                bundle: Some(Arc::new(bundle.into())),
+                caps,
+            },
             spawner: Arc::clone(&self.spawner),
-            caps,
+        }
+    }
+
+    /// Build a **routed** WebSocket server: each connection's path resolves (via `resolve`,
+    /// the listener's `[serve.routes]`) to a registered handler component, run per
+    /// connection with the captured path params in its connection context. `caps` gives
+    /// each handler component's capability profile by name. A path that matches no route is
+    /// answered `404` (the handshake is refused).
+    pub fn routed_ws_server(
+        &self,
+        resolve: Resolver,
+        caps: HashMap<String, Capabilities>,
+    ) -> WsServer {
+        WsServer {
+            source: Source::Routed {
+                resolve,
+                caps: Arc::new(caps),
+            },
+            spawner: Arc::clone(&self.spawner),
         }
     }
 }
@@ -195,28 +225,44 @@ impl WsServer {
             .to_string();
         let log =
             |status| super::access::log_request(&self.spawner.rt, "ws", &method, &path, status);
+        // Resolve the route first: an unmatched path is a `404` (no handshake). An unrouted
+        // listener always matches its single handler.
+        let Some(Resolved {
+            prepared,
+            bundle,
+            caps,
+            params,
+        }) = self.source.resolve(&self.spawner, &method, &path)
+        else {
+            log(404);
+            return Ok(not_found());
+        };
         let Some(accept) = ws_accept(&req) else {
             log(426);
             return Ok(upgrade_required());
         };
         log(101);
-        // Capture the connection context before `upgraded_ws` consumes the request. Route
-        // params are empty for an unrouted listener (filled by ws/sse routing); subprotocol
-        // negotiation lands with the WS frame work.
-        let connection = super::conn::connection_info(&req, peer, Vec::new(), None);
+        // Capture the connection context before `upgraded_ws` consumes the request; route
+        // params come from the resolver. (Subprotocol negotiation lands with the WS frame work.)
+        let connection = super::conn::connection_info(&req, peer, params, None);
         let server = self.clone();
         tokio::spawn(async move {
             if let Some(ws) = upgraded_ws(req).await {
-                server.run_connection(ws, connection).await;
+                server
+                    .run_connection(ws, prepared, bundle, caps, connection)
+                    .await;
             }
         });
         Ok(switching_protocols(accept))
     }
 
-    /// Wire one upgraded connection to a fresh component process.
+    /// Wire one upgraded connection to a fresh component process (the resolved handler).
     async fn run_connection(
         &self,
         ws: WebSocketStream<TokioIo<Upgraded>>,
+        prepared: PreparedComponent,
+        bundle: Option<Arc<Vec<u8>>>,
+        caps: Capabilities,
         connection: crate::actor::ConnectionInfo,
     ) {
         let (mut sink, mut stream) = ws.split();
@@ -236,10 +282,8 @@ impl WsServer {
         // bundle itself; the writer pid then lands as the guest's first receive.
         // (Per-connection handlers aren't named in the platform lifecycle log — the
         // server doesn't carry the serve name; add it to `WsServer` if that's wanted.)
-        let component =
-            self.spawner
-                .spawn_connection(&self.prepared, self.caps.clone(), connection);
-        if let Some(bundle) = &self.bundle {
+        let component = self.spawner.spawn_connection(&prepared, caps, connection);
+        if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }
         rt.send(component.pid(), writer.pid().raw().to_string().into_bytes());
