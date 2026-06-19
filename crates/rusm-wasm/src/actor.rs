@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use rusm_otp::{stream, Context, ExitReason, Pid, Received, Runtime, Strategy};
 
-use crate::bridges::conn::WsOut;
+use crate::bridges::conn::{SseEvent, WsOut};
 use crate::bridges::WasiHost;
 
 wasmtime::component::bindgen!({
@@ -64,6 +64,30 @@ impl actor::Host for WasiHost {
     async fn ws_close(&mut self, code: u16, reason: String) {
         if let Some(tx) = &self.ws_out {
             let _ = tx.send(WsOut::Close(code, reason)).await;
+        }
+    }
+
+    /// Emit a rich SSE event (data + optional event/id/retry) to this connection's writer
+    /// (the plain `data:` path is a `send` to the writer pid). `false` if this is not an SSE
+    /// handler, or the bounded channel is closed (the client disconnected).
+    async fn sse_send(
+        &mut self,
+        data: Vec<u8>,
+        event: Option<String>,
+        id: Option<String>,
+        retry: Option<u32>,
+    ) -> bool {
+        match &self.sse_out {
+            Some(tx) => tx
+                .send(SseEvent {
+                    data,
+                    event,
+                    id,
+                    retry,
+                })
+                .await
+                .is_ok(),
+            None => false,
         }
     }
 

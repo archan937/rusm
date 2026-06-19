@@ -44,11 +44,34 @@ impl Stream {
         crate::send_bytes(self.writer, payload);
     }
 
+    /// Emit a **rich** event — `data` plus an optional `id` (the client echoes it as
+    /// `Last-Event-ID` on reconnect, so pair it with a replay in [`Handler::open`] for
+    /// resumption), `event` name, and `retry` backoff. Returns `false` if the client has
+    /// disconnected. (Plain [`data`](Self::data) is the `data:`-only shortcut.)
+    pub fn emit(&self, event: &Event) -> bool {
+        crate::sse_send(event.data, event.event, event.id, event.retry)
+    }
+
     /// End the stream and this process (a server-initiated close). [`Handler::close`]
     /// then fires once, and the process exits — the same teardown as a client disconnect.
     pub fn close(&self) {
         self.done.set(true);
     }
+}
+
+/// A rich SSE event for [`Stream::emit`]: `data` with an optional `id` (echoed by the client
+/// as `Last-Event-ID`), `event` name, and `retry` reconnect backoff (ms). Build with struct
+/// update from [`Default`]: `Event { data: b"…", id: Some("42"), ..Default::default() }`.
+#[derive(Default)]
+pub struct Event<'a> {
+    /// The event payload (multi-line allowed; the platform frames each line as `data:`).
+    pub data: &'a [u8],
+    /// The event id — echoed by the client as `Last-Event-ID` on reconnect.
+    pub id: Option<&'a str>,
+    /// A named event type (the SSE `event:` field).
+    pub event: Option<&'a str>,
+    /// Suggested client reconnect backoff in milliseconds (the SSE `retry:` field).
+    pub retry: Option<u32>,
 }
 
 /// A per-connection SSE handler — the twin of [`crate::ws::Handler`]. One instance per

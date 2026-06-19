@@ -270,6 +270,17 @@ pub(crate) fn ws_close(code: u16, reason: &str) {
     actor::ws_close(code, reason);
 }
 
+/// Emit a rich SSE event (data + optional event/id/retry); used by [`sse::Stream::emit`].
+/// `false` if this process is not an SSE handler or the client has disconnected.
+pub(crate) fn sse_send(
+    data: &[u8],
+    event: Option<&str>,
+    id: Option<&str>,
+    retry: Option<u32>,
+) -> bool {
+    actor::sse_send(data, event, id, retry)
+}
+
 thread_local! {
     /// Messages the RPC client set aside while awaiting a reply, so the app's own
     /// `receive` still sees them (the guest is single-threaded — one mailbox).

@@ -382,9 +382,9 @@ impl WsServer {
         // bundle itself; the writer pid then lands as the guest's first receive.
         // (Per-connection handlers aren't named in the platform lifecycle log — the
         // server doesn't carry the serve name; add it to `WsServer` if that's wanted.)
-        let component = self
-            .spawner
-            .spawn_connection(&prepared, caps, connection, Some(out_tx));
+        let component =
+            self.spawner
+                .spawn_connection(&prepared, caps, connection, Some(out_tx), None);
         if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }

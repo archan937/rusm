@@ -50,6 +50,10 @@ const CLOSE_GRACE: Duration = Duration::from_millis(200);
 /// `send`) instead of the body buffering without limit.
 const BODY_CAPACITY: usize = 64;
 
+/// Bound on a connection's pending **rich** SSE events (the `sse-send` channel) — a slow
+/// client back-pressures the handler (it parks on send) instead of buffering without limit.
+const SSE_OUT_CAPACITY: usize = 64;
+
 /// Serves each SSE connection with a **WASM component process** — the actor way, mirroring
 /// [`super::ws::WsServer`]. The handler emits events to a per-connection **writer** process
 /// that owns the chunked response body. Cheap to clone — one task per connection.
@@ -220,11 +224,14 @@ impl SseServer {
         // handler (frame + emit), and the idle heartbeat. A `Down` means the handler
         // exited (self-close or crash), so end the body. `recv` is cancel-safe, so losing
         // the race never drops a queued event.
+        let (sse_tx, mut sse_rx) =
+            tokio::sync::mpsc::channel::<super::conn::SseEvent>(SSE_OUT_CAPACITY);
         let writer = rt.spawn(move |mut ctx| async move {
             loop {
                 tokio::select! {
                     _ = tx.closed() => break, // client disconnected (hyper dropped the body)
                     received = ctx.recv() => match received {
+                        // A plain `data:` event (stream.data → send to the writer pid).
                         Received::Message(payload) => {
                             if tx.send(sse_data_frame(&payload)).await.is_err() {
                                 break;
@@ -232,6 +239,15 @@ impl SseServer {
                         }
                         Received::Down { .. } => break, // handler exited — end the body
                         _ => {}                         // ignore streams / other signals
+                    },
+                    // A rich event (`sse-send`): id:/event:/retry:/data: framing.
+                    event = sse_rx.recv() => match event {
+                        Some(e) => {
+                            if tx.send(sse_event_frame(&e)).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break, // handler gone (its rich-event sender dropped)
                     },
                     _ = tokio::time::sleep(HEARTBEAT) => {
                         if tx.send(Bytes::from_static(b": ping\n\n")).await.is_err() {
@@ -245,9 +261,9 @@ impl SseServer {
         // The sandboxed handler. For a JS bundle the runner's first message is the bundle;
         // the writer pid then lands as the guest's first receive (the WS handshake).
         // SSE has no inbound/text frames — only `ws-send-text` is WebSocket-specific.
-        let component = self
-            .spawner
-            .spawn_connection(&prepared, caps, connection, None);
+        let component =
+            self.spawner
+                .spawn_connection(&prepared, caps, connection, None, Some(sse_tx));
         if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }
@@ -292,13 +308,45 @@ fn not_found() -> Response<ResBody> {
 /// line terminating the event (so multi-line payloads are valid, not just single-line).
 fn sse_data_frame(payload: &[u8]) -> Bytes {
     let mut out = Vec::with_capacity(payload.len() + 8);
+    push_data_lines(&mut out, payload);
+    out.push(b'\n');
+    Bytes::from(out)
+}
+
+/// Frame a **rich** SSE event: optional `id:`/`event:`/`retry:` lines, then the `data:`
+/// payload (multi-line aware), then the terminating blank line. `id`/`event` are
+/// single-line by spec, so any embedded newline/CR is dropped (it would corrupt framing).
+fn sse_event_frame(event: &super::conn::SseEvent) -> Bytes {
+    let mut out = Vec::with_capacity(event.data.len() + 32);
+    if let Some(id) = &event.id {
+        push_single_line_field(&mut out, b"id: ", id);
+    }
+    if let Some(name) = &event.event {
+        push_single_line_field(&mut out, b"event: ", name);
+    }
+    if let Some(retry) = event.retry {
+        out.extend_from_slice(format!("retry: {retry}\n").as_bytes());
+    }
+    push_data_lines(&mut out, &event.data);
+    out.push(b'\n');
+    Bytes::from(out)
+}
+
+/// Append `data: <line>\n` for each `\n`-separated line of `payload`.
+fn push_data_lines(out: &mut Vec<u8>, payload: &[u8]) {
     for line in payload.split(|&b| b == b'\n') {
         out.extend_from_slice(b"data: ");
         out.extend_from_slice(line);
         out.push(b'\n');
     }
+}
+
+/// Append a single-line SSE field (`id: `/`event: `), dropping any CR/LF in the value so a
+/// stray newline can't inject extra fields or terminate the event early.
+fn push_single_line_field(out: &mut Vec<u8>, name: &[u8], value: &str) {
+    out.extend_from_slice(name);
+    out.extend(value.bytes().filter(|&b| b != b'\n' && b != b'\r'));
     out.push(b'\n');
-    Bytes::from(out)
 }
 
 #[cfg(test)]
@@ -963,6 +1011,39 @@ mod tests {
             .await
             .expect("the stream ends after self-close")
             .expect("socket read ok");
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_sse_handler_emits_a_rich_event() {
+        // A handler using `Stream::emit` must frame `id:`/`event:`/`data:` (the basis for
+        // Last-Event-ID resumption) — proving the additive `sse-send` op.
+        const SSE_EVENT: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_event.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_EVENT).unwrap(), "run")
+            .unwrap();
+        let server = wr.sse_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /events HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        // The handler emits then self-closes, so the body ends — read it all.
+        let mut buf = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+            .await
+            .expect("the stream ends after the handler closes")
+            .expect("socket read ok");
+        let body = String::from_utf8_lossy(&buf);
+        assert!(body.contains("id: 42"), "id framed: {body}");
+        assert!(body.contains("event: greeting"), "event framed: {body}");
+        assert!(body.contains("data: hello"), "data framed: {body}");
 
         handle.abort();
     }

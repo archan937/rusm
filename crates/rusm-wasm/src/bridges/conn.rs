@@ -18,6 +18,16 @@ pub(crate) enum WsOut {
     /// A close frame with a status code + reason, then the writer ends the connection.
     Close(u16, String),
 }
+
+/// A **rich** SSE event an SSE handler emits to its writer (the `sse-send` op) — `data`
+/// plus optional `event` name, `id` (echoed by the client as `Last-Event-ID`), and `retry`
+/// backoff. The plain `data:`-only path stays a `send` to the writer pid.
+pub(crate) struct SseEvent {
+    pub(crate) data: Vec<u8>,
+    pub(crate) event: Option<String>,
+    pub(crate) id: Option<String>,
+    pub(crate) retry: Option<u32>,
+}
 use crate::actor::ConnectionInfo;
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner};

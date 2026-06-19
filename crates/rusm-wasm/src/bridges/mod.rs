@@ -57,6 +57,10 @@ pub(crate) struct WasiHost {
     /// `ws-send-text` and `ws-close` ops (binary frames use the plain `send` path). Bounded,
     /// so a slow client back-pressures the handler. `None` for SSE / non-connection processes.
     pub(crate) ws_out: Option<tokio::sync::mpsc::Sender<crate::bridges::conn::WsOut>>,
+    /// An SSE handler's **rich-event** channel to its writer — backs the `sse-send` op
+    /// (the plain `data:` path is a `send` to the writer pid). Bounded. `None` for WS /
+    /// non-connection processes.
+    pub(crate) sse_out: Option<tokio::sync::mpsc::Sender<crate::bridges::conn::SseEvent>>,
     /// This process's capabilities: the source of truth for its memory ceiling,
     /// whether it may control other processes, whether it may spawn, and the
     /// ceiling any child it spawns inherits (a child is never broader).
@@ -161,6 +165,7 @@ mod tests {
             pid: 0,
             connection: None,
             ws_out: None,
+            sse_out: None,
             caps,
             rt: Runtime::new(),
             ctx: None,

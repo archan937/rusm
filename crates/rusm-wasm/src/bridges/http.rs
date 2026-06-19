@@ -129,6 +129,7 @@ impl HttpServer {
             // not the actor `connection` op; that op is for per-connection ws/sse handlers.
             connection: None,
             ws_out: None,
+            sse_out: None,
             caps: self.caps.clone(),
             rt: self.spawner.rt.clone(),
             ctx: None,
