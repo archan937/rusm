@@ -75,7 +75,7 @@ async fn echo_upgrade(
             }
         }
     });
-    Ok(switching_protocols(accept))
+    Ok(switching_protocols(accept, None))
 }
 
 /// The `Sec-WebSocket-Accept` for a request, or `None` if it carries no WS key.
@@ -94,14 +94,20 @@ pub(crate) async fn upgraded_ws(
     Some(WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await)
 }
 
-pub(crate) fn switching_protocols(accept: String) -> hyper::Response<Empty<Bytes>> {
-    hyper::Response::builder()
+pub(crate) fn switching_protocols(
+    accept: String,
+    subprotocol: Option<String>,
+) -> hyper::Response<Empty<Bytes>> {
+    let mut builder = hyper::Response::builder()
         .status(101)
         .header("connection", "Upgrade")
         .header("upgrade", "websocket")
-        .header("sec-websocket-accept", accept)
-        .body(Empty::new())
-        .unwrap()
+        .header("sec-websocket-accept", accept);
+    // Echo the negotiated subprotocol so the client adopts it (RFC 6455).
+    if let Some(proto) = subprotocol {
+        builder = builder.header("sec-websocket-protocol", proto);
+    }
+    builder.body(Empty::new()).unwrap()
 }
 
 pub(crate) fn upgrade_required() -> hyper::Response<Empty<Bytes>> {
@@ -134,6 +140,9 @@ pub struct WsServer {
     /// **ping** — keeping the connection alive through idle-reaping proxies and flushing any
     /// auto-queued pong. (Inbound client pings are auto-ponged by the protocol layer.)
     keepalive: std::time::Duration,
+    /// Supported subprotocols (the listener's `subprotocols` list). On the handshake the
+    /// first client-offered one present here is negotiated + echoed; empty = none.
+    subprotocols: Arc<Vec<String>>,
 }
 
 impl WasmRuntime {
@@ -148,6 +157,7 @@ impl WasmRuntime {
             },
             spawner: Arc::clone(&self.spawner),
             keepalive: WS_KEEPALIVE,
+            subprotocols: Arc::new(Vec::new()),
         }
     }
 
@@ -164,6 +174,7 @@ impl WasmRuntime {
             },
             spawner: Arc::clone(&self.spawner),
             keepalive: WS_KEEPALIVE,
+            subprotocols: Arc::new(Vec::new()),
         }
     }
 
@@ -184,6 +195,7 @@ impl WasmRuntime {
             },
             spawner: Arc::clone(&self.spawner),
             keepalive: WS_KEEPALIVE,
+            subprotocols: Arc::new(Vec::new()),
         }
     }
 }
@@ -208,6 +220,29 @@ impl WsServer {
     pub fn with_keepalive(mut self, interval: std::time::Duration) -> Self {
         self.keepalive = interval;
         self
+    }
+
+    /// Set the supported WebSocket subprotocols. On the handshake, the first client-offered
+    /// subprotocol present in this list is negotiated — echoed in the `101` and surfaced to
+    /// the handler via its connection context. Empty (default) negotiates none.
+    pub fn with_subprotocols(mut self, subprotocols: Vec<String>) -> Self {
+        self.subprotocols = Arc::new(subprotocols);
+        self
+    }
+
+    /// Negotiate a subprotocol: the first one the client offers (its `Sec-WebSocket-Protocol`
+    /// header, comma-separated) that this listener supports. `None` if the client offered
+    /// none, none matched, or the listener supports none.
+    fn negotiate_subprotocol(&self, req: &hyper::Request<hyper::body::Incoming>) -> Option<String> {
+        if self.subprotocols.is_empty() {
+            return None;
+        }
+        let offered = req.headers().get("sec-websocket-protocol")?.to_str().ok()?;
+        offered
+            .split(',')
+            .map(str::trim)
+            .find(|o| self.subprotocols.iter().any(|s| s == o))
+            .map(String::from)
     }
 
     /// Serve WebSockets on `listener` until it closes — one connection per task.
@@ -264,9 +299,11 @@ impl WsServer {
             return Ok(upgrade_required());
         };
         log(101);
-        // Capture the connection context before `upgraded_ws` consumes the request; route
-        // params come from the resolver. (Subprotocol negotiation lands with the WS frame work.)
-        let connection = super::conn::connection_info(&req, peer, params, None);
+        // Negotiate a subprotocol (echoed in the 101 + surfaced via the connection context),
+        // then capture the connection context before `upgraded_ws` consumes the request;
+        // route params come from the resolver.
+        let subprotocol = self.negotiate_subprotocol(&req);
+        let connection = super::conn::connection_info(&req, peer, params, subprotocol.clone());
         let server = self.clone();
         tokio::spawn(async move {
             if let Some(ws) = upgraded_ws(req).await {
@@ -275,7 +312,7 @@ impl WsServer {
                     .await;
             }
         });
-        Ok(switching_protocols(accept))
+        Ok(switching_protocols(accept, subprotocol))
     }
 
     /// Wire one upgraded connection to a fresh component process (the resolved handler).
@@ -697,7 +734,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             next_event(&mut rx).await,
-            b"ctx /chat/room1 q=x=1",
+            b"ctx /chat/room1 q=x=1 proto=-",
             "the WS handler reads its path + query from the connection context"
         );
 
@@ -934,6 +971,54 @@ mod tests {
         assert!(
             frame.is_ping(),
             "idle connection gets a keep-alive ping, got {frame:?}"
+        );
+
+        ws.close(None).await.ok();
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_listener_negotiates_a_subprotocol() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        // A listener offering `graphql-ws` negotiates it from a client offering `mqtt,
+        // graphql-ws` — echoed in the 101 and read by the handler via its connection context.
+        const WS_CONN: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_CONN).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_subprotocols(vec!["graphql-ws".to_string()]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut req = format!("ws://{addr}/").into_client_request().unwrap();
+        req.headers_mut().insert(
+            "sec-websocket-protocol",
+            "mqtt, graphql-ws".parse().unwrap(),
+        );
+        let (mut ws, resp) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+        // The 101 echoes the negotiated subprotocol (first offered that's supported)…
+        assert_eq!(
+            resp.headers()
+                .get("sec-websocket-protocol")
+                .and_then(|h| h.to_str().ok()),
+            Some("graphql-ws"),
+            "the handshake echoes the negotiated subprotocol"
+        );
+        // …and the handler reads it from its connection context.
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"ctx / q= proto=graphql-ws",
+            "the handler sees the negotiated subprotocol"
         );
 
         ws.close(None).await.ok();

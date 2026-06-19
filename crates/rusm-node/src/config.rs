@@ -287,6 +287,13 @@ pub struct ServeSpec {
     /// only applies it. A `BTreeMap` so the emitted order is deterministic.
     #[serde(default)]
     pub headers: std::collections::BTreeMap<String, String>,
+    /// Supported WebSocket subprotocols for **this** listener, the `[[serve]]`
+    /// `subprotocols` list (e.g. `["graphql-ws", "mqtt"]`). On the handshake the host
+    /// negotiates the first client-offered subprotocol that appears here and echoes it; the
+    /// handler reads it via its connection context. Empty (default) = none negotiated.
+    /// Ignored for non-`ws` listeners.
+    #[serde(default)]
+    pub subprotocols: Vec<String>,
 }
 
 impl ServeSpec {

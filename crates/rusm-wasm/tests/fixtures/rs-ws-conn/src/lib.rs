@@ -9,7 +9,12 @@ struct Conn;
 impl Handler for Conn {
     fn open(&mut self, conn: &Connection) {
         let i = conn.info();
-        let report = format!("ctx {} q={}", i.path(), i.query());
+        let report = format!(
+            "ctx {} q={} proto={}",
+            i.path(),
+            i.query(),
+            i.subprotocol().unwrap_or("-"),
+        );
         if let Some(collector) = rusm_rs::whereis("collector") {
             rusm_rs::send_bytes(collector, report.as_bytes());
         }

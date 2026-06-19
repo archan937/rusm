@@ -376,6 +376,7 @@ pub async fn serve_apps(
                 // Per-connection WebSocket: same; an unmatched path refuses with 404.
                 ServeProtocol::Ws => tokio::spawn(
                     wasm.routed_ws_server(resolver, caps_map.clone())
+                        .with_subprotocols(spec.subprotocols.clone())
                         .serve(listener),
                 ),
             }
@@ -408,9 +409,11 @@ pub async fn serve_apps(
                         .with_headers(headers)
                         .serve(listener),
                 ),
-                ServeProtocol::Ws => {
-                    tokio::spawn(build_ws_server(dir, wasm, name, caps, remote)?.serve(listener))
-                }
+                ServeProtocol::Ws => tokio::spawn(
+                    build_ws_server(dir, wasm, name, caps, remote)?
+                        .with_subprotocols(spec.subprotocols.clone())
+                        .serve(listener),
+                ),
                 ServeProtocol::Http => tokio::spawn(
                     build_http_server(dir, wasm, name, caps, remote)?
                         .with_headers(headers)
