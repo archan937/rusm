@@ -27,6 +27,9 @@ functions:
 | `spawn(name) / monitor(pid) / supervise(…)` | start, watch, and supervise child components (capability-gated) |
 | `stream-open/write/close/accept/read` | back-pressured byte streams between processes |
 | `kv-get/set/delete/exists/list` | durable key-value storage, gated by the **storage** capability |
+| `connection() -> option<connection-info>` | a per-connection serving (WS/SSE) handler's request context — method, path, captured **route params**, query, headers, remote address, negotiated subprotocol |
+| `ws-send-text(payload) / ws-close(code, reason)` | a WebSocket handler's outbound **text** frame / **close** with status + reason (binary frames take the plain `send`→writer-process path) |
+| `sse-send(data, event?, id?, retry?) -> bool` | an SSE handler's **rich event** (`id`/`event`/`retry`); a plain `data:` event takes the `send`→writer path |
 
 Composition is **message passing** (spawn instances, then `send`/`receive`/
 `register`/`whereis`) — *not* WIT inter-component wiring, and no lattice. Standard

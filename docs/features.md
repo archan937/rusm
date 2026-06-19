@@ -107,6 +107,9 @@ that teaches it.
 
 ## Where it's going
 
-The core is audited-solid today; **Phase 12** (serving TLS, serve-path admission
-control, cluster gossip authentication) is explicitly planned. See the
+The core is audited-solid today; 0.3.0 matured the serving surface (connection context,
+WebSocket framing + permessage-deflate, rich SSE events, per-listener resource/CSWSH
+controls, compression, and native **TLS**). **Phase 12** (the serve-path admission-control
+remainder — request-body cap + per-request timeout → `503` — default-bounded serve
+mailboxes, and cluster gossip authentication) is explicitly planned. See the
 [roadmap](./02-roadmap).

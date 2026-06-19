@@ -108,5 +108,6 @@ For a complete runnable app in each language, see the collaborative todo board â
 [Go](https://github.com/archan937/rusm/tree/main/examples/go) â€” or scaffold one with
 `rusm new <name> --template todo-board`.
 
-> Phase 11. `rusm serve` hosts `rusm.toml [[serve]]` entries on real ports; serving TLS
-> is planned for Phase 12.
+> Phase 11. `rusm serve` hosts `rusm.toml [[serve]]` entries on real ports; 0.3.0 added
+> native serving **TLS** (`https`/`wss` via `[serve.tls]`), so the serve path is no longer
+> plaintext-only.
