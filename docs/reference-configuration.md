@@ -141,9 +141,11 @@ one of two ways:
 | `max_connections` | int? | none | *(http · sse · ws)* Most concurrent connections served at once. At the cap a new connection is **dropped before the handshake/stream opens** (a flood can't pile up unbounded handler instances); a freed slot is reused. `None` = unlimited. |
 | `max_message_size` | int? | none | *(ws)* Largest inbound frame in bytes; a larger frame **closes the connection**. `None` = the transport default. |
 | `allowed_origins` | string[] | `[]` | *(ws)* `Origin` values permitted on the handshake — **CSWSH protection**. An unlisted/absent `Origin` is refused **`403`** before any process spawns. Empty = any origin. |
+| `compression` | bool | `false` | Compress eligible replies the client accepts: **gzip** for routed HTTP handler responses + the SSE event stream, **permessage-deflate** for WebSocket. The handler-less `wasi:http` path sets its own encoding. |
 
 See [Resource & security controls](./serving-http-ws-sse#resource-security-controls) for the
-WebSocket cap/size/origin details.
+WebSocket cap/size/origin details, and [Compression](./serving-http-ws-sse#compression) for
+what `compression` covers.
 
 > **Migration.** A `[[serve]]` entry is now a pure listener. Its old fields are gone:
 > `capability` (the handler's profile lives on its `[components.<name>]` entry),

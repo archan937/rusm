@@ -212,8 +212,10 @@ path is explicitly back-pressured (a bounded per-connection channel — a handle
 slow client parks); **binary** frames flow through the writer's mailbox, back-pressured by
 the socket itself (the writer awaits each `sink.send`). This is the same shape as SSE.
 
-**Resource & security controls.** A `[[serve]]` listener may bound what it accepts — all
-optional, all default-off (so existing manifests are unaffected):
+## Resource & security controls {#resource-security-controls}
+
+A `[[serve]]` listener may bound what it accepts — all optional, all default-off (so
+existing manifests are unaffected):
 
 ```toml
 [[serve]]
@@ -238,6 +240,37 @@ allowed_origins = ["https://app.example.com"] # restrict the handshake Origin (W
   (default) = any origin (no check). (A browser still applies CORS to HTTP/SSE replies via
   [`[serve.headers]`](./reference-configuration#serve-headers-per-listener-response-headers);
   `Origin` checks are the WebSocket equivalent, since WS has no CORS preflight.)
+
+## Compression {#compression}
+
+Set `compression = true` on a `[[serve]]` listener (default off) to compress eligible
+replies the client accepts — the platform handles it at the transport edge, so guest code
+never sees it:
+
+```toml
+[[serve]]
+name = "api"
+protocol = "http"
+listen = "127.0.0.1:8080"
+compression = true
+```
+
+- **HTTP** *(routed `#[handlers]`)* — a buffered reply is **gzip**-compressed when the
+  client sends `Accept-Encoding: gzip`, the content type is compressible (`text/*`, JSON,
+  XML, SVG, `+json`/`+xml`), the body clears a ~256-byte threshold, and it carries no
+  `content-encoding` already. The response gains `content-encoding: gzip` + `vary:
+  accept-encoding`.
+- **SSE** — the `text/event-stream` body is **gzip**-streamed, flushed per event (so
+  nothing buffers waiting for more) with the gzip footer on close. Same `Accept-Encoding`
+  gate.
+- **WebSocket** — **permessage-deflate** (RFC 7692) is negotiated when the client offers
+  it; each message is compressed standalone (no-context-takeover both directions, which
+  bounds memory). A `max_message_size` also caps the *decompressed* size, guarding against
+  deflate bombs.
+
+The handler-less **`wasi:http`** path (a TS `export default { fetch }`) owns its own
+response — which may stream — so it sets its own `content-encoding`; platform compression
+covers the paths the platform itself frames (routed HTTP, SSE, WS).
 
 ## Handlers are named actions — no `main()`
 
