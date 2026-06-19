@@ -31,6 +31,9 @@ export interface ProcessApi {
   /** Monitor a process: its death arrives as a `{ __down }` message. */
   monitor(pid: bigint | string): void;
   send(to: bigint | string, msg: string | Uint8Array): void;
+  /** Send a **text** WebSocket frame on this connection (binary frames are a plain
+   *  {@link ProcessApi.send} to the writer pid). `false` if not a WS handler / socket closed. */
+  sendText(text: string): boolean;
   /**
    * The next message as bytes. With `timeoutMs`, it's Erlang's `receive … after`:
    * resolves to `null` if the deadline passes before a message arrives — the basis
@@ -184,8 +187,11 @@ export interface Socket {
   /** This connection's request context — method, path, query, route params, headers,
    *  peer address, and negotiated subprotocol (e.g. `socket.info.param("room")`). */
   readonly info: ConnectionInfo;
-  /** Send one frame back to this connection (a string is sent as UTF-8). */
+  /** Send one **binary** frame back to this connection. */
   send(data: string | Uint8Array): void;
+  /** Send one **text** frame back to this connection (the default `send` is binary).
+   *  Returns `false` if the socket has closed. */
+  sendText(text: string): boolean;
 }
 
 /** Wrap the runtime's raw connection context with `param`/`header` lookups (the empty
@@ -233,6 +239,7 @@ export const websocket = (handlers: WebSocketHandlers) => {
     id,
     info: (info ??= connectionInfo()),
     send: (data) => Process.send(id, data),
+    sendText: (text) => Process.sendText(text),
   });
   return {
     websocket: {

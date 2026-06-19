@@ -46,6 +46,8 @@ if (has("__own_pid")) P.self = () => BigInt(__own_pid());
 // The per-connection serving context (a ws/sse handler's request), or null otherwise.
 // The SDK's websocket()/sse() expose it as `socket.info()` / `stream.info()`.
 if (has("__connection")) P.connection = () => JSON.parse(__connection() ?? "null");
+// Send a text WebSocket frame on this connection (binary uses Process.send to the writer).
+if (has("__ws_send_text")) P.sendText = (text) => __ws_send_text(text);
 if (has("__list")) P.list = () => __list().map(BigInt);
 // Spawn a registered component by name (capability-gated); returns its pid. With a
 // runtime `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`), spawns a

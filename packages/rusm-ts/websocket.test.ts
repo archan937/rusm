@@ -52,3 +52,20 @@ test("open and close are optional — a message-only handler never throws on the
   expect(() => handler.websocket.open(1n)).not.toThrow();
   expect(() => handler.websocket.close(1n)).not.toThrow();
 });
+
+test("socket.sendText routes to Process.sendText (a text frame, distinct from binary send)", () => {
+  const texts: string[] = [];
+  (Process as unknown as { sendText: unknown }).sendText = (t: string) => {
+    texts.push(t);
+    return true;
+  };
+  const handler = websocket({
+    open: (s) => {
+      s.sendText("hello");
+    },
+    message: () => {},
+  });
+  handler.websocket.open(7n);
+  expect(texts).toEqual(["hello"]);
+  expect(sent).toEqual([]); // text did NOT go through the binary send sink
+});

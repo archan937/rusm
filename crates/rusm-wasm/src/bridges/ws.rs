@@ -725,4 +725,31 @@ mod tests {
         ws.close(None).await.ok();
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ts_ws_handler_can_send_a_text_frame() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // The TS SDK twin: socket.sendText must reach the client as a text frame through the
+        // js-runner's __ws_send_text primitive — RS/Go/TS parity.
+        const TS_WS_TEXT: &[u8] = include_bytes!("../../tests/fixtures/ts_ws_text.js");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let server = wr.ws_server_js(TS_WS_TEXT.to_vec(), CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        ws.send(Message::binary(b"hi ts".to_vec())).await.unwrap();
+        let reply = ws.next().await.unwrap().unwrap();
+        assert!(reply.is_text(), "the TS reply is a text frame");
+        assert_eq!(reply.into_text().unwrap().as_str(), "hi ts");
+
+        ws.close(None).await.ok();
+        handle.abort();
+    }
 }

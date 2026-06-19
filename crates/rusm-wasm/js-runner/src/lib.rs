@@ -542,6 +542,8 @@ fn boot_bridge(ctx: Ctx<'_>) {
         })
         .to_string()
     }));
+    // Send a text WebSocket frame (binary frames go through __send to the writer pid).
+    def!("__ws_send_text", |s: String| actor::ws_send_text(s.as_bytes()));
     def!("__list", || actor::list_processes()
         .into_iter()
         .map(|p| p.to_string())
