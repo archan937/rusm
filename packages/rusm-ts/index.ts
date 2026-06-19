@@ -34,6 +34,9 @@ export interface ProcessApi {
   /** Send a **text** WebSocket frame on this connection (binary frames are a plain
    *  {@link ProcessApi.send} to the writer pid). `false` if not a WS handler / socket closed. */
   sendText(text: string): boolean;
+  /** Close this WebSocket connection with a status `code` (e.g. 1000 normal) + `reason` —
+   *  a server-initiated close frame. No-op for a non-WebSocket process. */
+  wsClose(code: number, reason: string): void;
   /**
    * The next message as bytes. With `timeoutMs`, it's Erlang's `receive … after`:
    * resolves to `null` if the deadline passes before a message arrives — the basis
@@ -192,6 +195,9 @@ export interface Socket {
   /** Send one **text** frame back to this connection (the default `send` is binary).
    *  Returns `false` if the socket has closed. */
   sendText(text: string): boolean;
+  /** Close this connection with a WebSocket status `code` (e.g. 1000 normal) + `reason` —
+   *  a server-initiated close frame, after which the handler's `close` fires. */
+  close(code: number, reason: string): void;
 }
 
 /** Wrap the runtime's raw connection context with `param`/`header` lookups (the empty
@@ -240,6 +246,7 @@ export const websocket = (handlers: WebSocketHandlers) => {
     info: (info ??= connectionInfo()),
     send: (data) => Process.send(id, data),
     sendText: (text) => Process.sendText(text),
+    close: (code, reason) => Process.wsClose(code, reason),
   });
   return {
     websocket: {

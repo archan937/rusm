@@ -544,6 +544,8 @@ fn boot_bridge(ctx: Ctx<'_>) {
     }));
     // Send a text WebSocket frame (binary frames go through __send to the writer pid).
     def!("__ws_send_text", |s: String| actor::ws_send_text(s.as_bytes()));
+    // Close the WebSocket connection with a status code + reason (JS numbers are f64).
+    def!("__ws_close", |code: f64, reason: String| actor::ws_close(code as u16, &reason));
     def!("__list", || actor::list_processes()
         .into_iter()
         .map(|p| p.to_string())

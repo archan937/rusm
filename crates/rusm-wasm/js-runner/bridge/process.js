@@ -48,6 +48,8 @@ if (has("__own_pid")) P.self = () => BigInt(__own_pid());
 if (has("__connection")) P.connection = () => JSON.parse(__connection() ?? "null");
 // Send a text WebSocket frame on this connection (binary uses Process.send to the writer).
 if (has("__ws_send_text")) P.sendText = (text) => __ws_send_text(text);
+// Close this WebSocket connection with a status code + reason (a server-initiated close).
+if (has("__ws_close")) P.wsClose = (code, reason) => __ws_close(code, reason ?? "");
 if (has("__list")) P.list = () => __list().map(BigInt);
 // Spawn a registered component by name (capability-gated); returns its pid. With a
 // runtime `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`), spawns a
