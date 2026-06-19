@@ -542,6 +542,50 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_sse_handler_reads_its_routed_connection_context() {
+        // The Go SDK twin of the routed-context test: a routed SSE listener captures :plan
+        // and a Go `web.Sse` handler reads method/path/query/param/header via `Stream.Info()`
+        // — proving RS/Go parity for the connection context.
+        const GO_SSE_CONN: &[u8] = include_bytes!("../../tests/fixtures/go_sse_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_SSE_CONN).unwrap(), "run")
+            .unwrap();
+        wr.register_component("events", prepared);
+        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([
+            (
+                "GET /events/:plan/:collection/:id".to_string(),
+                "events".to_string(),
+            ),
+        ]))
+        .unwrap();
+        let caps = std::collections::HashMap::from([(
+            "events".to_string(),
+            CapabilityProfile::Trusted.capabilities(),
+        )]);
+        let server = wr.routed_sse_server(resolver(table), caps);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(
+            b"GET /events/p7/pages/42 HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"GET /events/p7/pages/42 q= plan=p7 host=rusm",
+            "the Go handler read its routed connection context (param + header)"
+        );
+        drop(conn);
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_idle_sse_client_disconnect_is_reaped_with_no_leak() {
         // An *idle* SSE client disconnect (no events ever published): the writer can't see
         // it (SSE has no inbound read channel), so the connection task reaps the handler

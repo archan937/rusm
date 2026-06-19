@@ -10,10 +10,15 @@ import rusm "github.com/archan937/rusm/packages/rusm-go"
 type Stream struct {
 	writer rusm.Pid
 	done   *bool
+	info   rusm.ConnectionInfo
 }
 
 // Writer returns the connection's writer pid (the emit target).
 func (s Stream) Writer() rusm.Pid { return s.writer }
+
+// Info returns this stream's request context — method, path, query, route params,
+// headers, and peer address (e.g. s.Info().Param("plan") or the "last-event-id" header).
+func (s Stream) Info() rusm.ConnectionInfo { return s.info }
 
 // Data emits one event to the client. The platform frames it as a `data:` SSE event;
 // dropped if the client has disconnected.
@@ -49,7 +54,8 @@ type Sse struct {
 func (sse Sse) Serve() {
 	writer, _ := rusm.ParsePid(rusm.ReceiveString()) // message 1: the writer pid
 	done := false
-	stream := Stream{writer: writer, done: &done}
+	info, _ := rusm.Connection()
+	stream := Stream{writer: writer, done: &done, info: info}
 	rusm.Monitor(writer)
 	if sse.Open != nil {
 		sse.Open(stream)

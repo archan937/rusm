@@ -44,6 +44,33 @@ type ProcessInfo struct {
 	TrapExit     bool              `json:"trap-exit"`
 }
 
+// ConnectionInfo represents the record "rusm:runtime/actor@0.1.0#connection-info".
+//
+// The HTTP request context of a **per-connection serving process** — a WebSocket
+// or
+// SSE handler the host spawned for one accepted connection. Captured at accept time
+// and fixed for the connection's life, so a handler reads it once in `open`.
+//
+//	record connection-info {
+//		method: string,
+//		path: string,
+//		query: string,
+//		params: list<tuple<string, string>>,
+//		headers: list<tuple<string, string>>,
+//		remote-addr: string,
+//		subprotocol: option<string>,
+//	}
+type ConnectionInfo struct {
+	_           cm.HostLayout      `json:"-"`
+	Method      string             `json:"method"`
+	Path        string             `json:"path"`
+	Query       string             `json:"query"`
+	Params      cm.List[[2]string] `json:"params"`
+	Headers     cm.List[[2]string] `json:"headers"`
+	RemoteAddr  string             `json:"remote-addr"`
+	Subprotocol cm.Option[string]  `json:"subprotocol"`
+}
+
 // LogLevel represents the enum "rusm:runtime/actor@0.1.0#log-level".
 //
 // Severity for [`log`] — maps to `console.{error,warn,log/info,debug}` (TS) and the
@@ -148,6 +175,20 @@ type StreamID uint64
 func OwnPid() (result Pid) {
 	result0 := wasmimport_OwnPid()
 	result = (Pid)((uint64)(result0))
+	return
+}
+
+// Connection represents the imported function "connection".
+//
+// This per-connection serving process's [`connection-info`], or `none` for every
+// other process. Read it once in a WebSocket/SSE handler's `open`. Additive: a guest
+// that never calls it is unaffected, and a non-connection process always gets `none`.
+//
+//	connection: func() -> option<connection-info>
+//
+//go:nosplit
+func Connection() (result cm.Option[ConnectionInfo]) {
+	wasmimport_Connection(&result)
 	return
 }
 

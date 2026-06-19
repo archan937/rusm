@@ -12,6 +12,10 @@ import (
 //go:noescape
 func wasmimport_OwnPid() (result0 uint64)
 
+//go:wasmimport rusm:runtime/actor@0.1.0 connection
+//go:noescape
+func wasmimport_Connection(result *cm.Option[ConnectionInfo])
+
 //go:wasmimport rusm:runtime/actor@0.1.0 spawn
 //go:noescape
 func wasmimport_Spawn(component0 *uint8, component1 uint32, result *cm.Result[string, Pid, string])

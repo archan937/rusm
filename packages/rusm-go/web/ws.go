@@ -7,10 +7,15 @@ import rusm "github.com/archan937/rusm/packages/rusm-go"
 // connection's. Reply with Send; the host's writer process owns the actual socket sink.
 type Conn struct {
 	writer rusm.Pid
+	info   rusm.ConnectionInfo
 }
 
 // Writer returns the connection's writer pid (the reply target).
 func (c Conn) Writer() rusm.Pid { return c.writer }
+
+// Info returns this connection's request context — method, path, query, route params,
+// headers, peer address, and negotiated subprotocol (e.g. c.Info().Param("room")).
+func (c Conn) Info() rusm.ConnectionInfo { return c.info }
 
 // Send writes one frame back to the client (dropped if the socket has closed).
 func (c Conn) Send(frame []byte) { rusm.SendBytes(c.writer, frame) }
@@ -42,7 +47,8 @@ type WebSocket struct {
 // dropped); monitoring it turns that into the Close callback.
 func (ws WebSocket) Serve() {
 	writer, _ := rusm.ParsePid(rusm.ReceiveString()) // message 1: the writer pid
-	conn := Conn{writer: writer}
+	info, _ := rusm.Connection()
+	conn := Conn{writer: writer, info: info}
 	rusm.Monitor(writer)
 	if ws.Open != nil {
 		ws.Open(conn)
