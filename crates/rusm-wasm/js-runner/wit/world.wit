@@ -38,6 +38,9 @@ interface actor {
     /// This per-connection serving process's [`connection-info`], or `none` otherwise.
     connection: func() -> option<connection-info>;
 
+    /// Send a **text** WebSocket frame on this connection (binary is a plain `send`).
+    ws-send-text: func(payload: list<u8>) -> bool;
+
     /// Spawn a registered component by name as a new process (Erlang's `spawn`).
     /// Capability-gated and non-escalating; `err` if denied or the name is unknown.
     spawn: func(component: string) -> result<pid, string>;

@@ -53,6 +53,10 @@ pub(crate) struct WasiHost {
     /// handler the serving bridge spawned for one accepted connection; `None` for every
     /// other process. Backs the `connection` actor op (read once in the handler's `open`).
     pub(crate) connection: Option<crate::actor::ConnectionInfo>,
+    /// A WebSocket handler's **text-frame** channel to its connection's writer — backs the
+    /// `ws-send-text` op (binary frames use the plain `send` path). Bounded, so a slow
+    /// client back-pressures the handler. `None` for SSE and every non-connection process.
+    pub(crate) ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
     /// This process's capabilities: the source of truth for its memory ceiling,
     /// whether it may control other processes, whether it may spawn, and the
     /// ceiling any child it spawns inherits (a child is never broader).
@@ -156,6 +160,7 @@ mod tests {
             },
             pid: 0,
             connection: None,
+            ws_text: None,
             caps,
             rt: Runtime::new(),
             ctx: None,

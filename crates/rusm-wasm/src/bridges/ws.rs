@@ -187,6 +187,10 @@ impl WasmRuntime {
 /// handler that ignores the disconnect.
 const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// Bound on a connection's pending **text** frames (the `ws-send-text` channel) — a slow
+/// client back-pressures the handler (it parks on send) instead of buffering without limit.
+const WS_TEXT_CAPACITY: usize = 64;
+
 impl WsServer {
     /// Serve WebSockets on `listener` until it closes — one connection per task.
     pub async fn serve(self, listener: TcpListener) {
@@ -268,12 +272,32 @@ impl WsServer {
         let (mut sink, mut stream) = ws.split();
         let rt = self.spawner.rt.clone();
 
-        // Writer: a Wasm-free process owning the socket sink; it frames whatever the
-        // component sends it. (Keeps all IO out of the sandboxed component.)
+        // Writer: a Wasm-free process owning the socket sink. It races two inputs and frames
+        // each with the right opcode — **binary** frames arrive via its mailbox (a plain
+        // `send` to the writer pid, the unchanged path), **text** frames on a bounded channel
+        // the handler feeds via `ws-send-text` (the bound back-pressures a slow client). All
+        // IO stays out of the sandboxed component.
+        let (text_tx, mut text_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(WS_TEXT_CAPACITY);
         let writer = rt.spawn(move |mut ctx| async move {
-            while let Some(message) = ctx.recv().await.message() {
-                if sink.send(Message::binary(message)).await.is_err() {
-                    break;
+            loop {
+                tokio::select! {
+                    received = ctx.recv() => match received.message() {
+                        Some(bytes) => {
+                            if sink.send(Message::binary(bytes)).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break, // mailbox closed / a non-message signal
+                    },
+                    text = text_rx.recv() => match text {
+                        Some(payload) => {
+                            let text = String::from_utf8_lossy(&payload).into_owned();
+                            if sink.send(Message::text(text)).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break, // handler gone (its ws-send-text sender dropped)
+                    },
                 }
             }
         });
@@ -282,7 +306,9 @@ impl WsServer {
         // bundle itself; the writer pid then lands as the guest's first receive.
         // (Per-connection handlers aren't named in the platform lifecycle log — the
         // server doesn't carry the serve name; add it to `WsServer` if that's wanted.)
-        let component = self.spawner.spawn_connection(&prepared, caps, connection);
+        let component = self
+            .spawner
+            .spawn_connection(&prepared, caps, connection, Some(text_tx));
         if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }
@@ -635,6 +661,36 @@ mod tests {
             b"ctx /chat/room1 q=x=1",
             "the WS handler reads its path + query from the connection context"
         );
+
+        ws.close(None).await.ok();
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_handler_can_send_a_text_frame() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // A handler replying via `Connection::send_text` must reach the client as a *text*
+        // frame (the default `send` is binary) — proving the additive `ws-send-text` op.
+        const WS_TEXT: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_text.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_TEXT).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        ws.send(Message::binary(b"hi".to_vec())).await.unwrap();
+        let reply = ws.next().await.unwrap().unwrap();
+        assert!(reply.is_text(), "the reply is a text frame, not binary");
+        assert_eq!(reply.into_text().unwrap().as_str(), "hi");
 
         ws.close(None).await.ok();
         handle.abort();

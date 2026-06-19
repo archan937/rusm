@@ -257,6 +257,13 @@ pub fn send_bytes(to: Pid, msg: &[u8]) {
     actor::send(to.0, msg);
 }
 
+/// Send a **text** WebSocket frame on this connection (used by [`ws::Connection::send_text`];
+/// a binary frame is a plain [`send_bytes`] to the writer pid). `false` if this process is
+/// not a WebSocket handler, or the socket has closed.
+pub(crate) fn ws_send_text(payload: &[u8]) -> bool {
+    actor::ws_send_text(payload)
+}
+
 thread_local! {
     /// Messages the RPC client set aside while awaiting a reply, so the app's own
     /// `receive` still sees them (the guest is single-threaded — one mailbox).

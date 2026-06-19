@@ -164,7 +164,7 @@ impl Spawner {
         let prepared = prepared.clone();
         let handle = self
             .rt
-            .spawn(move |ctx| run(spawner, prepared, caps, ctx, None));
+            .spawn(move |ctx| run(spawner, prepared, caps, ctx, None, None));
         if let (Some(label), Some(caps)) = (label, &log_caps) {
             self.record_spawn(handle.pid(), label, caps);
         }
@@ -181,11 +181,12 @@ impl Spawner {
         prepared: &PreparedComponent,
         caps: Capabilities,
         connection: ConnectionInfo,
+        ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
     ) -> ProcessHandle {
         let spawner = Arc::clone(self);
         let prepared = prepared.clone();
         self.rt
-            .spawn(move |ctx| run(spawner, prepared, caps, ctx, Some(connection)))
+            .spawn(move |ctx| run(spawner, prepared, caps, ctx, Some(connection), ws_text))
     }
 
     /// Spawns a component registered by `name` under its **declared** profile — the
@@ -280,6 +281,7 @@ fn build_store(
     caps: Capabilities,
     ctx: Context,
     connection: Option<ConnectionInfo>,
+    ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
 ) -> Store<WasiHost> {
     let host = WasiHost {
         wasi,
@@ -290,6 +292,7 @@ fn build_store(
         },
         pid: ctx.pid().raw(),
         connection,
+        ws_text,
         caps,
         rt: spawner.rt.clone(),
         ctx: Some(ctx),
@@ -312,6 +315,7 @@ async fn run(
     caps: Capabilities,
     ctx: Context,
     connection: Option<ConnectionInfo>,
+    ws_text: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
 ) {
     let pid = ctx.pid();
     let wasi = match caps.build_wasi() {
@@ -324,7 +328,7 @@ async fn run(
     // Choose the pooled (fast) tier or the on-demand overflow tier. `_slot` holds a
     // pooled reservation for this process's lifetime (dropped when `run` returns).
     let (engine, pre, entry, _slot) = select_tier(&spawner, prepared);
-    let mut store = build_store(spawner, &engine, wasi, caps, ctx, connection);
+    let mut store = build_store(spawner, &engine, wasi, caps, ctx, connection, ws_text);
 
     let outcome = async {
         let instance = pre.instantiate_async(&mut store).await?;
@@ -358,7 +362,7 @@ async fn run_command(
         }
     };
     let engine = spawner.engine.clone();
-    let mut store = build_store(spawner, &engine, wasi, caps, ctx, None);
+    let mut store = build_store(spawner, &engine, wasi, caps, ctx, None, None);
 
     let outcome = async {
         let command = pre.instantiate_async(&mut store).await?;
@@ -453,6 +457,7 @@ mod tests {
             },
             pid: 0,
             connection: None,
+            ws_text: None,
             caps,
             rt: rt.clone(),
             ctx: None,

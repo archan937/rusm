@@ -47,6 +47,17 @@ impl actor::Host for WasiHost {
         self.connection.clone()
     }
 
+    /// Send a text WebSocket frame to this connection's writer (binary frames use the
+    /// plain `send` path). `false` if this process is not a WebSocket handler, or the
+    /// bounded channel is closed (the client disconnected). The bound back-pressures a
+    /// handler that outruns a slow client — it parks on `send` rather than buffering.
+    async fn ws_send_text(&mut self, payload: Vec<u8>) -> bool {
+        match &self.ws_text {
+            Some(tx) => tx.send(payload).await.is_ok(),
+            None => false,
+        }
+    }
+
     /// Spawn a registered component by name as a new process — the actor model's
     /// `spawn`, the unlock for per-request workers and concealed typed clients.
     /// Capability-gated (`allow-spawn`, default-deny) and **non-escalating**: the

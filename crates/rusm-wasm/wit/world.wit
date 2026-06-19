@@ -50,6 +50,12 @@ interface actor {
     /// calls it is unaffected, and a non-connection process always gets `none`.
     connection: func() -> option<connection-info>;
 
+    /// Send a **text** WebSocket frame on this connection (the binary path is a plain
+    /// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this is
+    /// not a WebSocket handler or the socket has closed. Additive: a guest that never calls
+    /// it keeps sending binary frames exactly as before.
+    ws-send-text: func(payload: list<u8>) -> bool;
+
     /// Spawn a registered component (by the name it was registered under) as a new
     /// process, returning its pid (Erlang's `spawn`). Capability-gated and
     /// **non-escalating**: the child inherits the spawner's capabilities, never

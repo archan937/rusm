@@ -244,7 +244,10 @@ impl SseServer {
 
         // The sandboxed handler. For a JS bundle the runner's first message is the bundle;
         // the writer pid then lands as the guest's first receive (the WS handshake).
-        let component = self.spawner.spawn_connection(&prepared, caps, connection);
+        // SSE has no inbound/text frames — only `ws-send-text` is WebSocket-specific.
+        let component = self
+            .spawner
+            .spawn_connection(&prepared, caps, connection, None);
         if let Some(bundle) = &bundle {
             rt.send(component.pid(), bundle.as_ref().clone());
         }

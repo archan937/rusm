@@ -29,9 +29,16 @@ impl Connection {
         &self.info
     }
 
-    /// Send one frame back to the client. Dropped if the socket has closed.
+    /// Send one **binary** frame back to the client. Dropped if the socket has closed.
     pub fn send(&self, frame: &[u8]) {
         crate::send_bytes(self.writer, frame);
+    }
+
+    /// Send one **text** frame back to the client (UTF-8). Returns `false` if the socket
+    /// has closed. Use this for browsers that expect text messages (the default `send`
+    /// emits a binary frame).
+    pub fn send_text(&self, text: &str) -> bool {
+        crate::ws_send_text(text.as_bytes())
     }
 }
 
