@@ -6,6 +6,48 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.3.0] — 2026-06-19
+
+A **serving-maturity** release: the HTTP / SSE / WebSocket surface gains a full,
+production-grade feature set — a per-connection request context, mature WebSocket framing
+with permessage-deflate, rich SSE events with resumption, per-listener resource & security
+controls, response compression, and native TLS. **Everything is additive**: a 0.2.0 guest
+and a 0.2.0 `rusm.toml` keep working unchanged — new config fields default off, new ABI ops
+are opt-in, and the per-connection handshake is unchanged. The whole workspace + the
+`rusm-ts` package move to **0.3.0** in lock-step; `rusm-go` is tagged `v0.3.0`.
+
+### Added
+- **Connection context** — per-connection WebSocket/SSE handlers read their request method,
+  path, **route params**, query, headers, remote address, and negotiated subprotocol via a
+  new `connection` ABI op (`.info()` on the handler's connection/stream). Combined with
+  `[serve.routes]` on `ws`/`sse` listeners, this restores **path-parameterised streaming**
+  (`/events/:plan/:collection/:id`). RS / TS / Go.
+- **WebSocket frame maturity** — outbound **text** and **close** (code + reason) alongside
+  binary, idle keep-alive **ping** + inbound-ping **pong**, **subprotocol negotiation**, and
+  bounded back-pressure on the control path. RS `send_text`/`close`, TS `sendText`/`close`,
+  Go `SendText`/`Close`.
+- **SSE wire maturity** — **rich events** with `id` / `event` / `retry` framing
+  (`Stream::emit` / `emit` / `Emit`) and **Last-Event-ID resumption** (event `id` + the
+  `last-event-id` request header).
+- **Resource & security controls** — per-`[[serve]]` `max_connections` (HTTP/SSE/WS),
+  `max_message_size` (WS), and `allowed_origins` (WebSocket CSWSH protection).
+- **Compression** — opt-in per-`[[serve]]` `compression`: **gzip** for routed HTTP handler
+  responses and the SSE event stream (flushed per event), **permessage-deflate** (RFC 7692)
+  for WebSocket.
+- **Native TLS** — per-`[[serve]]` `[serve.tls]` cert/key serves the listener over `https`
+  (HTTP/SSE) or `wss` (WebSocket); rustls + ring, terminated before hyper.
+
+### Changed
+- The WebSocket protocol now runs through an internal frame transport (`bridges/ws_codec`)
+  built on tungstenite's frame primitives, so **permessage-deflate** (which no async Rust
+  WebSocket library exposes) is available; no user-facing change, and the host-side echo
+  baseline still uses tungstenite directly.
+
+### Compatibility
+- Fully backward-compatible with 0.2.0 (hence a minor bump, not a major): existing guests
+  and manifests are untouched. Bumped to **0.3.0** because these are substantial new
+  **features** — SemVer reserves the patch number for bug fixes.
+
 ## [0.2.0] — 2026-06-19
 
 A guest-language and serving release: **Go joins Rust and TypeScript as a first-class

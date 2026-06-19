@@ -332,7 +332,7 @@ See https://github.com/archan937/rusm for more.
 /// source of truth** for every scaffold/template dependency reference (`rusm-rs`,
 /// `rusm-ts`, `rusm-go`), so a version bump is a single edit and can't drift again. The
 /// actual crate/package versions are bumped to match when that release is cut.
-pub(crate) const SDK_VERSION: &str = "0.2.0";
+pub(crate) const SDK_VERSION: &str = "0.3.0";
 
 /// The Rust component crate — one `cdylib`, the `rusm-rs` guest crate, and
 /// `wit-bindgen` (which `#[rusm_rs::main]` drives so the source carries no `wit/`).

@@ -1,6 +1,6 @@
 [package]
 name = "rusm-wasm"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,12 +13,12 @@ description = "The Wasmtime backend for RUSM: each process runs as an isolated W
 exclude = ["tests/"]
 
 [dependencies]
-rusm-otp = { path = "../rusm-otp", version = "0.2.0" }
+rusm-otp = { path = "../rusm-otp", version = "0.3.0" }
 # Shared log palette/format — the host stamps + colours guest `log` lines through it, so
 # they read as one stream with the platform's own lifecycle logs.
-rusm-logfmt = { path = "../rusm-logfmt", version = "0.2.0" }
+rusm-logfmt = { path = "../rusm-logfmt", version = "0.3.0" }
 # The durable KV store surfaced to guests behind the `storage` capability.
-rusm-kv = { path = "../rusm-kv", version = "0.2.0" }
+rusm-kv = { path = "../rusm-kv", version = "0.3.0" }
 anyhow = { workspace = true }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "macros", "time", "net"] }
 wasmtime = "45.0.1"
@@ -43,7 +43,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 # the request/response types (base64 bodies) are shared with the guest via rusm-wire.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusm-wire = { path = "../rusm-wire", version = "0.2.0" }
+rusm-wire = { path = "../rusm-wire", version = "0.3.0" }
 # Native TLS for serving (`wss`/`https`): an opt-in per-`[[serve]]` listener terminates
 # TLS before hyper. rustls + ring (same stack as the cluster transport); pemfile loads the
 # cert/key. Host-only.
@@ -55,6 +55,6 @@ rustls-pemfile = "2"
 [dev-dependencies]
 # The routed-gateway test drives the real manifest route matcher (a sibling crate;
 # rusm-node depends only on rusm-otp, so no cycle) — proving the exact wiring rusm-cli uses.
-rusm-node = { path = "../rusm-node", version = "0.2.0" }
+rusm-node = { path = "../rusm-node", version = "0.3.0" }
 # A self-signed cert for the TLS serving tests (same generator + version the cluster uses).
 rcgen = "0.10"
