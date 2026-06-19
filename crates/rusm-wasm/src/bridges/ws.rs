@@ -809,4 +809,37 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_ws_handler_can_close_with_a_code_and_reason() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // The Go SDK twin: web.Conn.Close must send a Close frame with the code + reason —
+        // RS/Go parity for the additive ws-close op.
+        const GO_WS_CLOSE: &[u8] = include_bytes!("../../tests/fixtures/go_ws_close.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_WS_CLOSE).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        ws.send(Message::binary(b"go".to_vec())).await.unwrap();
+        match ws.next().await.unwrap().unwrap() {
+            Message::Close(Some(frame)) => {
+                assert_eq!(u16::from(frame.code), 1000);
+                assert_eq!(frame.reason.as_str(), "bye");
+            }
+            other => panic!("expected a Close frame from Go, got {other:?}"),
+        }
+
+        handle.abort();
+    }
 }

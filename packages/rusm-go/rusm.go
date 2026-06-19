@@ -67,6 +67,10 @@ func SendBytes(to Pid, msg []byte) { actor.Send(actor.Pid(to), cm.ToList(msg)) }
 // socket has closed. Used by web.Conn.SendText.
 func WsSendText(payload []byte) bool { return actor.WsSendText(cm.ToList(payload)) }
 
+// WsClose closes this WebSocket connection with a status code + reason (used by
+// web.Conn.Close). No-op for a non-WebSocket process.
+func WsClose(code uint16, reason string) { actor.WsClose(code, reason) }
+
 // Send JSON-encodes msg and sends it — the wire shared with rusm-ts and rusm-rs.
 func Send(to Pid, msg any) error {
 	b, err := json.Marshal(msg)

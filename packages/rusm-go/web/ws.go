@@ -24,6 +24,10 @@ func (c Conn) Send(frame []byte) { rusm.SendBytes(c.writer, frame) }
 // Returns false if the socket has closed.
 func (c Conn) SendText(text string) bool { return rusm.WsSendText([]byte(text)) }
 
+// Close closes this connection with a WebSocket status code (e.g. 1000 normal) + reason —
+// a server-initiated close frame, after which Close fires and the process exits.
+func (c Conn) Close(code uint16, reason string) { rusm.WsClose(code, reason) }
+
 // WebSocket is a per-connection WebSocket handler: Open fires once when the connection
 // opens (optional), Message once per inbound frame, and Close once when it closes
 // (optional). The host runs one process per connection, so keep per-connection state in

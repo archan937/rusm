@@ -211,6 +211,22 @@ func WsSendText(payload cm.List[uint8]) (result bool) {
 	return
 }
 
+// WsClose represents the imported function "ws-close".
+//
+// Close this WebSocket connection with a status `code` (e.g. 1000 normal, 1011 error)
+// and a `reason` — a server-initiated close frame, after which the connection tears
+// down. No-op for a non-WebSocket process.
+//
+//	ws-close: func(code: u16, reason: string)
+//
+//go:nosplit
+func WsClose(code uint16, reason string) {
+	code0 := (uint32)(code)
+	reason0, reason1 := cm.LowerString(reason)
+	wasmimport_WsClose((uint32)(code0), (*uint8)(reason0), (uint32)(reason1))
+	return
+}
+
 // Spawn represents the imported function "spawn".
 //
 // Spawn a registered component (by the name it was registered under) as a new
