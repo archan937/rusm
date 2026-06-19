@@ -374,9 +374,10 @@ pub async fn serve_apps(
                         .serve(listener),
                 ),
                 // Per-connection WebSocket: same; an unmatched path refuses with 404.
-                ServeProtocol::Ws => {
-                    tokio::spawn(wasm.routed_ws_server(resolver, caps_map.clone()).serve(listener))
-                }
+                ServeProtocol::Ws => tokio::spawn(
+                    wasm.routed_ws_server(resolver, caps_map.clone())
+                        .serve(listener),
+                ),
             }
         } else {
             // A single named handler component: a handler-less `wasi:http` HTTP component,

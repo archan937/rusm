@@ -417,9 +417,11 @@ mod tests {
         let handle = tokio::spawn(server.serve(listener));
 
         let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
-        conn.write_all(b"GET /events/plan7?x=1 HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
+        conn.write_all(
+            b"GET /events/plan7?x=1 HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
 
         // No routing on this listener yet, so `plan` is unset (`-`); path, query, and the
         // host header are delivered verbatim.
@@ -436,19 +438,21 @@ mod tests {
     /// Bridge a manifest per-connection [`rusm_node::RouteTable`] into the engine's
     /// routing-agnostic [`Resolver`] — exactly what `rusm-cli` does for a routed listener.
     fn resolver(table: rusm_node::RouteTable) -> Resolver {
-        Arc::new(move |method: &str, path: &str| match table.resolve(method, path) {
-            rusm_node::Resolution::Found {
-                component,
-                action,
-                params,
-            } => Routed::Found {
-                component,
-                action,
-                params,
+        Arc::new(
+            move |method: &str, path: &str| match table.resolve(method, path) {
+                rusm_node::Resolution::Found {
+                    component,
+                    action,
+                    params,
+                } => Routed::Found {
+                    component,
+                    action,
+                    params,
+                },
+                rusm_node::Resolution::MethodNotAllowed => Routed::MethodNotAllowed,
+                rusm_node::Resolution::NotFound => Routed::NotFound,
             },
-            rusm_node::Resolution::MethodNotAllowed => Routed::MethodNotAllowed,
-            rusm_node::Resolution::NotFound => Routed::NotFound,
-        })
+        )
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -466,12 +470,10 @@ mod tests {
             .unwrap();
         wr.register_component("events", prepared);
 
-        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([
-            (
-                "GET /events/:plan/:collection/:id".to_string(),
-                "events".to_string(),
-            ),
-        ]))
+        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([(
+            "GET /events/:plan/:collection/:id".to_string(),
+            "events".to_string(),
+        )]))
         .unwrap();
         let caps = std::collections::HashMap::from([(
             "events".to_string(),
@@ -554,12 +556,10 @@ mod tests {
             .prepare_component(&wr.compile_component(GO_SSE_CONN).unwrap(), "run")
             .unwrap();
         wr.register_component("events", prepared);
-        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([
-            (
-                "GET /events/:plan/:collection/:id".to_string(),
-                "events".to_string(),
-            ),
-        ]))
+        let table = rusm_node::RouteTable::from_handler_map(&std::collections::HashMap::from([(
+            "GET /events/:plan/:collection/:id".to_string(),
+            "events".to_string(),
+        )]))
         .unwrap();
         let caps = std::collections::HashMap::from([(
             "events".to_string(),

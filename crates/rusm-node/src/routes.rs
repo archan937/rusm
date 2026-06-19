@@ -86,11 +86,13 @@ impl RouteTable {
                 return Err(format!("route `{key}` path must start with `/`"));
             }
             let (component, action) = if require_action {
-                let (component, action) = target.split_once('#').ok_or_else(|| {
-                    format!("route target `{target}` must be `component#action`")
-                })?;
+                let (component, action) = target
+                    .split_once('#')
+                    .ok_or_else(|| format!("route target `{target}` must be `component#action`"))?;
                 if component.is_empty() || action.is_empty() {
-                    return Err(format!("route target `{target}` must be `component#action`"));
+                    return Err(format!(
+                        "route target `{target}` must be `component#action`"
+                    ));
                 }
                 (component.to_string(), action.to_string())
             } else {

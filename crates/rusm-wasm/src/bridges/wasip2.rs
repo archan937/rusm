@@ -162,7 +162,9 @@ impl Spawner {
             .map(|_| caps.clone());
         let spawner = Arc::clone(self);
         let prepared = prepared.clone();
-        let handle = self.rt.spawn(move |ctx| run(spawner, prepared, caps, ctx, None));
+        let handle = self
+            .rt
+            .spawn(move |ctx| run(spawner, prepared, caps, ctx, None));
         if let (Some(label), Some(caps)) = (label, &log_caps) {
             self.record_spawn(handle.pid(), label, caps);
         }
