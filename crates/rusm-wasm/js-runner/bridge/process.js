@@ -50,6 +50,9 @@ if (has("__connection")) P.connection = () => JSON.parse(__connection() ?? "null
 if (has("__ws_send_text")) P.sendText = (text) => __ws_send_text(text);
 // Close this WebSocket connection with a status code + reason (a server-initiated close).
 if (has("__ws_close")) P.wsClose = (code, reason) => __ws_close(code, reason ?? "");
+// Emit a rich SSE event (data + optional event/id/retry); the plain data: path is Process.send.
+if (has("__sse_send"))
+  P.sseSend = (data, event, id, retry) => __sse_send(data, event ?? "", id ?? "", retry ?? 0);
 if (has("__list")) P.list = () => __list().map(BigInt);
 // Spawn a registered component by name (capability-gated); returns its pid. With a
 // runtime `source` (`inline:<js>` / `kv:<bucket>/<key>` / `url:`/`http(s)://…`), spawns a

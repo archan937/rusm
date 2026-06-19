@@ -1088,4 +1088,36 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ts_sse_handler_emits_a_rich_event() {
+        // The TS SDK twin: stream.emit must frame id:/event:/data: through the js-runner's
+        // __sse_send primitive — RS/Go/TS parity.
+        const TS_SSE_EVENT: &[u8] = include_bytes!("../../tests/fixtures/ts_sse_event.js");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let server = wr.sse_server_js(
+            TS_SSE_EVENT.to_vec(),
+            CapabilityProfile::Trusted.capabilities(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /events HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+            .await
+            .expect("the stream ends after the handler closes")
+            .expect("socket read ok");
+        let body = String::from_utf8_lossy(&buf);
+        assert!(body.contains("id: 42"), "ts id framed: {body}");
+        assert!(body.contains("event: greeting"), "ts event framed: {body}");
+        assert!(body.contains("data: hello"), "ts data framed: {body}");
+
+        handle.abort();
+    }
 }

@@ -37,6 +37,9 @@ export interface ProcessApi {
   /** Close this WebSocket connection with a status `code` (e.g. 1000 normal) + `reason` —
    *  a server-initiated close frame. No-op for a non-WebSocket process. */
   wsClose(code: number, reason: string): void;
+  /** Emit a rich SSE event — `data` plus an `event` name, `id`, and `retry` (each "" / 0 =
+   *  omitted). The plain `data:`-only path is {@link SseStream.data}. */
+  sseSend(data: string, event: string, id: string, retry: number): boolean;
   /**
    * The next message as bytes. With `timeoutMs`, it's Erlang's `receive … after`:
    * resolves to `null` if the deadline passes before a message arrives — the basis
@@ -263,6 +266,15 @@ export const websocket = (handlers: WebSocketHandlers) => {
  *  there are no inbound frames — events reach a handler through its mailbox (typically a
  *  process-group tag it subscribes to in {@link SseHandlers.open}). (Named `SseStream` to
  *  avoid clashing with the byte-stream {@link Stream} from `Process.openStream`.) */
+/** A rich SSE event for {@link SseStream.emit}: `data` with an optional `id` (echoed by the
+ *  client as `Last-Event-ID`), `event` name, and `retry` reconnect backoff (ms). */
+export interface SseEvent {
+  data: string | Uint8Array;
+  id?: string;
+  event?: string;
+  retry?: number;
+}
+
 export interface SseStream {
   readonly id: bigint;
   /** This stream's request context — method, path, query, route params, headers, and
@@ -271,6 +283,10 @@ export interface SseStream {
   /** Emit one event to the client (a string is sent as UTF-8). The platform frames it
    *  as a `data:` SSE event. */
   data(payload: string | Uint8Array): void;
+  /** Emit a **rich** event — `data` plus an optional `id` (the client echoes it as
+   *  `Last-Event-ID` on reconnect — pair with a replay in `open` for resumption), `event`
+   *  name, and `retry` backoff. Returns `false` if the client has disconnected. */
+  emit(event: SseEvent): boolean;
   /** End the stream and this process (a server-initiated close). {@link SseHandlers.close}
    *  then fires once, the same teardown as a client disconnect. */
   close(): void;
@@ -308,6 +324,15 @@ export const sse = (handlers: SseHandlers) => {
     id,
     info: (info ??= connectionInfo()),
     data: (payload) => Process.send(id, payload),
+    emit: (event) =>
+      Process.sseSend(
+        typeof event.data === "string"
+          ? event.data
+          : new TextDecoder().decode(event.data),
+        event.event ?? "",
+        event.id ?? "",
+        event.retry ?? 0,
+      ),
     close: () => {
       done = true;
     },

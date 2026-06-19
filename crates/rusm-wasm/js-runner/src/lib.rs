@@ -546,6 +546,16 @@ fn boot_bridge(ctx: Ctx<'_>) {
     def!("__ws_send_text", |s: String| actor::ws_send_text(s.as_bytes()));
     // Close the WebSocket connection with a status code + reason (JS numbers are f64).
     def!("__ws_close", |code: f64, reason: String| actor::ws_close(code as u16, &reason));
+    // Emit a rich SSE event: data + optional event/id (empty string = none) + retry (0 = none).
+    def!(
+        "__sse_send",
+        |data: String, event: String, id: String, retry: f64| {
+            let event = (!event.is_empty()).then_some(event);
+            let id = (!id.is_empty()).then_some(id);
+            let retry = (retry > 0.0).then_some(retry as u32);
+            actor::sse_send(data.as_bytes(), event.as_deref(), id.as_deref(), retry)
+        }
+    );
     def!("__list", || actor::list_processes()
         .into_iter()
         .map(|p| p.to_string())
