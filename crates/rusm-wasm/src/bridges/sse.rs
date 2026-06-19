@@ -67,6 +67,9 @@ pub struct SseServer {
     /// Max concurrent connections (the listener's `max_connections`); at the cap a new
     /// connection is dropped before the stream opens. `None` = unlimited.
     max_connections: Option<usize>,
+    /// gzip the event stream for a client that accepts it (the listener's `compression`) —
+    /// the writer compresses + flushes per event, so nothing buffers. `false` = plain.
+    compress: bool,
 }
 
 impl WasmRuntime {
@@ -82,6 +85,7 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
             max_connections: None,
+            compress: false,
         }
     }
 
@@ -98,6 +102,7 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
             max_connections: None,
+            compress: false,
         }
     }
 
@@ -119,6 +124,7 @@ impl WasmRuntime {
             spawner: Arc::clone(&self.spawner),
             headers: Arc::new(Vec::new()),
             max_connections: None,
+            compress: false,
         }
     }
 }
@@ -135,6 +141,12 @@ impl SseServer {
     /// opens (a flood can't spawn unbounded handler instances). `None` = unlimited.
     pub fn with_max_connections(mut self, max: Option<usize>) -> Self {
         self.max_connections = max;
+        self
+    }
+
+    /// gzip the event stream for a client that accepts it (the listener's `compression`).
+    pub fn with_compression(mut self, on: bool) -> Self {
+        self.compress = on;
         self
     }
 
@@ -239,6 +251,15 @@ impl SseServer {
         };
         super::access::log_request(&self.spawner.rt, "sse", &method, &path, 200);
 
+        // gzip this stream when the listener opts in and the client accepts it (the event
+        // stream is always a compressible `text/event-stream`).
+        let gzip_on = self.compress
+            && super::compress::accepts_gzip(
+                req.headers()
+                    .get(hyper::header::ACCEPT_ENCODING)
+                    .and_then(|v| v.to_str().ok()),
+            );
+
         // Capture the connection context for the handler's `connection` op (SSE has no
         // subprotocol); the route params come from the resolver above.
         let connection = super::conn::connection_info(&req, peer, params, None);
@@ -256,13 +277,16 @@ impl SseServer {
         let (sse_tx, mut sse_rx) =
             tokio::sync::mpsc::channel::<super::conn::SseEvent>(SSE_OUT_CAPACITY);
         let writer = rt.spawn(move |mut ctx| async move {
+            // When gzip is on, every frame flows through one stateful encoder (flushed per
+            // frame in `send_frame`), so the body is a single valid gzip stream.
+            let mut encoder = gzip_on.then(super::compress::GzipStream::new);
             loop {
                 tokio::select! {
                     _ = tx.closed() => break, // client disconnected (hyper dropped the body)
                     received = ctx.recv() => match received {
                         // A plain `data:` event (stream.data → send to the writer pid).
                         Received::Message(payload) => {
-                            if tx.send(sse_data_frame(&payload)).await.is_err() {
+                            if !send_frame(&tx, &mut encoder, sse_data_frame(&payload)).await {
                                 break;
                             }
                         }
@@ -271,7 +295,7 @@ impl SseServer {
                         // flush those (they'd otherwise lose the race with this Down) then end.
                         Received::Down { .. } => {
                             while let Ok(e) = sse_rx.try_recv() {
-                                if tx.send(sse_event_frame(&e)).await.is_err() {
+                                if !send_frame(&tx, &mut encoder, sse_event_frame(&e)).await {
                                     break;
                                 }
                             }
@@ -282,17 +306,24 @@ impl SseServer {
                     // A rich event (`sse-send`): id:/event:/retry:/data: framing.
                     event = sse_rx.recv() => match event {
                         Some(e) => {
-                            if tx.send(sse_event_frame(&e)).await.is_err() {
+                            if !send_frame(&tx, &mut encoder, sse_event_frame(&e)).await {
                                 break;
                             }
                         }
                         None => break, // handler gone (its rich-event sender dropped)
                     },
                     _ = tokio::time::sleep(HEARTBEAT) => {
-                        if tx.send(Bytes::from_static(b": ping\n\n")).await.is_err() {
+                        if !send_frame(&tx, &mut encoder, Bytes::from_static(b": ping\n\n")).await {
                             break;
                         }
                     }
+                }
+            }
+            // Flush the gzip footer (CRC + length) so the stream is complete on close.
+            if let Some(enc) = encoder {
+                let footer = enc.finish();
+                if !footer.is_empty() {
+                    let _ = tx.send(Bytes::from(footer)).await;
                 }
             }
         });
@@ -321,16 +352,37 @@ impl SseServer {
                 .await
                 .map(|chunk| (Ok::<_, Infallible>(Frame::data(chunk)), rx))
         });
-        let mut response = Response::builder()
+        let mut builder = Response::builder()
             .status(200)
             .header("content-type", "text/event-stream")
-            .header("cache-control", "no-cache")
+            .header("cache-control", "no-cache");
+        if gzip_on {
+            builder = builder
+                .header("content-encoding", "gzip")
+                .header("vary", "accept-encoding");
+        }
+        let mut response = builder
             .body(StreamBody::new(body).boxed())
             .expect("sse response builds");
         // Merge the listener's declared response policy (e.g. CORS) over the SSE defaults.
         super::access::apply_extra_headers(&mut response, &self.headers);
         Ok(response)
     }
+}
+
+/// Send one framed event to the body, gzip-encoding it first when the stream is compressed.
+/// Returns `false` if the body channel has closed (the client disconnected) — the caller ends.
+async fn send_frame(
+    tx: &tokio::sync::mpsc::Sender<Bytes>,
+    encoder: &mut Option<super::compress::GzipStream>,
+    frame: Bytes,
+) -> bool {
+    let out = match encoder {
+        Some(enc) => Bytes::from(enc.encode(&frame)),
+        None => frame,
+    };
+    // gzip may produce nothing for a chunk (rare with per-frame flush); nothing to send.
+    out.is_empty() || tx.send(out).await.is_ok()
 }
 
 /// A `404` for a routed SSE listener whose path matched no route — a plain buffered body,
@@ -1220,5 +1272,86 @@ mod tests {
         drop(admitted);
 
         handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gzips_the_event_stream_for_a_client_that_accepts_it() {
+        // With `compression` on and `Accept-Encoding: gzip`, the head declares gzip and the
+        // body is a valid gzip stream that decodes back to the rich-event frames. The rich
+        // handler emits then self-closes, so the stream ends with the gzip footer.
+        const SSE_EVENT: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_event.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_EVENT).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .sse_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_compression(true);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(
+            b"GET /events HTTP/1.1\r\nHost: rusm\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut raw = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut raw))
+            .await
+            .expect("the stream ends after the handler closes")
+            .expect("socket read ok");
+        let split = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("a head/body boundary");
+        let head = String::from_utf8_lossy(&raw[..split]).to_lowercase();
+        assert!(head.contains("content-encoding: gzip"), "gzip head: {head}");
+        assert!(head.contains("vary: accept-encoding"), "Vary set: {head}");
+        assert!(
+            head.contains("text/event-stream"),
+            "still an event stream: {head}"
+        );
+
+        // The body is hyper's chunked transfer-encoding wrapping the gzip stream; de-chunk it,
+        // then gunzip and assert the rich-event framing survived compression.
+        let body = dechunk(&raw[split + 4..]);
+        let decoded = {
+            use std::io::Read;
+            let mut out = Vec::new();
+            flate2::read::GzDecoder::new(&body[..])
+                .read_to_end(&mut out)
+                .unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        assert!(decoded.contains("id: 42"), "id framed: {decoded}");
+        assert!(
+            decoded.contains("event: greeting"),
+            "event framed: {decoded}"
+        );
+        assert!(decoded.contains("data: hello"), "data framed: {decoded}");
+
+        handle.abort();
+    }
+
+    /// Strip HTTP/1.1 chunked transfer-encoding framing → the raw body bytes.
+    fn dechunk(mut data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let Some(nl) = data.windows(2).position(|w| w == b"\r\n") else {
+                break;
+            };
+            let size = usize::from_str_radix(std::str::from_utf8(&data[..nl]).unwrap().trim(), 16)
+                .unwrap();
+            if size == 0 {
+                break; // last chunk
+            }
+            let start = nl + 2;
+            out.extend_from_slice(&data[start..start + size]);
+            data = &data[start + size + 2..]; // skip the chunk + its trailing CRLF
+        }
+        out
     }
 }

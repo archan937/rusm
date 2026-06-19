@@ -2603,6 +2603,7 @@ name = "rusm-wasm"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "futures-util",
  "http-body-util",
  "hyper",

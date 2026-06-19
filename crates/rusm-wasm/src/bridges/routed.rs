@@ -63,6 +63,8 @@ pub struct RoutedHttpServer {
     /// Max concurrent connections (the listener's `max_connections`); at the cap a new
     /// connection is dropped before it's served. `None` = unlimited.
     max_connections: Option<usize>,
+    /// gzip eligible responses the client accepts (the listener's `compression`).
+    compress: bool,
 }
 
 impl WasmRuntime {
@@ -83,6 +85,7 @@ impl WasmRuntime {
             caps: Arc::new(caps),
             headers: Arc::new(Vec::new()),
             max_connections: None,
+            compress: false,
         }
     }
 }
@@ -92,6 +95,12 @@ impl RoutedHttpServer {
     /// reply — e.g. CORS / security headers).
     pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
         self.headers = Arc::new(headers);
+        self
+    }
+
+    /// gzip eligible responses the client accepts (the listener's `compression`).
+    pub fn with_compression(mut self, on: bool) -> Self {
+        self.compress = on;
         self
     }
 
@@ -151,12 +160,21 @@ impl RoutedHttpServer {
             .map(|pq| pq.as_str())
             .unwrap_or("/")
             .to_string();
+        // Capture whether the client accepts gzip before the request is consumed.
+        let accept_gzip = super::compress::accepts_gzip(
+            req.headers()
+                .get(hyper::header::ACCEPT_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+        );
         let mut response = match self.dispatch(req).await {
             Ok(response) => response,
             Err(never) => match never {}, // dispatch is infallible
         };
         // Merge the listener's declared response policy (e.g. CORS) into every reply.
         super::access::apply_extra_headers(&mut response, &self.headers);
+        // gzip the buffered reply when enabled, accepted, and eligible (after the policy
+        // headers so a declared `content-encoding`/`content-type` is respected).
+        response = super::compress::maybe_gzip(response, accept_gzip, self.compress).await;
         super::access::log_request(
             &self.spawner.rt,
             "http",
@@ -391,6 +409,32 @@ mod tests {
         String::from_utf8_lossy(&buf).into_owned()
     }
 
+    /// Send a raw HTTP/1.1 request and split the response into (head text, body bytes) — so a
+    /// gzipped (non-UTF-8) body can be decoded exactly.
+    async fn raw_request(addr: SocketAddr, req: &str) -> (String, Vec<u8>) {
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        conn.read_to_end(&mut buf).await.unwrap();
+        let split = buf
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("a response has a header/body boundary");
+        (
+            String::from_utf8_lossy(&buf[..split]).into_owned(),
+            buf[split + 4..].to_vec(),
+        )
+    }
+
+    fn gunzip(data: &[u8]) -> Vec<u8> {
+        use std::io::Read;
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(data)
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dispatches_each_request_by_route_to_a_freshly_spawned_handler() {
         let wr = WasmRuntime::new(Runtime::new()).unwrap();
@@ -490,5 +534,123 @@ mod tests {
                 .starts_with("HTTP/1.1 405"),
             "matched path + wrong method is 405"
         );
+    }
+
+    /// A routed listener with `compression` on: a large compressible reply the client accepts
+    /// comes back gzip-encoded and round-trips, while a sub-threshold reply is left plain.
+    async fn compression_server() -> SocketAddr {
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(HANDLERS).unwrap(), "run")
+            .unwrap();
+        wr.register_component("demo", prepared);
+        let table = RouteTable::from_map(&HashMap::from([(
+            "GET /hello/:name".to_string(),
+            "demo#hello".to_string(),
+        )]))
+        .unwrap();
+        let caps = HashMap::from([(
+            "demo".to_string(),
+            CapabilityProfile::Sandboxed.capabilities(),
+        )]);
+        serve_on(
+            wr.routed_http_server(resolver(table), caps)
+                .with_compression(true),
+        )
+        .await
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gzips_a_large_eligible_response_the_client_accepts() {
+        let addr = compression_server().await;
+        // `hello` replies `text/plain` "hi <name>\n"; a long name pushes it past the
+        // threshold. The handler's body is identical compressed or not — only the wire differs.
+        let name = "a".repeat(400);
+        let body_plain = format!("hi {name}\n").into_bytes();
+
+        // Accept gzip → the reply is gzip-encoded and decodes back to the handler's bytes.
+        let (head, body) = raw_request(
+            addr,
+            &format!(
+                "GET /hello/{name} HTTP/1.1\r\nHost: rusm\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n"
+            ),
+        )
+        .await;
+        let lower = head.to_lowercase();
+        assert!(head.starts_with("HTTP/1.1 200"), "got: {head}");
+        assert!(
+            lower.contains("content-encoding: gzip"),
+            "gzip applied: {head}"
+        );
+        assert!(lower.contains("vary: accept-encoding"), "Vary set: {head}");
+        assert!(body.len() < body_plain.len(), "the wire body shrank");
+        assert_eq!(
+            gunzip(&body),
+            body_plain,
+            "gzip round-trips to the handler body"
+        );
+
+        // No `Accept-Encoding` → the same bytes, uncompressed.
+        let (head, body) = raw_request(
+            addr,
+            &format!("GET /hello/{name} HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n"),
+        )
+        .await;
+        assert!(
+            !head.to_lowercase().contains("content-encoding"),
+            "no encoding without Accept-Encoding: {head}"
+        );
+        assert_eq!(body, body_plain);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn leaves_a_sub_threshold_response_uncompressed() {
+        let addr = compression_server().await;
+        // "hi alice\n" is well under the gzip threshold, so it's sent plain even though the
+        // client accepts gzip — small bodies don't benefit.
+        let (head, body) = raw_request(
+            addr,
+            "GET /hello/alice HTTP/1.1\r\nHost: rusm\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(
+            !head.to_lowercase().contains("content-encoding"),
+            "tiny body left uncompressed: {head}"
+        );
+        assert_eq!(body, b"hi alice\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn does_not_compress_without_the_opt_in() {
+        // Compression defaults off: even a large body the client accepts is sent plain.
+        let wr = WasmRuntime::new(Runtime::new()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(HANDLERS).unwrap(), "run")
+            .unwrap();
+        wr.register_component("demo", prepared);
+        let table = RouteTable::from_map(&HashMap::from([(
+            "GET /hello/:name".to_string(),
+            "demo#hello".to_string(),
+        )]))
+        .unwrap();
+        let caps = HashMap::from([(
+            "demo".to_string(),
+            CapabilityProfile::Sandboxed.capabilities(),
+        )]);
+        let addr = serve_on(wr.routed_http_server(resolver(table), caps)).await; // no with_compression
+
+        let name = "a".repeat(400);
+        let (head, body) = raw_request(
+            addr,
+            &format!(
+                "GET /hello/{name} HTTP/1.1\r\nHost: rusm\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(
+            !head.to_lowercase().contains("content-encoding"),
+            "no compression without the opt-in: {head}"
+        );
+        assert_eq!(body, format!("hi {name}\n").into_bytes());
     }
 }

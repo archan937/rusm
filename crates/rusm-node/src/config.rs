@@ -311,6 +311,15 @@ pub struct ServeSpec {
     /// non-`ws` listeners.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Enable response **compression** on this listener (the `[[serve]]` `compression`).
+    /// When `true`, the host compresses eligible replies that the client accepts: **gzip**
+    /// for routed HTTP handler responses and the SSE event stream (per-event flush), and
+    /// **permessage-deflate** for WebSocket. Only compressible content types over a small
+    /// size threshold are touched, and a response that already carries a `content-encoding`
+    /// is left as-is. The handler-less `wasi:http` path owns its own response (it may
+    /// stream), so it sets its own encoding. `false` (default) = no compression.
+    #[serde(default)]
+    pub compression: bool,
 }
 
 impl ServeSpec {
@@ -724,6 +733,7 @@ mod tests {
             max_connections = 1024
             max_message_size = 65536
             allowed_origins = ["https://app.example.com"]
+            compression = true
 
             [[serve]]
             name = "plain"
@@ -738,10 +748,12 @@ mod tests {
             cfg.serve[0].allowed_origins,
             vec!["https://app.example.com".to_string()]
         );
-        // All three default off (unlimited / transport default / any origin).
+        assert!(cfg.serve[0].compression);
+        // All default off (unlimited / transport default / any origin / no compression).
         assert_eq!(cfg.serve[1].max_connections, None);
         assert_eq!(cfg.serve[1].max_message_size, None);
         assert!(cfg.serve[1].allowed_origins.is_empty());
+        assert!(!cfg.serve[1].compression);
     }
 
     #[test]

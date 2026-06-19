@@ -366,6 +366,7 @@ pub async fn serve_apps(
                     wasm.routed_http_server(resolver, caps_map.clone())
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
+                        .with_compression(spec.compression)
                         .serve(listener),
                 ),
                 // Per-connection SSE: resolve the path to a handler component, capturing params.
@@ -373,6 +374,7 @@ pub async fn serve_apps(
                     wasm.routed_sse_server(resolver, caps_map.clone())
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
+                        .with_compression(spec.compression)
                         .serve(listener),
                 ),
                 // Per-connection WebSocket: same; an unmatched path refuses with 404.
@@ -413,6 +415,7 @@ pub async fn serve_apps(
                     build_sse_server(dir, wasm, name, caps, remote)?
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
+                        .with_compression(spec.compression)
                         .serve(listener),
                 ),
                 ServeProtocol::Ws => tokio::spawn(
@@ -768,6 +771,7 @@ mod tests {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Vec::new(),
+            compression: false,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -817,6 +821,7 @@ mod tests {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Vec::new(),
+            compression: false,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -870,6 +875,7 @@ mod tests {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Vec::new(),
+            compression: false,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &handlers, &HashMap::new())
             .await
@@ -915,6 +921,7 @@ mod tests {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Vec::new(),
+            compression: false,
         }];
         let err = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await

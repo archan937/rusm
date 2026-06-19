@@ -28,6 +28,9 @@ wasmtime-wasi = { version = "45.0.1", features = ["p3"] }
 wasmtime-wasi-http = "45.0.1"
 hyper = { version = "1", features = ["server", "http1"] }
 tokio-tungstenite = "0.29"
+# Response compression (opt-in per `[[serve]]` listener): gzip for HTTP/SSE replies and
+# raw deflate for WebSocket permessage-deflate. Host-only — never crosses into a guest.
+flate2 = "1"
 futures-util = "0.3"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
