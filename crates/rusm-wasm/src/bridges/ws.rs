@@ -130,6 +130,10 @@ fn not_found() -> hyper::Response<Empty<Bytes>> {
 pub struct WsServer {
     source: Source,
     spawner: Arc<Spawner>,
+    /// Idle keep-alive: if no frame flows for this long, the writer sends a WebSocket
+    /// **ping** — keeping the connection alive through idle-reaping proxies and flushing any
+    /// auto-queued pong. (Inbound client pings are auto-ponged by the protocol layer.)
+    keepalive: std::time::Duration,
 }
 
 impl WasmRuntime {
@@ -143,6 +147,7 @@ impl WasmRuntime {
                 caps,
             },
             spawner: Arc::clone(&self.spawner),
+            keepalive: WS_KEEPALIVE,
         }
     }
 
@@ -158,6 +163,7 @@ impl WasmRuntime {
                 caps,
             },
             spawner: Arc::clone(&self.spawner),
+            keepalive: WS_KEEPALIVE,
         }
     }
 
@@ -177,6 +183,7 @@ impl WasmRuntime {
                 caps: Arc::new(caps),
             },
             spawner: Arc::clone(&self.spawner),
+            keepalive: WS_KEEPALIVE,
         }
     }
 }
@@ -191,7 +198,18 @@ const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
 /// — a slow client back-pressures the handler (it parks on send), never buffering unbounded.
 const WS_OUT_CAPACITY: usize = 64;
 
+/// Default idle keep-alive interval: send a ping after this long with no frame, so an idle
+/// connection survives proxy idle-reaping. Override per-listener with [`WsServer::with_keepalive`].
+const WS_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl WsServer {
+    /// Set the idle keep-alive ping interval (default 30s). A connection with no frame for
+    /// this long gets a server ping, so idle-reaping proxies don't drop it.
+    pub fn with_keepalive(mut self, interval: std::time::Duration) -> Self {
+        self.keepalive = interval;
+        self
+    }
+
     /// Serve WebSockets on `listener` until it closes — one connection per task.
     pub async fn serve(self, listener: TcpListener) {
         loop {
@@ -278,6 +296,7 @@ impl WsServer {
         // the handler feeds via `ws-send-text` (the bound back-pressures a slow client). All
         // IO stays out of the sandboxed component.
         let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<WsOut>(WS_OUT_CAPACITY);
+        let keepalive = self.keepalive;
         let writer = rt.spawn(move |mut ctx| async move {
             loop {
                 tokio::select! {
@@ -311,6 +330,13 @@ impl WsServer {
                         }
                         None => break, // handler gone (its control sender dropped)
                     },
+                    // Idle keep-alive: no frame for `keepalive` → ping (flushes any queued
+                    // pong too). Resets each loop, so it fires only on a genuinely idle link.
+                    _ = tokio::time::sleep(keepalive) => {
+                        if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -873,6 +899,44 @@ mod tests {
             other => panic!("expected a Close frame from TS, got {other:?}"),
         }
 
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_idle_ws_connection_gets_a_keepalive_ping() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // An idle connection (no frames either way) must receive a server keep-alive ping,
+        // so idle-reaping proxies don't drop it. Short interval for the test.
+        const WS_CONN: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_CONN).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_keepalive(std::time::Duration::from_millis(150));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        // Stay idle; a keep-alive ping must arrive within a few intervals.
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+            .await
+            .expect("a keep-alive ping within 3s")
+            .unwrap()
+            .unwrap();
+        assert!(
+            frame.is_ping(),
+            "idle connection gets a keep-alive ping, got {frame:?}"
+        );
+
+        ws.close(None).await.ok();
         handle.abort();
     }
 }
