@@ -606,4 +606,37 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ws_handler_reads_its_connection_context() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // A WS handler reads its request path + query via `Connection::info` across the
+        // upgrade — the WS twin of the SSE context test, proving the shared connection
+        // context reaches the WebSocket path too.
+        const WS_CONN: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_CONN).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/chat/room1?x=1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"ctx /chat/room1 q=x=1",
+            "the WS handler reads its path + query from the connection context"
+        );
+
+        ws.close(None).await.ok();
+        handle.abort();
+    }
 }

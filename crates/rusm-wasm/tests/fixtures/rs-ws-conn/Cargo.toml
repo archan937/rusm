@@ -1,0 +1,25 @@
+# A per-connection WebSocket handler (rusm-rs) that reports its connection context (path +
+# query, read via Connection::info) to the registered `collector` on open — proving the
+# `connection` op reaches a WS handler across the upgrade. Built for wasm32-wasip2, checked
+# in as rs_ws_conn.wasm. Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/rs_ws_conn.wasm ../rs_ws_conn.wasm
+[workspace]
+
+[package]
+name = "rs-ws-conn"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "rs_ws_conn"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"
