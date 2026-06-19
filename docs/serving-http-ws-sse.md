@@ -263,10 +263,11 @@ pub fn post(_req: Request, p: Params) -> Response {
 
 ### SSE — a per-connection handler {#sse-a-per-connection-handler}
 
-Server-Sent Events are served like WebSocket — **one sandboxed process per connection**,
-not a routed action. A `protocol = "sse"` listener names one handler component (no
-`[serve.routes]`); the handler subscribes to an event source in `open` (typically a
-**process-group tag**), emits each pushed event in `message`, and cleans up in `close`:
+Server-Sent Events are served like WebSocket — **one sandboxed process per connection**. A
+`protocol = "sse"` listener either names one handler component or routes by path via
+`[serve.routes]` (the [per-connection routes](#per-connection-routes-wssse) above). The
+handler subscribes to an event source in `open` (typically a **process-group tag**), emits
+each pushed event in `message`, and cleans up in `close`:
 
 ```rust
 use rusm_rs::sse::{self, Handler, Stream};
@@ -290,6 +291,32 @@ heartbeats), the **bounded, back-pressured** body, and disconnect (the body's wr
 endless feed never leaks. The TS twin is `export default sse({ open, message, close })`; the
 Go twin is `web.Sse{ Open, Message, Close }.Serve()`. See the
 [SSE lifecycle](./concepts/lifecycle-sse) and [byte streams](./concepts/byte-streams).
+
+#### Rich events & resumption
+
+Beyond the plain `data:` shortcut, a handler emits **rich events** with an `event:` type, an
+`id:` (the basis for resumption), and a `retry:` reconnect hint:
+
+| | Rust | TypeScript | Go |
+|---|---|---|---|
+| plain data | `s.data(&bytes)` | `s.data(bytes)` | `s.Data(bytes)` |
+| rich event | `s.emit(&Event { data, id: Some("42"), event: Some("tick"), ..Default::default() })` | `s.emit({ data, id: "42", event: "tick" })` | `s.Emit(web.Event{ Data, ID: "42", Name: "tick" })` |
+
+**Resumption (`Last-Event-ID`).** Emit an `id:` with each event; when a dropped client
+reconnects, the browser sends the last id it saw as the `Last-Event-ID` header, which the
+handler reads from its [connection context](#the-connection-context) and replays from:
+
+```rust
+fn open(&mut self, s: &Stream) {
+    let from = s.info().header("last-event-id"); // None on first connect
+    for ev in events_since(from) {               // replay the gap, then live-tail
+        s.emit(&Event { data: &ev.data, id: Some(&ev.id), ..Default::default() });
+    }
+}
+```
+
+The rich-event path is bounded + back-pressured like `data:`; `id`/`event` are single-line
+(an embedded newline is dropped, so framing can't be injected).
 
 ## `[[serve]]` — declaring a listener
 
