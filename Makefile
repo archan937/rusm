@@ -139,9 +139,16 @@ publish-dry: ## Release pre-flight: dry-run each not-yet-published crate (no sid
 	@for d in $(PUBLISH_ORDER); do \
 		if $(call crate_published,$$d); then echo "↷ $$(basename $$d)@$(VERSION) already published — skip"; continue; fi; \
 		echo "==> dry-run $$d"; \
-		( cd $$d && cargo publish --dry-run ) || { echo "✗ dry-run failed: $$d"; exit 1; }; \
+		out=$$( cd $$d && cargo publish --dry-run 2>&1 ); \
+		if [ $$? -ne 0 ]; then \
+			if echo "$$out" | grep -q 'failed to select a version for the requirement `rusm-'; then \
+				echo "↷ $$(basename $$d): depends on a sibling crate not yet on crates.io at $(VERSION) — can't pre-verify; the topological \`publish-crates\` uploads it after its deps"; \
+			else \
+				echo "$$out"; echo "✗ dry-run failed: $$d"; exit 1; \
+			fi; \
+		fi; \
 	done
-	@echo "==> packages cleanly"
+	@echo "==> packages cleanly (sibling-dependent crates are verified during the topological publish)"
 
 .PHONY: publish-crates
 publish-crates: ## Publish crates to crates.io in dependency order (skips versions already uploaded)
