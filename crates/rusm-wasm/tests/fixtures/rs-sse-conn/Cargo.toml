@@ -1,0 +1,25 @@
+# A per-connection SSE handler (rusm-rs) that reports its connection context (method,
+# path, query, a header) to the registered `collector` on open — proving the `connection`
+# actor op reaches a per-connection handler. Built for wasm32-wasip2, checked in as
+# rs_sse_conn.wasm. Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/rs_sse_conn.wasm ../rs_sse_conn.wasm
+[workspace]
+
+[package]
+name = "rs-sse-conn"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "rs_sse_conn"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"

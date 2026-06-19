@@ -354,6 +354,42 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_sse_handler_reads_its_connection_context() {
+        // The `connection` op end-to-end: a per-connection SSE handler reads its request
+        // method, path, query, and a header (via `Stream::info`) and reports them. Proves
+        // the additive connection context reaches a real guest through host store state —
+        // the linchpin for path-parameterised SSE.
+        const SSE_CONN: &[u8] = include_bytes!("../../tests/fixtures/rs_sse_conn.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+
+        let prepared = wr
+            .prepare_component(&wr.compile_component(SSE_CONN).unwrap(), "run")
+            .unwrap();
+        let server = wr.sse_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /events/plan7?x=1 HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+
+        // No routing on this listener yet, so `plan` is unset (`-`); path, query, and the
+        // host header are delivered verbatim.
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"GET /events/plan7 q=x=1 plan=- host=rusm",
+            "the handler reads method/path/query/header from its connection context"
+        );
+
+        drop(conn);
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_idle_sse_client_disconnect_is_reaped_with_no_leak() {
         // An *idle* SSE client disconnect (no events ever published): the writer can't see
         // it (SSE has no inbound read channel), so the connection task reaps the handler
