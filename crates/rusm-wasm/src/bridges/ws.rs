@@ -695,4 +695,34 @@ mod tests {
         ws.close(None).await.ok();
         handle.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_ws_handler_can_send_a_text_frame() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+
+        // The Go SDK twin: web.Conn.SendText must reach the client as a text frame — RS/Go
+        // parity for the additive ws-send-text op.
+        const GO_WS_TEXT: &[u8] = include_bytes!("../../tests/fixtures/go_ws_text.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_WS_TEXT).unwrap(), "run")
+            .unwrap();
+        let server = wr.ws_server(&prepared, CapabilityProfile::Trusted.capabilities());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        ws.send(Message::binary(b"hi go".to_vec())).await.unwrap();
+        let reply = ws.next().await.unwrap().unwrap();
+        assert!(reply.is_text(), "the Go reply is a text frame");
+        assert_eq!(reply.into_text().unwrap().as_str(), "hi go");
+
+        ws.close(None).await.ok();
+        handle.abort();
+    }
 }

@@ -192,6 +192,25 @@ func Connection() (result cm.Option[ConnectionInfo]) {
 	return
 }
 
+// WsSendText represents the imported function "ws-send-text".
+//
+// Send a **text** WebSocket frame on this connection (the binary path is a plain
+// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this
+// is
+// not a WebSocket handler or the socket has closed. Additive: a guest that never
+// calls
+// it keeps sending binary frames exactly as before.
+//
+//	ws-send-text: func(payload: list<u8>) -> bool
+//
+//go:nosplit
+func WsSendText(payload cm.List[uint8]) (result bool) {
+	payload0, payload1 := cm.LowerList(payload)
+	result0 := wasmimport_WsSendText((*uint8)(payload0), (uint32)(payload1))
+	result = (bool)(cm.U32ToBool((uint32)(result0)))
+	return
+}
+
 // Spawn represents the imported function "spawn".
 //
 // Spawn a registered component (by the name it was registered under) as a new

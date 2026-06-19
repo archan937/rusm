@@ -17,8 +17,12 @@ func (c Conn) Writer() rusm.Pid { return c.writer }
 // headers, peer address, and negotiated subprotocol (e.g. c.Info().Param("room")).
 func (c Conn) Info() rusm.ConnectionInfo { return c.info }
 
-// Send writes one frame back to the client (dropped if the socket has closed).
+// Send writes one binary frame back to the client (dropped if the socket has closed).
 func (c Conn) Send(frame []byte) { rusm.SendBytes(c.writer, frame) }
+
+// SendText writes one text frame back to the client (the default Send sends binary).
+// Returns false if the socket has closed.
+func (c Conn) SendText(text string) bool { return rusm.WsSendText([]byte(text)) }
 
 // WebSocket is a per-connection WebSocket handler: Open fires once when the connection
 // opens (optional), Message once per inbound frame, and Close once when it closes

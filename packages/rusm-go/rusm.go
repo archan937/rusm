@@ -62,6 +62,11 @@ func Self() Pid { return Pid(actor.OwnPid()) }
 // SendBytes sends raw bytes to a pid (silently dropped if it is gone).
 func SendBytes(to Pid, msg []byte) { actor.Send(actor.Pid(to), cm.ToList(msg)) }
 
+// WsSendText sends a text WebSocket frame on this connection (binary frames are a plain
+// SendBytes to the writer pid). Returns false if this is not a WebSocket handler or the
+// socket has closed. Used by web.Conn.SendText.
+func WsSendText(payload []byte) bool { return actor.WsSendText(cm.ToList(payload)) }
+
 // Send JSON-encodes msg and sends it — the wire shared with rusm-ts and rusm-rs.
 func Send(to Pid, msg any) error {
 	b, err := json.Marshal(msg)
