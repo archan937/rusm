@@ -39,6 +39,9 @@ strip = true
 wit-bindgen = "0.46"
 rquickjs = "0.9"
 getrandom = "0.3"
+# Marshal the connection-info record to a JSON string for the bridge to parse (the
+# `__connection` primitive) — escaping arbitrary header values correctly.
+serde_json = "1"
 # Native, constant-time crypto for the `crypto.subtle` polyfill (RustCrypto) — far
 # faster + safer than a pure-JS implementation in QuickJS, all pure-Rust (wasm-clean).
 sha1 = "0.10"

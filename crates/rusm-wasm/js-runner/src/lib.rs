@@ -528,6 +528,20 @@ fn boot_bridge(ctx: Ctx<'_>) {
 
     // --- process / messaging ---
     def!("__own_pid", || actor::own_pid().to_string());
+    // The per-connection serving context (ws/sse handlers); JSON for the bridge to parse,
+    // or `null` for any other process. Serialised here so header/param values escape safely.
+    def!("__connection", || actor::connection().map(|c| {
+        serde_json::json!({
+            "method": c.method,
+            "path": c.path,
+            "query": c.query,
+            "params": c.params,
+            "headers": c.headers,
+            "remoteAddr": c.remote_addr,
+            "subprotocol": c.subprotocol,
+        })
+        .to_string()
+    }));
     def!("__list", || actor::list_processes()
         .into_iter()
         .map(|p| p.to_string())

@@ -20,8 +20,23 @@ interface actor {
         trap-exit: bool,
     }
 
+    /// The HTTP request context of a **per-connection serving process** — a WebSocket or
+    /// SSE handler the host spawned for one accepted connection.
+    record connection-info {
+        method: string,
+        path: string,
+        query: string,
+        params: list<tuple<string, string>>,
+        headers: list<tuple<string, string>>,
+        remote-addr: string,
+        subprotocol: option<string>,
+    }
+
     /// This process's own pid (Erlang's `self()`).
     own-pid: func() -> pid;
+
+    /// This per-connection serving process's [`connection-info`], or `none` otherwise.
+    connection: func() -> option<connection-info>;
 
     /// Spawn a registered component by name as a new process (Erlang's `spawn`).
     /// Capability-gated and non-escalating; `err` if denied or the name is unknown.

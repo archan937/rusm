@@ -56,6 +56,35 @@ export interface ProcessApi {
   killTag(tag: string): number;
   openStream(to: bigint | string): Stream | null;
   acceptStream(): Stream;
+  /** The raw per-connection serving context (a WebSocket/SSE handler's request), or
+   *  `null` for any other process. Prefer {@link Socket.info} / {@link SseStream.info},
+   *  which wrap it with `param`/`header` lookups. */
+  connection(): ConnectionInfoData | null;
+}
+
+/** The raw per-connection request context the runtime exposes — wrapped ergonomically by
+ *  {@link Socket.info} / {@link SseStream.info}. */
+export interface ConnectionInfoData {
+  readonly method: string;
+  readonly path: string;
+  readonly query: string;
+  /** Route params captured from the listener's `[serve.routes]` pattern, as `[name, value]`. */
+  readonly params: ReadonlyArray<readonly [string, string]>;
+  /** Request headers (lowercased names, arrival order), as `[name, value]`. */
+  readonly headers: ReadonlyArray<readonly [string, string]>;
+  readonly remoteAddr: string;
+  /** The negotiated WebSocket subprotocol, or `null` (always `null` for SSE). */
+  readonly subprotocol: string | null;
+}
+
+/** The HTTP context of a per-connection WebSocket/SSE handler — the request that opened
+ *  the connection, fixed for its life. Read it in your handler via {@link Socket.info} /
+ *  {@link SseStream.info}. The {@link ConnectionInfoData} fields plus `param`/`header`. */
+export interface ConnectionInfo extends ConnectionInfoData {
+  /** One captured route param by name (`:plan` → `param("plan")`), or `undefined`. */
+  param(name: string): string | undefined;
+  /** The first value of header `name` (case-insensitive), or `undefined`. */
+  header(name: string): string | undefined;
 }
 
 /** The result of a typed call: `await` it for the reply, or `for await` it to
@@ -152,9 +181,32 @@ export const supervise = (opts: SupervisorOptions): Promise<void> =>
  *  writer pid, should you want to address it directly (e.g. a registry of peers). */
 export interface Socket {
   readonly id: bigint;
+  /** This connection's request context — method, path, query, route params, headers,
+   *  peer address, and negotiated subprotocol (e.g. `socket.info.param("room")`). */
+  readonly info: ConnectionInfo;
   /** Send one frame back to this connection (a string is sent as UTF-8). */
   send(data: string | Uint8Array): void;
 }
+
+/** Wrap the runtime's raw connection context with `param`/`header` lookups (the empty
+ *  context for a non-connection process, so the accessors never throw). */
+const connectionInfo = (): ConnectionInfo => {
+  const raw = Process.connection?.() ?? null;
+  const params = raw?.params ?? [];
+  const headers = raw?.headers ?? [];
+  return {
+    method: raw?.method ?? "",
+    path: raw?.path ?? "",
+    query: raw?.query ?? "",
+    params,
+    headers,
+    remoteAddr: raw?.remoteAddr ?? "",
+    subprotocol: raw?.subprotocol ?? null,
+    param: (name) => params.find(([k]) => k === name)?.[1],
+    header: (name) =>
+      headers.find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1],
+  };
+};
 
 /** Per-connection WebSocket handlers — the clean shape behind {@link websocket}. */
 export interface WebSocketHandlers {
@@ -175,8 +227,11 @@ export interface WebSocketHandlers {
  *  ```
  */
 export const websocket = (handlers: WebSocketHandlers) => {
+  // One runner instance per connection, so the context is fixed — fetch it once.
+  let info: ConnectionInfo | undefined;
   const socket = (id: bigint): Socket => ({
     id,
+    info: (info ??= connectionInfo()),
     send: (data) => Process.send(id, data),
   });
   return {
@@ -196,6 +251,9 @@ export const websocket = (handlers: WebSocketHandlers) => {
  *  avoid clashing with the byte-stream {@link Stream} from `Process.openStream`.) */
 export interface SseStream {
   readonly id: bigint;
+  /** This stream's request context — method, path, query, route params, headers, and
+   *  peer address (e.g. `stream.info.param("plan")` or `stream.info.header("last-event-id")`). */
+  readonly info: ConnectionInfo;
   /** Emit one event to the client (a string is sent as UTF-8). The platform frames it
    *  as a `data:` SSE event. */
   data(payload: string | Uint8Array): void;
@@ -230,8 +288,11 @@ export interface SseHandlers {
  */
 export const sse = (handlers: SseHandlers) => {
   let done = false;
+  // One runner instance per connection, so the context is fixed — fetch it once.
+  let info: ConnectionInfo | undefined;
   const stream = (id: bigint): SseStream => ({
     id,
+    info: (info ??= connectionInfo()),
     data: (payload) => Process.send(id, payload),
     close: () => {
       done = true;

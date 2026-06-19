@@ -586,6 +586,36 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ts_sse_handler_reads_its_connection_context() {
+        // The TS SDK twin: a TS `sse()` handler reads method/path/query/header via
+        // `stream.info` — through the js-runner's `__connection` primitive + bridge — so
+        // RS/Go/TS all reach connection-context parity. Unrouted, so `plan` is unset.
+        const TS_SSE_CONN: &[u8] = include_bytes!("../../tests/fixtures/ts_sse_conn.js");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let mut rx = collector(&rt);
+        let server = wr.sse_server_js(
+            TS_SSE_CONN.to_vec(),
+            CapabilityProfile::Trusted.capabilities(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /events/p7?x=1 HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            next_event(&mut rx).await,
+            b"GET /events/p7 q=x=1 plan=- host=rusm",
+            "the TS handler read its connection context via stream.info"
+        );
+        drop(conn);
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_idle_sse_client_disconnect_is_reaped_with_no_leak() {
         // An *idle* SSE client disconnect (no events ever published): the writer can't see
         // it (SSE has no inbound read channel), so the connection task reaps the handler

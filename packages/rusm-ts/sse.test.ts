@@ -16,6 +16,57 @@ beforeEach(() => {
     to: bigint,
     msg: string | Uint8Array,
   ) => sent.push([to, msg]);
+  // No connection context by default; the `.info` test installs its own.
+  (Process as unknown as { connection: unknown }).connection = () => null;
+});
+
+test("stream.info exposes the connection context with param/header lookups", () => {
+  (Process as unknown as { connection: unknown }).connection = () => ({
+    method: "GET",
+    path: "/events/p7/pages/42",
+    query: "x=1",
+    params: [
+      ["plan", "p7"],
+      ["collection", "pages"],
+      ["id", "42"],
+    ],
+    headers: [
+      ["host", "rusm"],
+      ["last-event-id", "9"],
+    ],
+    remoteAddr: "127.0.0.1:5000",
+    subprotocol: null,
+  });
+  let info!: import("./index").ConnectionInfo;
+  sse({
+    open: (s) => {
+      info = s.info;
+    },
+    message: () => {},
+  }).sse.open(7n);
+
+  expect(info.method).toBe("GET");
+  expect(info.path).toBe("/events/p7/pages/42");
+  expect(info.query).toBe("x=1");
+  expect(info.param("plan")).toBe("p7");
+  expect(info.param("missing")).toBeUndefined();
+  expect(info.header("Host")).toBe("rusm"); // case-insensitive
+  expect(info.header("last-event-id")).toBe("9");
+  expect(info.remoteAddr).toBe("127.0.0.1:5000");
+  expect(info.subprotocol).toBeNull();
+});
+
+test("stream.info is empty (never throws) for a non-connection process", () => {
+  let info!: import("./index").ConnectionInfo;
+  sse({
+    open: (s) => {
+      info = s.info;
+    },
+    message: () => {},
+  }).sse.open(1n);
+  expect(info.path).toBe("");
+  expect(info.param("plan")).toBeUndefined();
+  expect(info.header("host")).toBeUndefined();
 });
 
 test("sse() exposes the { sse: { open, message, close, done } } shape the runner drives", () => {
