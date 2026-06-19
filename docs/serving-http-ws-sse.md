@@ -174,6 +174,32 @@ impl sse::Handler for Events {
 }
 ```
 
+## WebSocket frames — binary, text, and close
+
+A WebSocket handler replies to its connection with frames. The default reply is a
+**binary** frame; a handler can also send a **text** frame (what browsers expecting text
+messages want) or **close** the connection with a status code + reason. All three across
+RS/Go/TS:
+
+| | Rust | TypeScript | Go |
+|---|---|---|---|
+| binary frame | `conn.send(&bytes)` | `socket.send(bytes)` | `conn.Send(bytes)` |
+| text frame | `conn.send_text("…")` | `socket.sendText("…")` | `conn.SendText("…")` |
+| close (code, reason) | `conn.close(1000, "bye")` | `socket.close(1000, "bye")` | `conn.Close(1000, "bye")` |
+
+```rust
+impl ws::Handler for Chat {
+    fn message(&mut self, conn: &Connection, frame: Vec<u8>) {
+        conn.send_text(&render(&frame)); // a text frame the browser reads as a string
+    }
+}
+```
+
+`send_text`/`sendText`/`SendText` returns `false` if the socket has already closed. The
+text/close path is back-pressured (a bounded per-connection channel), so a handler that
+outruns a slow client parks rather than buffering without limit. An inbound frame reaches
+the handler as bytes; the handler interprets it per its own protocol.
+
 ## Handlers are named actions — no `main()`
 
 A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]`. The
