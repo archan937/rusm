@@ -83,12 +83,16 @@ service or `kv` is the durable back. Clean separation, no compromise on isolatio
 Routing lives in a per-listener TOML **`[serve.routes]`** subtable — never in handler
 code.
 
-**It applies to `http` listeners only.** A `http` listener matches each incoming request
-by **method + path** and dispatches to a `component#action`. **SSE and WebSocket do not
-path-route** — each binds **one** handler component and spawns a fresh process of it **per
-connection** (an inbound WS frame, or the SSE stream itself, → that process), so there is no
-path → action table; to serve different SSE/WS endpoints, bind a separate `[[serve]]`
-listener per endpoint. A `[serve.routes]` table on an `sse`/`ws` listener is ignored.
+**It applies to every protocol — `http`, `sse`, and `ws`** — but the value shape differs
+by serving model. A `http` listener matches each request by **method + path** and
+dispatches to a `component#action` (per request). An `sse`/`ws` listener matches the
+**connection's** path the same way, but the value is a **bare handler component** (no
+`#action` — the component *is* the per-connection handler, one process per connection); the
+captured path params reach it through its [connection context](#the-connection-context).
+
+A listener with **no** `[serve.routes]` instead binds a single handler component by `name`
+(spawned per request for HTTP, per connection for ws/sse). A path that matches no route is a
+**404** (for ws/sse, the connection is refused before any upgrade).
 
 Each `[[serve]]` HTTP listener has its own `[serve.routes]`, so multiple
 listeners (e.g. a public API on `:8080` and an admin port on `:9090`) route
@@ -124,6 +128,51 @@ literal route and `/users/42` to the param route. Resolution has three outcomes:
 - no route matches the path → **HTTP 404 Not Found**.
 
 All of this is decided by the host gateway from config. The guest never sees a router.
+
+### Per-connection routes (ws/sse)
+
+An `sse`/`ws` listener routes the connection's path to a **bare handler component** (no
+`#action`) and captures path params for it:
+
+```toml
+[[serve]]
+protocol = "sse"
+listen = "127.0.0.1:8081"
+
+[serve.routes]
+"GET /events/:plan/:collection/:id" = "events"   # the component IS the handler
+"GET /stream/:app"                  = "stream"
+```
+
+Each connection spawns the matched component fresh; the captured params (`:plan`, …) are
+read from the handler's [connection context](#the-connection-context).
+
+## The connection context {#the-connection-context}
+
+A per-connection WebSocket or SSE handler can read the request that opened it — method,
+path, query, the captured route params, headers (e.g. `last-event-id`, `authorization`,
+`origin`), the peer address, and any negotiated subprotocol. It's fixed for the
+connection's life; read it once in `open`. The handler never parses the URL or headers
+itself — the platform captures and delivers them.
+
+| | Rust | TypeScript | Go |
+|---|---|---|---|
+| **handle** | `conn.info()` / `stream.info()` | `socket.info` / `stream.info` | `conn.Info()` / `stream.Info()` |
+| path / query | `.path()` / `.query()` | `.path` / `.query` | `.Path()` / `.Query()` |
+| route param | `.param("plan")` | `.param("plan")` | `.Param("plan")` |
+| header | `.header("last-event-id")` | `.header("last-event-id")` | `.Header("last-event-id")` |
+| method / addr | `.method()` / `.remote_addr()` | `.method` / `.remoteAddr` | `.Method()` / `.RemoteAddr()` |
+
+```rust
+// A per-connection SSE handler that streams one entity's patches, picked by the route.
+impl sse::Handler for Events {
+    fn open(&mut self, s: &Stream) {
+        let plan = s.info().param("plan").unwrap_or_default();
+        // subscribe to this plan's topic; replay from s.info().header("last-event-id"), …
+    }
+    fn message(&mut self, s: &Stream, patch: Vec<u8>) { s.data(&patch); }
+}
+```
 
 ## Handlers are named actions — no `main()`
 

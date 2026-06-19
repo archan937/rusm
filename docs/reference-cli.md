@@ -50,22 +50,24 @@ What each cell scaffolds:
   that listener's `[[serve]]` entry in `rusm.toml`, mapping `"METHOD /path"` → `"api#action"`.
   No `main`, no router, no `wit/` dir — routing is declarative config.
 - **Rust SSE** — a `sse::serve` handler (`open`/`message`/`close`, one sandboxed process per
-  connection — the SSE twin of WS); no `[serve.routes]`.
+  connection — the SSE twin of WS). Optionally path-routed via `[serve.routes]` (a bare
+  handler-component value, no `#action`), reading path params from its connection context.
 - **Rust WS** — a `ws::serve` handler (`open`/`message`/`close`, one sandboxed process
-  per connection); no `[serve.routes]`.
+  per connection); same optional `[serve.routes]` as SSE.
 - **TypeScript HTTP** — a zero-dependency web-standard
   `export default function handle(request): Response` (a `wasi:http` per-request
   component); it does its own dispatch, so no `[serve.routes]`.
 - **TypeScript SSE** — the `rusm-ts` package's `export default sse({ open, message, close })`
-  helper (one process per connection).
-- **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message, close })` helper.
+  helper (one process per connection); optionally path-routed via `[serve.routes]`.
+- **TypeScript WS** — the `rusm-ts` package's `export default websocket({ open, message, close })`
+  helper; optionally path-routed via `[serve.routes]`.
 - **Go HTTP** — a `web.NewHandlers()` component (each `h.Handle("name", …)` is a routable
   buffered action; normal Go, no bindings boilerplate) **plus a `[serve.routes]` subtable**,
   exactly like Rust — compiled via TinyGo.
 - **Go SSE** — a `web.Sse{ Open, Message, Close }.Serve()` handler (one process per
-  connection); no `[serve.routes]`.
+  connection); optionally path-routed via `[serve.routes]`.
 - **Go WS** — a `web.WebSocket{ Open, Message, Close }.Serve()` handler (one sandboxed
-  process per connection); no `[serve.routes]`.
+  process per connection); same optional `[serve.routes]` as SSE.
 - **Generic (`--lang generic`)** — no source is generated; you drop a pre-built
   **wasip2** component into `components/api/` (a scaffolded `README.md` states the
   expected interface: `wasi:http/incoming-handler` for HTTP/SSE, a `rusm:runtime`

@@ -42,12 +42,14 @@ per-request. A handler that needs state simply `call`s a service and shapes the 
 ## Declarative routing
 
 Routing lives in a per-listener `rusm.toml` **`[serve.routes]`** subtable — never in
-handler code — and applies to **`http` listeners only**: it matches by method + path and
-dispatches to a `component#action`. **`sse` and `ws` do not path-route**: each binds one
-component, one process per connection, so there's no routes table (separate SSE/WS
-endpoints = separate `[[serve]]` listeners). Each `[[serve]]` HTTP listener has its own
+handler code — and applies to **every protocol**: it matches by method + path. An `http`
+listener dispatches each request to a `component#action`; an `sse`/`ws` listener routes the
+**connection** to a **bare handler component** (no `#action` — the component is the
+per-connection handler), capturing path params into its connection context. A listener with
+no `[serve.routes]` binds a single handler by `name`. Each `[[serve]]` listener has its own
 `[serve.routes]`, so multiple listeners (e.g. a public API and an admin port) route
-independently. A key is `"METHOD /path/pattern"`, a value is `"component#action"`:
+independently. A key is `"METHOD /path/pattern"`; the value is `"component#action"` (HTTP)
+or `"component"` (ws/sse):
 
 - `:name` captures a path parameter (read via `Params::get("name")`);
 - a trailing `*` captures the remaining segments;
