@@ -736,7 +736,10 @@ mod tests {
         const TS_WS_TEXT: &[u8] = include_bytes!("../../tests/fixtures/ts_ws_text.js");
         let rt = Runtime::new();
         let wr = WasmRuntime::new(rt.clone()).unwrap();
-        let server = wr.ws_server_js(TS_WS_TEXT.to_vec(), CapabilityProfile::Trusted.capabilities());
+        let server = wr.ws_server_js(
+            TS_WS_TEXT.to_vec(),
+            CapabilityProfile::Trusted.capabilities(),
+        );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(server.serve(listener));
