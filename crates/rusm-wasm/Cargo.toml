@@ -31,6 +31,11 @@ tokio-tungstenite = "0.29"
 # Response compression (opt-in per `[[serve]]` listener): gzip for HTTP/SSE replies and
 # raw deflate for WebSocket permessage-deflate. Host-only — never crosses into a guest.
 flate2 = "1"
+# The WebSocket permessage-deflate frame transport (`bridges/ws_codec.rs`) drives an async
+# `Framed` over tungstenite's frame primitives — no async WS lib exposes the RSV1 bit
+# permessage-deflate needs, so the frame codec is ours (built on tungstenite's parse/format).
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
 futures-util = "0.3"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio"] }

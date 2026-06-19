@@ -16,6 +16,7 @@ pub(crate) mod wasip1;
 pub(crate) mod wasip2;
 pub(crate) mod wasip3;
 pub(crate) mod ws;
+pub(crate) mod ws_codec;
 
 use std::collections::HashMap;
 use std::sync::Arc;

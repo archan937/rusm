@@ -17,6 +17,9 @@ pub(crate) enum WsOut {
     Text(Vec<u8>),
     /// A close frame with a status code + reason, then the writer ends the connection.
     Close(u16, String),
+    /// A pong echoing a client ping's payload — the reader forwards inbound pings here so the
+    /// writer (the sole socket owner) answers them. Not guest-visible.
+    Pong(Vec<u8>),
 }
 
 /// A **rich** SSE event an SSE handler emits to its writer (the `sse-send` op) — `data`

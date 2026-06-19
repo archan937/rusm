@@ -1,9 +1,11 @@
 //! Serving **WebSockets** (Phase 11). A WebSocket is only HTTP for its handshake;
 //! after the `Upgrade` it's a raw bidirectional stream — and the handshake + the
 //! protocol live entirely on the host, which RUSM controls. So WS never goes
-//! through `wasi:http`: **hyper** surfaces the upgrade, **`tokio-tungstenite`** runs
-//! the WS protocol (framing, ping/pong, close), and each connection is its own
-//! supervised task — a failure drops only that socket, never the listener.
+//! through `wasi:http`: **hyper** surfaces the upgrade and each connection is its own
+//! supervised task — a failure drops only that socket, never the listener. The WS
+//! protocol itself runs through [`super::ws_codec`] (a frame transport on tungstenite's
+//! frame primitives) so **permessage-deflate** is available; the [`serve_ws_echo`]
+//! baseline still uses tungstenite's `WebSocketStream` directly.
 //!
 //! Two entry points: [`serve_ws_echo`] is a host-side echo (the transport baseline);
 //! [`WsServer`] runs an actual **WASM component process** per connection — each
@@ -22,7 +24,6 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
 use std::collections::HashMap;
@@ -75,7 +76,7 @@ async fn echo_upgrade(
             }
         }
     });
-    Ok(switching_protocols(accept, None))
+    Ok(switching_protocols(accept, None, None))
 }
 
 /// The `Sec-WebSocket-Accept` for a request, or `None` if it carries no WS key.
@@ -106,6 +107,7 @@ pub(crate) async fn upgraded_ws(
 pub(crate) fn switching_protocols(
     accept: String,
     subprotocol: Option<String>,
+    extensions: Option<String>,
 ) -> hyper::Response<Empty<Bytes>> {
     let mut builder = hyper::Response::builder()
         .status(101)
@@ -115,6 +117,10 @@ pub(crate) fn switching_protocols(
     // Echo the negotiated subprotocol so the client adopts it (RFC 6455).
     if let Some(proto) = subprotocol {
         builder = builder.header("sec-websocket-protocol", proto);
+    }
+    // Echo the negotiated extension (permessage-deflate) so the client enables it (RFC 7692).
+    if let Some(ext) = extensions {
+        builder = builder.header("sec-websocket-extensions", ext);
     }
     builder.body(Empty::new()).unwrap()
 }
@@ -155,8 +161,8 @@ pub struct WsServer {
     source: Source,
     spawner: Arc<Spawner>,
     /// Idle keep-alive: if no frame flows for this long, the writer sends a WebSocket
-    /// **ping** — keeping the connection alive through idle-reaping proxies and flushing any
-    /// auto-queued pong. (Inbound client pings are auto-ponged by the protocol layer.)
+    /// **ping** — keeping the connection alive through idle-reaping proxies. (An inbound
+    /// client ping is answered with a pong by the reader, via the writer.)
     keepalive: std::time::Duration,
     /// Supported subprotocols (the listener's `subprotocols` list). On the handshake the
     /// first client-offered one present here is negotiated + echoed; empty = none.
@@ -169,6 +175,9 @@ pub struct WsServer {
     max_message_size: Option<usize>,
     /// Allowed `Origin`s for the handshake (CSWSH protection); empty = any origin.
     allowed_origins: Arc<Vec<String>>,
+    /// Negotiate **permessage-deflate** when the client offers it (the listener's
+    /// `compression`). `false` = never compressed.
+    compress: bool,
 }
 
 impl WasmRuntime {
@@ -187,6 +196,7 @@ impl WasmRuntime {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Arc::new(Vec::new()),
+            compress: false,
         }
     }
 
@@ -207,6 +217,7 @@ impl WasmRuntime {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Arc::new(Vec::new()),
+            compress: false,
         }
     }
 
@@ -231,6 +242,7 @@ impl WasmRuntime {
             max_connections: None,
             max_message_size: None,
             allowed_origins: Arc::new(Vec::new()),
+            compress: false,
         }
     }
 }
@@ -282,6 +294,12 @@ impl WsServer {
     /// Restrict the handshake to these `Origin`s (CSWSH protection); empty = any origin.
     pub fn with_allowed_origins(mut self, origins: Vec<String>) -> Self {
         self.allowed_origins = Arc::new(origins);
+        self
+    }
+
+    /// Negotiate permessage-deflate when the client offers it (the listener's `compression`).
+    pub fn with_compression(mut self, on: bool) -> Self {
+        self.compress = on;
         self
     }
 
@@ -394,48 +412,65 @@ impl WsServer {
         };
         log(101);
         // Negotiate a subprotocol (echoed in the 101 + surfaced via the connection context),
-        // then capture the connection context before `upgraded_ws` consumes the request;
-        // route params come from the resolver.
+        // then capture the connection context before the request is consumed; route params
+        // come from the resolver.
         let subprotocol = self.negotiate_subprotocol(&req);
+        // Negotiate permessage-deflate when enabled and the client offers it (RFC 7692); the
+        // echoed extension value goes in the 101, and `deflate` drives the per-message codec.
+        let extensions = self
+            .compress
+            .then(|| {
+                super::ws_codec::negotiate_permessage_deflate(
+                    req.headers()
+                        .get("sec-websocket-extensions")
+                        .and_then(|v| v.to_str().ok()),
+                )
+            })
+            .flatten();
+        let deflate = extensions.is_some();
         let connection = super::conn::connection_info(&req, peer, params, subprotocol.clone());
         let server = self.clone();
+        let max_size = self.max_message_size;
         tokio::spawn(async move {
             // Hold the connection-cap permit for the connection's whole life.
             let _permit = permit;
-            if let Some(ws) = upgraded_ws(req, server.max_message_size).await {
+            if let Ok(upgraded) = hyper::upgrade::on(req).await {
+                let conn = super::ws_codec::WsConn::new(TokioIo::new(upgraded), deflate, max_size);
                 server
-                    .run_connection(ws, prepared, bundle, caps, connection)
+                    .run_connection(conn, prepared, bundle, caps, connection)
                     .await;
             }
         });
-        Ok(switching_protocols(accept, subprotocol))
+        Ok(switching_protocols(accept, subprotocol, extensions))
     }
 
     /// Wire one upgraded connection to a fresh component process (the resolved handler).
     async fn run_connection(
         &self,
-        ws: WebSocketStream<TokioIo<Upgraded>>,
+        conn: super::ws_codec::WsConn<TokioIo<Upgraded>>,
         prepared: PreparedComponent,
         bundle: Option<Arc<Vec<u8>>>,
         caps: Capabilities,
         connection: crate::actor::ConnectionInfo,
     ) {
-        let (mut sink, mut stream) = ws.split();
+        let (mut sink, mut stream) = conn.split();
         let rt = self.spawner.rt.clone();
 
-        // Writer: a Wasm-free process owning the socket sink. It races two inputs and frames
-        // each with the right opcode — **binary** frames arrive via its mailbox (a plain
-        // `send` to the writer pid, the unchanged path), **text** frames on a bounded channel
-        // the handler feeds via `ws-send-text` (the bound back-pressures a slow client). All
-        // IO stays out of the sandboxed component.
+        // Writer: a Wasm-free process owning the socket sink. It races the handler's outputs
+        // and the keep-alive — **binary** frames arrive via its mailbox (a plain `send` to the
+        // writer pid), **text/close** on a bounded channel the handler feeds via
+        // `ws-send-text`/`ws-close`, and **pong** forwarded by the reader for an inbound ping
+        // (the writer is the sole socket owner). Compression, if negotiated, is applied here
+        // per message. All IO stays out of the sandboxed component.
         let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<WsOut>(WS_OUT_CAPACITY);
+        let reader_out = out_tx.clone(); // the reader uses this to answer inbound pings
         let keepalive = self.keepalive;
         let writer = rt.spawn(move |mut ctx| async move {
             loop {
                 tokio::select! {
                     received = ctx.recv() => match received.message() {
                         Some(bytes) => {
-                            if sink.send(Message::binary(bytes)).await.is_err() {
+                            if sink.send_binary(bytes).await.is_err() {
                                 break;
                             }
                         }
@@ -444,29 +479,27 @@ impl WsServer {
                     out = out_rx.recv() => match out {
                         // A text frame (ws-send-text).
                         Some(WsOut::Text(payload)) => {
-                            let text = String::from_utf8_lossy(&payload).into_owned();
-                            if sink.send(Message::text(text)).await.is_err() {
+                            if sink.send_text(payload).await.is_err() {
+                                break;
+                            }
+                        }
+                        // A pong answering a client ping (forwarded by the reader).
+                        Some(WsOut::Pong(payload)) => {
+                            if sink.send_pong(payload).await.is_err() {
                                 break;
                             }
                         }
                         // A server-initiated close with a code + reason (ws-close), then end.
                         Some(WsOut::Close(code, reason)) => {
-                            use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-                            use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
-                            let _ = sink
-                                .send(Message::Close(Some(CloseFrame {
-                                    code: CloseCode::from(code),
-                                    reason: reason.into(),
-                                })))
-                                .await;
+                            let _ = sink.send_close(code, reason).await;
                             break;
                         }
                         None => break, // handler gone (its control sender dropped)
                     },
-                    // Idle keep-alive: no frame for `keepalive` → ping (flushes any queued
-                    // pong too). Resets each loop, so it fires only on a genuinely idle link.
+                    // Idle keep-alive: no frame for `keepalive` → ping. Resets each loop, so it
+                    // fires only on a genuinely idle link.
                     _ = tokio::time::sleep(keepalive) => {
-                        if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        if sink.send_ping(Vec::new()).await.is_err() {
                             break;
                         }
                     }
@@ -486,13 +519,23 @@ impl WsServer {
         }
         rt.send(component.pid(), writer.pid().raw().to_string().into_bytes());
 
-        // Pump inbound frames into the component's mailbox (one message per frame).
-        while let Some(Ok(message)) = stream.next().await {
-            if message.is_close() {
-                break;
-            }
-            if message.is_text() || message.is_binary() {
-                rt.send(component.pid(), message.into_data().to_vec());
+        // Pump inbound messages into the component's mailbox (one message per WS message).
+        // Control frames are handled here: a ping is answered with a pong (via the writer), a
+        // pong is ignored, a close ends the loop. A protocol error also ends the connection.
+        use super::ws_codec::WsMessage;
+        while let Some(result) = stream.recv().await {
+            match result {
+                Ok(WsMessage::Text(data)) | Ok(WsMessage::Binary(data)) => {
+                    rt.send(component.pid(), data);
+                }
+                Ok(WsMessage::Ping(payload)) => {
+                    // Answer via the writer (the sole socket owner); if it's gone, end.
+                    if reader_out.send(WsOut::Pong(payload)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Pong(_)) => {} // a reply to our keep-alive ping — nothing to do
+                Ok(WsMessage::Close(_)) | Err(_) => break,
             }
         }
 
@@ -1267,6 +1310,81 @@ mod tests {
             "the freed slot admits a new connection"
         );
         drop(admitted);
+
+        handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn negotiates_and_round_trips_permessage_deflate() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A real permessage-deflate round-trip through the running server: a raw client offers
+        // the extension, the 101 echoes it, the client sends a masked RSV1 *deflated* frame,
+        // and the echoing handler's reply comes back as an RSV1 deflated frame that inflates to
+        // the original. (tokio-tungstenite can't drive this — it has no deflate — so we speak
+        // the wire directly, reusing the codec's own deflate transform.)
+        const WS_LIFECYCLE: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_lifecycle.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(WS_LIFECYCLE).unwrap(), "run")
+            .unwrap();
+        let server = wr
+            .ws_server(&prepared, CapabilityProfile::Trusted.capabilities())
+            .with_compression(true);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(server.serve(listener));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(
+            b"GET / HTTP/1.1\r\nHost: rusm\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+              Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\
+              Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+        // Read the handshake response head; it must accept the extension.
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            conn.read_exact(&mut byte).await.unwrap();
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8_lossy(&head).to_lowercase();
+        assert!(head.starts_with("http/1.1 101"), "got: {head}");
+        assert!(
+            head.contains("sec-websocket-extensions: permessage-deflate"),
+            "the 101 negotiates permessage-deflate: {head}"
+        );
+
+        // Send a masked, RSV1, deflated text frame (a small payload → a 1-byte length).
+        let payload = b"hello compress hello compress".to_vec();
+        let compressed = crate::bridges::ws_codec::deflate_message(&payload).unwrap();
+        assert!(compressed.len() < 126, "payload fits a 7-bit length");
+        let mask = [0x01u8, 0x02, 0x03, 0x04];
+        let mut frame = vec![0xC1, 0x80 | compressed.len() as u8]; // fin+rsv1+text; masked+len
+        frame.extend_from_slice(&mask);
+        frame.extend(compressed.iter().enumerate().map(|(i, b)| b ^ mask[i & 3]));
+        conn.write_all(&frame).await.unwrap();
+
+        // The handler echoes it back as a binary frame; the server compresses it (RSV1).
+        let mut reply_head = [0u8; 2];
+        conn.read_exact(&mut reply_head).await.unwrap();
+        assert_eq!(reply_head[0] & 0x40, 0x40, "server set RSV1 (compressed)");
+        assert_eq!(reply_head[0] & 0x0F, 0x02, "echoed as a binary frame");
+        let len = (reply_head[1] & 0x7F) as usize;
+        assert!(len < 126, "the compressed echo fits a 7-bit length");
+        let mut body = vec![0u8; len];
+        conn.read_exact(&mut body).await.unwrap();
+        assert_eq!(
+            crate::bridges::ws_codec::inflate_message(&body, None).unwrap(),
+            payload,
+            "the deflated echo inflates to the original message"
+        );
 
         handle.abort();
     }

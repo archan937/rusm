@@ -2603,6 +2603,7 @@ name = "rusm-wasm"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "flate2",
  "futures-util",
  "http-body-util",
@@ -2617,6 +2618,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.29.0",
+ "tokio-util",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

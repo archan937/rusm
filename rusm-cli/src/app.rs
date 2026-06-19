@@ -384,6 +384,7 @@ pub async fn serve_apps(
                         .with_max_connections(spec.max_connections)
                         .with_max_message_size(spec.max_message_size)
                         .with_allowed_origins(spec.allowed_origins.clone())
+                        .with_compression(spec.compression)
                         .serve(listener),
                 ),
             }
@@ -424,6 +425,7 @@ pub async fn serve_apps(
                         .with_max_connections(spec.max_connections)
                         .with_max_message_size(spec.max_message_size)
                         .with_allowed_origins(spec.allowed_origins.clone())
+                        .with_compression(spec.compression)
                         .serve(listener),
                 ),
                 ServeProtocol::Http => tokio::spawn(
