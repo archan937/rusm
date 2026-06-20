@@ -43,13 +43,20 @@ interface actor {
 
     /// Send a **text** WebSocket frame on this connection (the binary path is a plain
     /// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this is
-    /// not a WebSocket handler or the socket has closed.
+    /// not a WebSocket handler or the socket has closed. Additive: a guest that never calls
+    /// it keeps sending binary frames exactly as before.
     ws-send-text: func(payload: list<u8>) -> bool;
 
-    /// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
+    /// Close this WebSocket connection with a status `code` (e.g. 1000 normal, 1011 error)
+    /// and a `reason` — a server-initiated close frame, after which the connection tears
+    /// down. No-op for a non-WebSocket process.
     ws-close: func(code: u16, reason: string);
 
-    /// Emit a rich SSE event (data + optional event/id/retry); plain data: is a regular send.
+    /// Emit a **rich** SSE event on this connection: `data` plus optional `event` (a named
+    /// event type), `id` (the event id the client echoes as `Last-Event-ID` on reconnect —
+    /// the basis for resumption), and `retry` (client reconnect backoff, ms). The plain
+    /// `data:`-only path is a regular `send` to the writer pid. Returns `false` if this is
+    /// not an SSE handler or the client has disconnected. Additive.
     sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry: option<u32>) -> bool;
 
     /// Spawn a registered component (by the name it was registered under) as a new
