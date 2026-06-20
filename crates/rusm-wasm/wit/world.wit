@@ -122,23 +122,6 @@ interface actor {
     /// process-control (it terminates other processes), exactly like `kill`.
     kill-tag: func(tag: string) -> u32;
 
-    /// Severity for [`log`] — maps to `console.{error,warn,log/info,debug}` (TS) and the
-    /// `log` crate's levels (Rust).
-    enum log-level {
-        error,
-        warn,
-        info,
-        debug,
-    }
-
-    /// Emit a log line through the **platform** logger. The host stamps the timestamp,
-    /// this process's component name (its label) + pid, and the severity colour, formats
-    /// it exactly like every other RUSM log line, and writes it to the node's log stream —
-    /// gated by the node's `[log] level`. The guest supplies only severity + message;
-    /// name, pid, and format are the platform's, so a developer never wires them.
-    /// `console.*` (TS) and the `log` crate (Rust) route here.
-    log: func(level: log-level, message: string);
-
     /// A restart strategy for [`supervise`].
     enum supervise-strategy {
         one-for-one,
@@ -194,10 +177,31 @@ interface kv {
     %list: func(bucket: string) -> result<list<string>, string>;
 }
 
+/// Platform logging — a **polyfill** bridge. A guest's *standard* logging (`console.*` in
+/// TS, the `log` crate in Rust, `log`/`slog` in Go) routes here; the host stamps the time,
+/// the process's component name (its label) + pid, and the severity colour, formats it via
+/// `rusm-logfmt` exactly like every other RUSM line, and writes it to the node's log stream
+/// — gated by the node `[log] level`. Not capability-gated: it's operator-controlled
+/// diagnostics (an `off` node drops every line), so the guest wires no name/pid/format.
+interface log {
+    /// Severity — maps to `console.{error,warn,log/info,debug}` (TS) and the `log` crate's
+    /// levels (Rust). `log`'s sub-debug `trace` folds into `debug`.
+    enum log-level {
+        error,
+        warn,
+        info,
+        debug,
+    }
+
+    /// Emit one line through the platform logger; the guest supplies only severity + message.
+    log: func(level: log-level, message: string);
+}
+
 /// A RUSM actor component: imports the actor API + platform bridges, and exports an
 /// entry point the runtime calls to start the process.
 world process {
     import actor;
     import kv;
+    import log;
     export run: func();
 }

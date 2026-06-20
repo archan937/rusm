@@ -1,0 +1,19 @@
+/// Platform logging — a **polyfill** bridge. A guest's *standard* logging (`console.*` in
+/// TS, the `log` crate in Rust, `log`/`slog` in Go) routes here; the host stamps the time,
+/// the process's component name (its label) + pid, and the severity colour, formats it via
+/// `rusm-logfmt` exactly like every other RUSM line, and writes it to the node's log stream
+/// — gated by the node `[log] level`. Not capability-gated: it's operator-controlled
+/// diagnostics (an `off` node drops every line), so the guest wires no name/pid/format.
+interface log {
+    /// Severity — maps to `console.{error,warn,log/info,debug}` (TS) and the `log` crate's
+    /// levels (Rust). `log`'s sub-debug `trace` folds into `debug`.
+    enum log-level {
+        error,
+        warn,
+        info,
+        debug,
+    }
+
+    /// Emit one line through the platform logger; the guest supplies only severity + message.
+    log: func(level: log-level, message: string);
+}

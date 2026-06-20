@@ -49,6 +49,7 @@ use wasi::io::streams::OutputStream;
 // The actor bridge JS is shared verbatim with the js-runner (single source of truth) —
 // only the *backing* native `__*` ops differ (this runner wires the no-mailbox subset),
 // so `process.js`'s presence-guards expose exactly that subset here.
+const LOG_JS: &str = include_str!("../../js-runner/bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../../js-runner/bridge/webapi.js");
 const PROCESS_JS: &str = include_str!("../../js-runner/bridge/process.js");
 const KV_JS: &str = include_str!("../../js-runner/bridge/kv.js");
@@ -112,13 +113,14 @@ fn boot_bridge(ctx: Ctx<'_>) {
     ));
     def!("__send", js_send);
     def!("__log", |level: String, message: String| {
+        use rusm::runtime::log as hostlog;
         let level = match level.as_str() {
-            "error" => actor::LogLevel::Error,
-            "warn" => actor::LogLevel::Warn,
-            "debug" => actor::LogLevel::Debug,
-            _ => actor::LogLevel::Info,
+            "error" => hostlog::LogLevel::Error,
+            "warn" => hostlog::LogLevel::Warn,
+            "debug" => hostlog::LogLevel::Debug,
+            _ => hostlog::LogLevel::Info,
         };
-        actor::log(level, &message);
+        hostlog::log(level, &message);
     });
     def!("__kv_get", js_kv_get);
     def!("__kv_set", js_kv_set);
@@ -126,8 +128,9 @@ fn boot_bridge(ctx: Ctx<'_>) {
     def!("__kv_exists", js_kv_exists);
     def!("__kv_list", js_kv_list);
 
-    // Bridge JS, in dependency order: webapi (console → `__log`), the actor `Process`
-    // (guarded to the wired subset), `kv`, then the HTTP glue.
+    // Bridge JS, in dependency order: log (console → `__log`), webapi (the base Web
+    // standards), the actor `Process` (guarded to the wired subset), `kv`, then the HTTP glue.
+    eval(&ctx, LOG_JS, "log.js").expect("log.js");
     eval(&ctx, WEBAPI_JS, "webapi.js").expect("webapi.js");
     eval(&ctx, PROCESS_JS, "process.js").expect("process.js");
     eval(&ctx, KV_JS, "kv.js").expect("kv.js");

@@ -51,7 +51,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
             ::wit_bindgen::generate!({
                 inline: #RUNTIME_WIT,
                 world: "process",
-                with: { "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv },
+                with: { "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": ::rusm_rs::rusm::runtime::log },
             });
 
             struct Component;
@@ -115,7 +115,7 @@ pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::wit_bindgen::generate!({
                 inline: #RUNTIME_WIT,
                 world: "process",
-                with: { "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv },
+                with: { "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": ::rusm_rs::rusm::runtime::log },
             });
 
             struct Component;

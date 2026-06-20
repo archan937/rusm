@@ -100,10 +100,6 @@ func wasmimport_WhereisTag(tag0 *uint8, tag1 uint32, result *cm.List[Pid])
 //go:noescape
 func wasmimport_KillTag(tag0 *uint8, tag1 uint32) (result0 uint32)
 
-//go:wasmimport rusm:runtime/actor@0.1.0 log
-//go:noescape
-func wasmimport_Log(level0 uint32, message0 *uint8, message1 uint32)
-
 //go:wasmimport rusm:runtime/actor@0.1.0 supervise
 //go:noescape
 func wasmimport_Supervise(strategy0 uint32, children0 *string, children1 uint32, maxRestarts0 uint32, withinMs0 uint32, result *cm.Result[string, Pid, string])

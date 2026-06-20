@@ -79,51 +79,6 @@ type ConnectionInfo struct {
 	Subprotocol cm.Option[string] `json:"subprotocol"`
 }
 
-// LogLevel represents the enum "rusm:runtime/actor@0.1.0#log-level".
-//
-// Severity for [`log`] — maps to `console.{error,warn,log/info,debug}` (TS) and the
-// `log` crate's levels (Rust).
-//
-//	enum log-level {
-//		error,
-//		warn,
-//		info,
-//		debug
-//	}
-type LogLevel uint8
-
-const (
-	LogLevelError LogLevel = iota
-	LogLevelWarn
-	LogLevelInfo
-	LogLevelDebug
-)
-
-var _LogLevelStrings = [4]string{
-	"error",
-	"warn",
-	"info",
-	"debug",
-}
-
-// String implements [fmt.Stringer], returning the enum case name of e.
-func (e LogLevel) String() string {
-	return _LogLevelStrings[e]
-}
-
-// MarshalText implements [encoding.TextMarshaler].
-func (e LogLevel) MarshalText() ([]byte, error) {
-	return []byte(e.String()), nil
-}
-
-// UnmarshalText implements [encoding.TextUnmarshaler], unmarshaling into an enum
-// case. Returns an error if the supplied text is not one of the enum cases.
-func (e *LogLevel) UnmarshalText(text []byte) error {
-	return _LogLevelUnmarshalCase(e, text)
-}
-
-var _LogLevelUnmarshalCase = cm.CaseUnmarshaler[LogLevel](_LogLevelStrings[:])
-
 // SuperviseStrategy represents the enum "rusm:runtime/actor@0.1.0#supervise-strategy".
 //
 // A restart strategy for [`supervise`].
@@ -505,26 +460,6 @@ func KillTag(tag string) (result uint32) {
 	tag0, tag1 := cm.LowerString(tag)
 	result0 := wasmimport_KillTag((*uint8)(tag0), (uint32)(tag1))
 	result = (uint32)((uint32)(result0))
-	return
-}
-
-// Log represents the imported function "log".
-//
-// Emit a log line through the **platform** logger. The host stamps the timestamp,
-// this process's component name (its label) + pid, and the severity colour, formats
-// it exactly like every other RUSM log line, and writes it to the node's log stream
-// —
-// gated by the node's `[log] level`. The guest supplies only severity + message;
-// name, pid, and format are the platform's, so a developer never wires them.
-// `console.*` (TS) and the `log` crate (Rust) route here.
-//
-//	log: func(level: log-level, message: string)
-//
-//go:nosplit
-func Log(level LogLevel, message string) {
-	level0 := (uint32)(level)
-	message0, message1 := cm.LowerString(message)
-	wasmimport_Log((uint32)(level0), (*uint8)(message0), (uint32)(message1))
 	return
 }
 

@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,9 +233,11 @@ dependencies = [
 
 [[package]]
 name = "rusm-rs"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
+ "log",
  "rusm-rs-macros",
+ "rusm-wire",
  "serde",
  "serde_json",
  "wit-bindgen",
@@ -237,11 +245,19 @@ dependencies = [
 
 [[package]]
 name = "rusm-rs-macros"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "rusm-wire"
+version = "0.3.0"
+dependencies = [
+ "base64",
+ "serde",
 ]
 
 [[package]]

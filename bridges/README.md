@@ -73,7 +73,7 @@ carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `
 | `pg` | introduced | `register_tag`/`whereis_tag`/`kill_tag` | rusm-otp | `process-control` (kill-tag) | W H R G J T | `pubsub-fanout` | ⬜ |
 | `stream` | introduced | cross-process byte streams | rusm-otp | — | W H R G J T | `stream-pipe` | ⬜ |
 | `kv` | introduced | `kv.bucket(..)` | rusm-kv (redb) | `storage` | W H R G J T | `kv-storm` (ACID ceiling) | ✅ |
-| `log` | polyfill | `console.*` / `log` / `slog` | rusm-logfmt | — (level) | W H R G J T | — (not hot) | ⬜ |
+| `log` | polyfill | `console.*` / `log` / `slog` | rusm-logfmt | — (level) | W H R G J | — (not hot) | ✅ |
 | `serve` | polyfill + introduced | `fetch` / WS+SSE handlers | http/ws/sse | — | W H R G J T | serving (below) | ⬜ |
 | `http` | transport | — (drives handlers) | hyper | — | H | `http-throughput` / loadtest | ⬜ |
 | `ws` | transport | — (process per conn) | tokio-tungstenite | — | H | `ws-echo` | ⬜ |

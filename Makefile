@@ -128,10 +128,14 @@ sync-bridges: ## Materialize bridges/<name>/ (canonical) into every crate: assem
 	@# (inside the workspace) survive a later `cargo fmt` byte-for-byte — otherwise the drift
 	@# guard would trip the moment anyone runs fmt.
 	@rustfmt --edition 2021 bridges/*/host.rs bridges/*/guest.rs 2>/dev/null || true
+	@# RS module name == bridge name, except `log` → `logging` (a bare `pub mod log` would
+	@# clash with the `log` crate rusm-rs depends on). Other languages have no such clash.
 	@for d in bridges/*/; do \
 		name=$$(basename $$d); \
+		rs_name=$$name; \
+		if [ "$$name" = log ]; then rs_name=logging; fi; \
 		if [ -f "$$d/host.rs"  ]; then cp "$$d/host.rs"  "crates/rusm-wasm/src/bridges/$$name.rs"; fi; \
-		if [ -f "$$d/guest.rs" ]; then cp "$$d/guest.rs" "crates/rusm-rs/src/$$name.rs"; fi; \
+		if [ -f "$$d/guest.rs" ]; then cp "$$d/guest.rs" "crates/rusm-rs/src/$$rs_name.rs"; fi; \
 		if [ -f "$$d/guest.go" ]; then cp "$$d/guest.go" "packages/rusm-go/$$name.go"; fi; \
 		if [ -f "$$d/guest.js" ]; then cp "$$d/guest.js" "crates/rusm-wasm/js-runner/bridge/$$name.js"; fi; \
 	done

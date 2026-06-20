@@ -1,10 +1,10 @@
 // webapi.js — generic Web API polyfills for QuickJS (rquickjs).
 //
-// Separation of concerns: this file is *pure standards* — zero RUSM/actor
-// knowledge, zero host imports except optional `__print` for console. The actor
-// bridge lives in process.js. A TS developer never imports or sees this; it's
-// installed by the js-runner before their bundle runs, so `TextEncoder`, `URL`,
-// `ReadableStream`, etc. are simply present.
+// Separation of concerns: the base Web standards (`TextEncoder`, `URL`, base64,
+// `ReadableStream`, …) — no RUSM/actor knowledge. `console` is the **log bridge**
+// (bridge/log.js, eval'd before this); the actor bridge lives in process.js. A TS
+// developer never imports or sees this; it's installed by the js-runner before their
+// bundle runs, so these globals are simply present.
 //
 // `fetch` is intentionally a clear-erroring stub: real HTTP needs RUSM to host
 // `wasi:http` (roadmap). Everything else here is self-contained.
@@ -15,31 +15,8 @@
     if (!G[name]) G[name] = value;
   };
 
-  // console → the platform logger when available: the host stamps the time, this
-  // process's component name + pid, and the severity colour, and gates by the node
-  // `[log] level`, so a guest just calls console.* and gets the platform look. A runner
-  // without the actor world (e.g. the raw wasi:http js-http-runner) has no `__log`, so we
-  // fall back to raw stderr (`__print`) with a `[level]` prefix — same as before.
-  if (!G.console) {
-    // bigint (pids!) and undefined have no JSON form — String() them; JSON the rest.
-    const show = (x) =>
-      typeof x === "string" ? x
-      : typeof x === "bigint" || x === undefined ? String(x)
-      : JSON.stringify(x);
-    const fmt = (...a) => a.map(show).join(" ");
-    const log = G.__log;
-    const print = G.__print ?? (() => {});
-    const at = log
-      ? (level) => (...a) => log(level, fmt(...a))
-      : (level) => (...a) => print(level === "info" ? fmt(...a) : `[${level}] ` + fmt(...a));
-    G.console = {
-      log: at("info"),
-      info: at("info"),
-      warn: at("warn"),
-      error: at("error"),
-      debug: at("debug"),
-    };
-  }
+  // (`console` is the `log` bridge's polyfill — see bridge/log.js, eval'd before this —
+  // so this file stays pure standards with no `__log`/actor dependency.)
 
   // base64 (btoa/atob) — the standard Web APIs, operating on binary (Latin-1) strings.
   // Self-contained; the ecosystem (JWTs, data URLs, hashing) expects them present.

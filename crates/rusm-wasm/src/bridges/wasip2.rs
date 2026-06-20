@@ -51,6 +51,7 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<ComponentLinker<WasiHost>>
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
     crate::actor::add_to_linker(&mut linker)?;
     super::kv::add_to_linker(&mut linker)?;
+    super::log::add_to_linker(&mut linker)?;
     Ok(linker)
 }
 

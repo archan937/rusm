@@ -474,6 +474,7 @@ fn js_crypto_aes_gcm_decrypt<'a>(
 /// The guest JS environment, split by concern (see `bridge/`): Web API polyfills
 /// (standards-only) then the `Process`/`Stream` actor API (over the host `__*`
 /// primitives). Both are evaluated before the user's bundle.
+const LOG_JS: &str = include_str!("../bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../bridge/webapi.js");
 const PROCESS_JS: &str = include_str!("../bridge/process.js");
 const KV_JS: &str = include_str!("../bridge/kv.js");
@@ -631,13 +632,14 @@ fn boot_bridge(ctx: Ctx<'_>) {
     // level`). The guest passes only a severity + the joined message; no name,
     // pid, or format wiring (webapi.js maps the console methods to a level).
     def!("__log", |level: String, message: String| {
+        use rusm::runtime::log as hostlog;
         let level = match level.as_str() {
-            "error" => actor::LogLevel::Error,
-            "warn" => actor::LogLevel::Warn,
-            "debug" => actor::LogLevel::Debug,
-            _ => actor::LogLevel::Info,
+            "error" => hostlog::LogLevel::Error,
+            "warn" => hostlog::LogLevel::Warn,
+            "debug" => hostlog::LogLevel::Debug,
+            _ => hostlog::LogLevel::Info,
         };
-        actor::log(level, &message);
+        hostlog::log(level, &message);
     });
     // Whether stderr is a terminal — lets a TS logger colour only when piping
     // wouldn't litter escape codes, matching the host's platform-log gating.
@@ -669,6 +671,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
 
     // Web API polyfills, the raw actor API, durable storage, then the
     // RPC/service layer.
+    let _: () = ctx.eval(LOG_JS).unwrap();
     let _: () = ctx.eval(WEBAPI_JS).unwrap();
     let _: () = ctx.eval(PROCESS_JS).unwrap();
     let _: () = ctx.eval(KV_JS).unwrap();

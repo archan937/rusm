@@ -294,36 +294,6 @@ impl actor::Host for WasiHost {
         self.rt.kill_tag(&tag) as u32
     }
 
-    /// Emit a log line through the **platform** logger. The host stamps the time, this
-    /// process's component name (its label) + pid, and the severity colour, formats it
-    /// via [`rusm_logfmt::line`], and writes it to the node's log stream — gated by the
-    /// node `[log] level`. So a guest's `console.*` (TS) / `log::*` (Rust) lands in the
-    /// same stream as the platform's lifecycle logs, with no name/pid/format wiring in
-    /// guest code. Not capability-gated — it's diagnostics the node operator controls via
-    /// the level; an `off` node simply drops every line here.
-    async fn log(&mut self, level: actor::LogLevel, message: String) {
-        let (gate, severity) = match level {
-            actor::LogLevel::Error => (rusm_otp::LogLevel::Error, rusm_logfmt::Level::Error),
-            actor::LogLevel::Warn => (rusm_otp::LogLevel::Warn, rusm_logfmt::Level::Warn),
-            actor::LogLevel::Info => (rusm_otp::LogLevel::Info, rusm_logfmt::Level::Info),
-            actor::LogLevel::Debug => (rusm_otp::LogLevel::Debug, rusm_logfmt::Level::Debug),
-        };
-        if !self.rt.wants_log(gate) {
-            return;
-        }
-        let component = self
-            .rt
-            .info(Pid::from_raw(self.pid))
-            .and_then(|i| i.label)
-            .unwrap_or_default();
-        // One atomic stderr write per line (`eprintln!` locks stderr for the call), so
-        // concurrently-logging processes never interleave mid-line.
-        eprintln!(
-            "{}",
-            rusm_logfmt::line(severity, &component, self.pid, &message)
-        );
-    }
-
     /// Supervise named child components under the **native** `rusm-otp` supervisor —
     /// the single restart implementation the guest `Supervisor` SDKs delegate to.
     /// Capability-gated like `spawn`; each child is spawned with *this* process's

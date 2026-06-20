@@ -46,6 +46,33 @@ fn bridge_files_in_sync() {
         include_str!("../../../bridges/kv/guest.js"),
         include_str!("../js-runner/bridge/kv.js"),
     );
+
+    // log bridge — host + all three guests (RS module is `logging`, not `log`, to avoid
+    // clashing with the `log` crate).
+    assert_synced(
+        "bridges/log/host.rs",
+        "crates/rusm-wasm/src/bridges/log.rs",
+        include_str!("../../../bridges/log/host.rs"),
+        include_str!("../src/bridges/log.rs"),
+    );
+    assert_synced(
+        "bridges/log/guest.rs",
+        "crates/rusm-rs/src/logging.rs",
+        include_str!("../../../bridges/log/guest.rs"),
+        include_str!("../../rusm-rs/src/logging.rs"),
+    );
+    assert_synced(
+        "bridges/log/guest.go",
+        "packages/rusm-go/log.go",
+        include_str!("../../../bridges/log/guest.go"),
+        include_str!("../../../packages/rusm-go/log.go"),
+    );
+    assert_synced(
+        "bridges/log/guest.js",
+        "crates/rusm-wasm/js-runner/bridge/log.js",
+        include_str!("../../../bridges/log/guest.js"),
+        include_str!("../js-runner/bridge/log.js"),
+    );
 }
 
 #[test]

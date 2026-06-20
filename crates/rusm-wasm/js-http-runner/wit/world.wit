@@ -15,4 +15,5 @@ world bindings {
   include wasi:http/proxy@0.2.6;
   import rusm:runtime/actor@0.1.0;
   import rusm:runtime/kv@0.1.0;
+  import rusm:runtime/log@0.1.0;
 }
