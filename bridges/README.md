@@ -10,73 +10,98 @@ bridges/<name>/
   bridge.wit      # the contract (WIT interface slice)          → assembled into every world.wit
   host.rs         # native host impl + linker wiring             → compiled into rusm-wasm
   guest.rs        # Rust guest binding                           → synced into rusm-rs
-  guest.go        # Go guest binding                             → synced into rusm-go
+  guest.go        # Go guest binding                            → synced into rusm-go
   guest.js        # TS/JS guest binding (QuickJS runtime bridge) → synced into the js-runner
+  guest.d.ts      # published TS types (the .d.ts app authors consume) → synced into rusm-ts
 ```
+
+**The shape is presence-based, not fixed — it varies by type** (`sync-bridges` copies each
+file only `if` present). A transport bridge is `host.rs` only; a shared-types interface is
+`bridge.wit` only; a TS-only polyfill is `host.rs` + `guest.js`/`guest.d.ts`. See the
+inventory's *files* column.
 
 ## Performance is the decider — every bridge is typed, never marshaled
 
 There is **no generic `bridge-call`/JSON dispatcher**. Every bridge — built-in or custom,
 in any guest language — compiles to a **typed WIT host call**. The cost of supporting
-custom bridges lives at **build time** (codegen + a js-runner rebuild when a TS guest uses
-a custom bridge), never at **runtime**. Reorganizing into this layout emits identical
-artifacts; the hot, fiber-coupled primitives keep their exact lowering to the instruction.
+custom bridges is **build-time** (codegen + a js-runner rebuild when a TS guest uses a
+custom bridge), never **runtime**. Reorganizing into this layout emits identical artifacts;
+the hot, fiber-coupled primitives keep their exact lowering to the instruction.
 
 ---
 
-## Taxonomy
-
-Bridges classify on **two orthogonal axes**: *what the guest sees* (3 functional types)
-and *who authors it* (platform vs application).
+## Taxonomy — two orthogonal axes
 
 ### Axis 1 — functional type (what the guest sees)
 
-| # | Type | Guest surface | `guest.*` | Inversion |
-|---|---|---|---|---|
-| 1 | **Polyfill** | a **standard** API the language/web/WASI already defines | a shim — or *nothing* (the stdlib itself) | guest calls it |
-| 2 | **Introduced shape** | a **new rusm** API (Erlang/OTP, mostly) | the idiomatic per-language wrapper | guest calls it |
-| 3 | **Transport / serving** | **none** — the host owns a protocol loop and *drives the guest* | none; it *feeds* types 1 & 2 | **it calls the guest** |
+| # | Type | Guest surface | Inversion |
+|---|---|---|---|
+| 1 | **Polyfill** | a **standard** API the language/web/WASI already defines | guest calls it |
+| 2 | **Introduced shape** | a **new rusm** API (Erlang/OTP, mostly) | guest calls it |
+| 3 | **Transport / serving** | **none** — the host owns a protocol loop and *drives the guest* | **it calls the guest** |
 
-Type 3 is the one that has no `guest.*`: it doesn't expose an API, it turns a connection
-into a `process` / `serve` handler. `wasip*` collapses into type 1 (from the guest's view
-it *is* the stdlib; the host impl delegates to `wasmtime-wasi`). `serve` straddles 1↔2 —
-the HTTP `fetch` handler is a polyfill, the WS/SSE `open/message/close` handlers are an
-introduced shape. **Observability** (metrics/observer/attach) is *not* a bridge — it reads
-runtime state for operators; it has no guest wiring.
+Type 3 has no `guest.*`: it turns a connection into an `actor` / `serve` handler. `wasip*`
+collapses into type 1 (from the guest's view it *is* the stdlib; the host delegates to
+`wasmtime-wasi`). `serve` straddles 1↔2 (HTTP `fetch` handler = polyfill; WS/SSE handlers =
+introduced). **Not bridges:** a shared-**`types`** interface (a WIT type vocabulary — no
+impl, no capability) is *supporting* infrastructure; **observability** (metrics/observer/
+attach) reads runtime state for operators; **`cluster`** is the distribution layer (a whole
+crate — QUIC/TLS/gossip — that transparently extends `actor` cross-node), not a bridge.
 
-### Axis 2 — authorship (platform vs application) → the 3 × 2 matrix
+### Axis 2 — authorship → the 3 × 2 matrix
 
 |                | **Platform** (rusm ships it) | **Application** (app authors it in *its* `bridges/`) |
 |----------------|------------------------------|------------------------------------------------------|
 | **Polyfill**   | `log`, `fetch`, `crypto`, `wasip*` | a `tracing`/`metrics` polyfill over the app's collector |
-| **Introduced** | `process`, `pg`, `stream`, `kv`, `supervise` | `weather`, `db`, a native codec — RUSM's wasmCloud-provider answer |
-| **Transport**  | `http`, `ws`, `sse`, `cluster` | rare — an app seldom owns a protocol loop |
+| **Introduced** | `actor`, `pg`, `stream`, `kv`, `serve` | `weather`, `db`, a native codec — RUSM's wasmCloud-provider answer |
+| **Transport**  | `http`, `ws`, `sse` | rare — an app seldom owns a protocol loop |
 
-The authorship axis *is* the platform-vs-application split, now structural: same directory
+The authorship axis *is* the platform-vs-application split, made structural: same directory
 shape, different owner. A custom app bridge is mechanically identical to a platform one.
 
 ---
 
 ## Bridge inventory
 
-`guest.*` = ✅ has guest bindings · ➖ host-only (no guest surface). **Status**: ✅ migrated to
-`bridges/` · ⬜ still in the monolithic `actor` interface (migration in progress).
+**files**: which of `bridge.wit`(W) / `host.rs`(H) / `guest.{rs,go,js,d.ts}`(R/G/J/T) the dir
+carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `actor` interface.
 
-| Bridge | Type | Guest API | Host backing | Capability gate | `guest.*` | Bench gate | Status |
-|---|---|---|---|---|:--:|---|:--:|
-| `kv` | introduced | `kv.bucket(..)` | `rusm-kv` (redb) | `storage` | ✅ | `kv-storm` (ACID ceiling) | ✅ |
-| `process` | introduced | `Pid`/`send`/`receive`/`spawn` | `rusm-otp` | `spawn`/`process-control` (per-op) | ✅ | `ping-pong`, `component-storm` | ⬜ |
-| `pg` | introduced | `register_tag`/`whereis_tag`/`kill_tag` | `rusm-otp` | `process-control` (kill-tag) | ✅ | `pubsub-fanout` | ⬜ |
-| `stream` | introduced | cross-process byte streams | `rusm-otp` | — | ✅ | `stream-pipe` | ⬜ |
-| `supervise` | introduced | `monitor`/`supervise` | `rusm-otp` | `spawn` | ✅ | `fault-recovery` | ⬜ |
-| `log` | polyfill | `console.*` / `log` / `slog` | `rusm-logfmt` | — (level-gated) | ✅ | — (not hot) | ⬜ |
-| `serve` | polyfill + introduced | `fetch` handler / WS+SSE handlers | bridges below | — | ✅ | serving (below) | ⬜ |
-| `http` | transport | — (drives handlers) | hyper | — | ➖ | `http-throughput` / loadtest | ⬜ |
-| `ws` | transport | — (process per conn) | tokio-tungstenite | — | ➖ | `ws-echo` | ⬜ |
-| `sse` | transport | — (stream per conn) | `wasi:http` body | — | ➖ | `sse-fanout` | ⬜ |
-| `wasip1/2/3` | polyfill | the language stdlib | `wasmtime-wasi` | per-op (net/fs/…) | ➖ | — | ⬜ |
-| `fetch` | polyfill | web `fetch()` | `wasi:http` / hyper | `network` | ✅ | — | ⬜ |
-| `crypto` | polyfill | web `crypto.subtle` | RustCrypto | — | ✅ | `crypto-ops` | ⬜ |
+| Bridge | Type | Guest API | Host backing | Gate | Files | Bench gate | Status |
+|---|---|---|---|---|---|---|:--:|
+| `types` | *(supporting)* | — (shared `pid`) | — | — | W | — | ⬜ |
+| `actor` | introduced | `Pid`/`send`/`receive`/`spawn`/`monitor`/`supervise` | rusm-otp | `spawn`/`process-control` (per-op) | W H R G J T | `ping-pong`, `component-storm`, `fault-recovery` | ⬜ |
+| `pg` | introduced | `register_tag`/`whereis_tag`/`kill_tag` | rusm-otp | `process-control` (kill-tag) | W H R G J T | `pubsub-fanout` | ⬜ |
+| `stream` | introduced | cross-process byte streams | rusm-otp | — | W H R G J T | `stream-pipe` | ⬜ |
+| `kv` | introduced | `kv.bucket(..)` | rusm-kv (redb) | `storage` | W H R G J T | `kv-storm` (ACID ceiling) | ✅ |
+| `log` | polyfill | `console.*` / `log` / `slog` | rusm-logfmt | — (level) | W H R G J T | — (not hot) | ⬜ |
+| `serve` | polyfill + introduced | `fetch` / WS+SSE handlers | http/ws/sse | — | W H R G J T | serving (below) | ⬜ |
+| `http` | transport | — (drives handlers) | hyper | — | H | `http-throughput` / loadtest | ⬜ |
+| `ws` | transport | — (process per conn) | tokio-tungstenite | — | H | `ws-echo` | ⬜ |
+| `sse` | transport | — (stream per conn) | `wasi:http` body | — | H | `sse-fanout` | ⬜ |
+| `wasip1/2/3` | polyfill | the language stdlib | wasmtime-wasi | per-op | H | — | ⬜ |
+| `fetch` | polyfill (TS-only) | web `fetch()` | `wasi:http` / hyper | `network` | H J T | — | ⬜ |
+| `crypto` | polyfill (TS-only) | web `crypto.subtle` | RustCrypto | — | H J T | `crypto-ops` | ⬜ |
+
+> `actor` is the irreducible Erlang core (it keeps the interface name `actor`, so there is no
+> collision with `world process`). `pg`/`stream`/`log`/`serve` split out of it as siblings;
+> `kv` already has. Only **`pid`** is shared across interfaces → the minimal `types`
+> interface; `process-info`/`connection-info`/`stream-id` are each used by one interface and
+> stay local.
+
+---
+
+## Shared types — the `types` interface
+
+WIT gives each interface its own type namespace, so a `pid` defined in `actor` is a
+*different* type from one defined in `stream` — you couldn't pass a pid from `actor.own-pid`
+to `stream.stream-open`. The fix is one **`types`** interface holding the genuinely-shared
+vocabulary (today just `type pid = u64`); every interface that needs it writes
+`use types.{pid};` at the top of its `bridge.wit`.
+
+The assembler distinguishes it **automatically — no marker**: an interface that declares a
+`func` is a capability and is `import`ed into the `process` world; an interface with **no
+`func`** (types-only) is emitted into the package but **not imported** (it is reached via
+`use`). So `bridges/types/` is `bridge.wit`-only and never appears in the world's import list.
 
 ---
 
@@ -91,26 +116,52 @@ shape, different owner. A custom app bridge is mechanically identical to a platf
 | `bridges/*/host.rs`    | `crates/rusm-wasm/src/bridges/<name>.rs` |
 | `bridges/*/guest.rs`   | `crates/rusm-rs/src/<name>.rs` |
 | `bridges/*/guest.go`   | `packages/rusm-go/<name>.go` (+ regenerated wit-bindgen-go bindings) |
-| `bridges/*/guest.js`   | `crates/rusm-wasm/js-runner/bridge/<name>.js` (the js-http-runner `include_str!`s it) |
+| `bridges/*/guest.js`   | `crates/rusm-wasm/js-runner/bridge/<name>.js` (js-http-runner `include_str!`s it) |
+| `bridges/*/guest.d.ts` | `packages/rusm-ts/` (the published type surface) — *planned; needs rusm-ts split into per-bridge type modules, see Guards* |
 
 **Edit the canonical file, then `make sync-bridges`.** Rust canonicals are
-rustfmt-normalized first, so the synced copies survive a later `cargo fmt` byte-for-byte.
-A drift test (`cargo test bridge_sync`, plus `go build`) fails the build if any copy
-diverges; `make publish` re-syncs and aborts on any diff, so a stale binding can never
-ship. Same pattern as `wit_in_sync` and `rusm-cli`'s `template::` tests.
+rustfmt-normalized first, so the synced copies survive a later `cargo fmt` byte-for-byte. A
+drift test (`cargo test bridge_sync`) fails the build if any copy diverges; `make publish`
+re-syncs and aborts on any diff, so a stale binding can never ship.
+
+### Guards — symmetric across all three languages (the standing gaps to close)
+
+- **Rust / TS source**: byte-for-byte `include_str!` drift test. ✅
+- **WIT**: `assemble-wit.sh --check` (regenerate-and-diff every copy). ✅
+- **Go bindings**: must be a **byte-exact** check (regenerate in CI, assert no `git diff`) —
+  not merely "still compiles", which is the current weaker guard. ⬜ *to close.*
+- **js-runner `.wasm`**: editing `guest.js` requires a wizer rebuild of
+  `js_runner.wasm`/`js_http_runner.wasm`; this is **not yet enforced** — a stale `.wasm`
+  could ship with a synced `.js`. Either `sync-bridges` rebuilds them (needs wasi-sdk+wizer)
+  or a test asserts the `.wasm` embeds the current `.js`. ⬜ *to close.*
+- **rusm-ts published types**: the `.d.ts` surface still lives hand-maintained in
+  `packages/rusm-ts/index.ts`, not single-sourced from `bridges/<name>/guest.d.ts`. Closing
+  it means splitting rusm-ts into per-bridge type modules + wiring the `guest.d.ts` copy into
+  `sync-bridges`. ⬜ *to close.*
 
 ---
 
+## Migration plan — one breaking release
+
+Each split is a breaking ABI change (guests rebuild `actor.kv-*` → `kv.*`, etc.). **All
+remaining splits land in a single 0.4.0** — never serial breaking releases. kv's split is
+committed but unreleased; `actor`/`pg`/`stream`/`log`/`serve` join it before 0.4.0 ships, so
+guests rebuild exactly once.
+
 ## Adding / migrating a bridge — the checklist
 
-1. `bridges/<name>/bridge.wit` — the interface slice (use `%name` to escape a reserved WIT
-   keyword; a bridge that references shared types `use`s the `types` interface).
-2. `bridges/<name>/host.rs` — `impl <name>::Host for WasiHost`; wire `add_to_linker`.
-3. `bridges/<name>/guest.{rs,go,js}` — **all three** (or none, for a transport bridge).
-   Polyfill → a standard-API shim; introduced → the idiomatic wrapper.
+1. `bridges/<name>/bridge.wit` — the interface slice (`%name` escapes a reserved WIT keyword;
+   `use types.{pid};` for shared types).
+2. `bridges/<name>/host.rs` — `impl <name>::Host for WasiHost` + `add_to_linker`. **Shared
+   host helpers stay on `WasiHost`** (e.g. `kv_bucket`, `resolve_local`); only the
+   interface's own logic lives in the bridge file (SoC).
+3. `bridges/<name>/guest.{rs,go,js,d.ts}` — **all** (or none, for a transport bridge).
+   Polyfill → a standard-API shim; introduced → the idiomatic per-language wrapper.
 4. Register the new `world.wit` in `assemble-wit.sh`'s `TARGETS` map (the cross-check
-   hard-fails on an unmapped one) and update consumer worlds (`component.wit`,
-   js-http-runner `bindings`).
-5. `make sync-bridges`, then `cargo test bridge_sync` + the full suite.
-6. **Bench gate (mandatory): the bridge's scenario must stay flat** — see the inventory's
-   *Bench gate* column. A regression means the migration is wrong; revert, don't ship.
+   hard-fails on an unmapped one); update consumer worlds (`component.wit`, js-http-runner
+   `bindings`).
+5. `make sync-bridges`, then `cargo test bridge_sync` + the full suite + `go build`.
+6. **Bench gate (mandatory, baseline-first):** capture the scenario's number *before* the
+   split, then compare the **median of N runs** after (benches are noisy). The bridge's
+   scenario must stay flat — see the inventory's *Bench gate* column. A regression means the
+   migration is wrong; **revert, don't ship**.
