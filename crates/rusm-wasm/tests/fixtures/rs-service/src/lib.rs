@@ -28,7 +28,7 @@ pub mod calc {
 wit_bindgen::generate!({
     world: "process",
     path: "wit",
-    with: { "rusm:runtime/actor@0.1.0": rusm_rs::rusm::runtime::actor },
+    with: { "rusm:runtime/actor@0.1.0": rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": rusm_rs::rusm::runtime::kv },
 });
 
 struct Component;

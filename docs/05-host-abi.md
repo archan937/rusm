@@ -9,7 +9,8 @@ per artifact kind, plus the standard WASI interfaces.
 
 A WASI **component** imports the `rusm:runtime/actor` interface (a real WIT world,
 bound with `wasmtime::component::bindgen!`), so a guest in any language calls typed
-functions:
+functions. Durable storage is a sibling interface, `rusm:runtime/kv` (a platform
+**bridge** — see below); both are imported into the one `process` world:
 
 | Function | Meaning |
 | --- | --- |
@@ -26,10 +27,28 @@ functions:
 | `set-label(label)` | a human-readable label for the observer |
 | `spawn(name) / monitor(pid) / supervise(…)` | start, watch, and supervise child components (capability-gated) |
 | `stream-open/write/close/accept/read` | back-pressured byte streams between processes |
-| `kv-get/set/delete/exists/list` | durable key-value storage, gated by the **storage** capability |
 | `connection() -> option<connection-info>` | a per-connection serving (WS/SSE) handler's request context — method, path, captured **route params**, query, headers, remote address, negotiated subprotocol |
 | `ws-send-text(payload) / ws-close(code, reason)` | a WebSocket handler's outbound **text** frame / **close** with status + reason (binary frames take the plain `send`→writer-process path) |
 | `sse-send(data, event?, id?, retry?) -> bool` | an SSE handler's **rich event** (`id`/`event`/`retry`); a plain `data:` event takes the `send`→writer path |
+
+### The `kv` interface — durable storage (a platform bridge)
+
+Durable key-value storage is a sibling interface, `rusm:runtime/kv`, imported into the same
+`process` world (so a guest gets it alongside `actor`). It is authored as a **bridge** —
+one capability, owned end-to-end in [`bridges/kv/`](https://github.com/archan937/rusm/tree/main/bridges/kv)
+(`bridge.wit` + `host.rs` + `guest.{rs,go,js}`) and materialized into every crate by
+`make sync-bridges`. Gated by the **storage** capability (default-deny).
+
+| Function | Meaning |
+| --- | --- |
+| `kv.get(bucket, key) -> option<list<u8>>` | the stored value, or `none` |
+| `kv.set(bucket, key, value)` | store (overwrite) |
+| `kv.delete(bucket, key) -> bool` | remove; was-present |
+| `kv.exists(bucket, key) -> bool` | membership |
+| `kv.list(bucket) -> list<string>` | every key, sorted |
+
+The ergonomic guest wrappers are unchanged — `rusm_rs::kv::bucket(..)`, the TS `kv.bucket(..)`
+global, Go's `OpenBucket(..)` — each backed by the Wasm-free `rusm-kv` crate over redb.
 
 Composition is **message passing** (spawn instances, then `send`/`receive`/
 `register`/`whereis`) — *not* WIT inter-component wiring, and no lattice. Standard

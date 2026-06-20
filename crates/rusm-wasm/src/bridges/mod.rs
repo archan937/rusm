@@ -10,6 +10,7 @@ pub(crate) mod access;
 pub(crate) mod compress;
 pub(crate) mod conn;
 pub(crate) mod http;
+pub(crate) mod kv;
 pub(crate) mod routed;
 pub(crate) mod sse;
 pub(crate) mod tls;

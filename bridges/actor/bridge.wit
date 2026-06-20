@@ -1,5 +1,3 @@
-package rusm:runtime@0.1.0;
-
 interface actor {
     /// A process identifier (Erlang's pid).
     type pid = u64;
@@ -178,31 +176,4 @@ interface actor {
     /// Read the next chunk from an accepted stream, suspending until one arrives.
     /// `none` at end-of-stream (the writer was closed/dropped).
     stream-read: func(handle: stream-id) -> option<list<u8>>;
-}
-
-/// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).
-/// Bytes in, bytes out, namespaced by `bucket`; backed by an embedded store the node owns
-/// (no external daemon). Each op `err`s with a message if storage is denied or
-/// unconfigured. The host application owns the store's file; a guest just names buckets +
-/// keys. (`%list` is the WIT keyword-escape — `list` is reserved; wit-bindgen strips the
-/// `%`, so guests call `kv.list()`.)
-interface kv {
-    get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
-    set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
-    delete: func(bucket: string, key: string) -> result<bool, string>;
-    exists: func(bucket: string, key: string) -> result<bool, string>;
-    %list: func(bucket: string) -> result<list<string>, string>;
-}
-
-/// A RUSM actor component: imports the actor API + platform bridges, and exports an
-/// entry point the runtime calls to start the process.
-/// It also imports outbound `wasi:http` for the `fetch` polyfill (the host gates it
-/// on the network capability) — declared here, via wit-bindgen, rather than pulled from
-/// the `wasip2` crate, so the guest builds as a **core module** that `wizer` can
-/// pre-initialize (a component can't be wizer'd).
-world process {
-    import actor;
-    import kv;
-    import wasi:http/outgoing-handler@0.2.6;
-    export run: func();
 }

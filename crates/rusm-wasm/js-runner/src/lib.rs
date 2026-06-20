@@ -29,6 +29,7 @@ use aes_gcm::{Aes128Gcm, Aes256Gcm, Nonce};
 use hmac::{Hmac, Mac};
 use rquickjs::{Context, Ctx, Exception, Function, Promise, Runtime, TypedArray};
 use rusm::runtime::actor;
+use rusm::runtime::kv;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 // Outbound `wasi:http` bindings come from wit-bindgen (the `process` world imports
@@ -240,7 +241,7 @@ fn js_kv_get(
     bucket: String,
     key: String,
 ) -> rquickjs::Result<Option<TypedArray<'_, u8>>> {
-    match actor::kv_get(&bucket, &key) {
+    match kv::get(&bucket, &key) {
         Ok(Some(bytes)) => Ok(Some(TypedArray::new(ctx, bytes)?)),
         Ok(None) => Ok(None),
         Err(e) => Err(Exception::throw_message(&ctx, &e)),
@@ -252,17 +253,17 @@ fn js_kv_set(
     key: String,
     value: TypedArray<u8>,
 ) -> rquickjs::Result<()> {
-    actor::kv_set(&bucket, &key, value.as_bytes().unwrap_or(&[]))
+    kv::set(&bucket, &key, value.as_bytes().unwrap_or(&[]))
         .map_err(|e| Exception::throw_message(&ctx, &e))
 }
 fn js_kv_delete(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<bool> {
-    actor::kv_delete(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
+    kv::delete(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 fn js_kv_exists(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<bool> {
-    actor::kv_exists(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
+    kv::exists(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 fn js_kv_list(ctx: Ctx<'_>, bucket: String) -> rquickjs::Result<Vec<String>> {
-    actor::kv_list(&bucket).map_err(|e| Exception::throw_message(&ctx, &e))
+    kv::list(&bucket).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 // Spawn a registered component by name; a denied/unknown spawn throws into JS
 // (surfacing the host's error message) rather than returning a sentinel.

@@ -121,6 +121,29 @@ sync-templates: ## Regenerate rusm-cli/templates/ — the vendored copy of the e
 	@find rusm-cli/templates -name Cargo.toml -exec sh -c 'mv "$$1" "$$1.tmpl"' _ {} \;
 	@echo "==> synced — \`cargo test -p rusm-cli template::\` guards against drift"
 
+.PHONY: sync-bridges
+sync-bridges: ## Materialize bridges/<name>/ (canonical) into every crate: assemble the WIT, copy host.rs/guest.* into the SDKs, regenerate the Go bindings
+	@bash bridges/assemble-wit.sh
+	@# Normalize canonical Rust to rustfmt's edition-2021 style first, so the synced copies
+	@# (inside the workspace) survive a later `cargo fmt` byte-for-byte — otherwise the drift
+	@# guard would trip the moment anyone runs fmt.
+	@rustfmt --edition 2021 bridges/*/host.rs bridges/*/guest.rs 2>/dev/null || true
+	@for d in bridges/*/; do \
+		name=$$(basename $$d); \
+		if [ -f "$$d/host.rs"  ]; then cp "$$d/host.rs"  "crates/rusm-wasm/src/bridges/$$name.rs"; fi; \
+		if [ -f "$$d/guest.rs" ]; then cp "$$d/guest.rs" "crates/rusm-rs/src/$$name.rs"; fi; \
+		if [ -f "$$d/guest.go" ]; then cp "$$d/guest.go" "packages/rusm-go/$$name.go"; fi; \
+		if [ -f "$$d/guest.js" ]; then cp "$$d/guest.js" "crates/rusm-wasm/js-runner/bridge/$$name.js"; fi; \
+	done
+	@# Go bindings are generated ahead-of-time from the WIT (rusm-rs/-ts generate at build
+	@# time; Go vendors them). Regenerate so a WIT change reaches the Go SDK. Skipped if the
+	@# Go toolchain is absent — a stale binding is then caught by `go build` / CI.
+	@if command -v mise >/dev/null 2>&1; then \
+		( cd packages/rusm-go && mise exec -- wit-bindgen-go generate --world process --out internal/wit ./wit >/dev/null ) \
+			&& echo "==> regenerated rusm-go bindings"; \
+	else echo "↷ skip rusm-go bindgen (mise/wit-bindgen-go unavailable) — \`go build\` guards drift"; fi
+	@echo "==> synced bridges → all crates (\`cargo test bridge_sync\` + \`go build\` guard drift)"
+
 # Already on crates.io? (200 → that exact version exists; 404 → not yet.) The per-crate skip
 # that makes publishing resumable: a failed run re-runs cleanly and an already-uploaded
 # version is never re-sent. crates.io rejects requests without a User-Agent (403), so set one.
@@ -176,6 +199,10 @@ publish-tags: ## Tag the release (v$(VERSION)) + the rusm-go submodule, push the
 .PHONY: publish
 publish: ## Full release v$(VERSION): dry-run, then crates.io + npm + tags (resumable — published crates are skipped)
 	@test -z "$$(git status --porcelain)" || { echo "✗ working tree not clean — commit first"; exit 1; }
+	@# Regenerate every crate's copy from the canonical bridges/ source; if that changes
+	@# anything, a sync was missed — abort so a stale bridge binding can never ship.
+	@$(MAKE) --no-print-directory sync-bridges >/dev/null
+	@test -z "$$(git status --porcelain)" || { echo "✗ bridges out of sync — run \`make sync-bridges\` and commit"; exit 1; }
 	@git diff --quiet origin/main..HEAD 2>/dev/null || echo "→ note: push commits to origin first so the tags point at pushed history"
 	@# Check npm login up front (unless rusm-ts is already published) — a missing login must
 	@# abort BEFORE any crate is uploaded, not halfway through the release.

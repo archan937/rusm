@@ -1,0 +1,13 @@
+/// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).
+/// Bytes in, bytes out, namespaced by `bucket`; backed by an embedded store the node owns
+/// (no external daemon). Each op `err`s with a message if storage is denied or
+/// unconfigured. The host application owns the store's file; a guest just names buckets +
+/// keys. (`%list` is the WIT keyword-escape — `list` is reserved; wit-bindgen strips the
+/// `%`, so guests call `kv.list()`.)
+interface kv {
+    get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
+    set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
+    delete: func(bucket: string, key: string) -> result<bool, string>;
+    exists: func(bucket: string, key: string) -> result<bool, string>;
+    %list: func(bucket: string) -> result<list<string>, string>;
+}

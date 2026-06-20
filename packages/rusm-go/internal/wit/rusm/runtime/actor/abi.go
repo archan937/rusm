@@ -4,7 +4,6 @@ package actor
 
 import (
 	"go.bytecodealliance.org/cm"
-	"unsafe"
 )
 
 func lower_OptionString(v cm.Option[string]) (f0 uint32, f1 *uint8, f2 uint32) {
@@ -26,10 +25,4 @@ func lower_OptionU32(v cm.Option[uint32]) (f0 uint32, f1 uint32) {
 		f1 = (uint32)(v1)
 	}
 	return
-}
-
-// OptionListU8Shape is used for storage in variant or result types.
-type OptionListU8Shape struct {
-	_     cm.HostLayout
-	shape [unsafe.Sizeof(cm.Option[cm.List[uint8]]{})]byte
 }

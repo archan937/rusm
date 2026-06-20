@@ -1,10 +1,5 @@
 package rusm:runtime@0.1.0;
 
-/// The actor / process API a RUSM component imports. Composition is by **message
-/// passing** — components address each other by pid and send bytes; there is no
-/// static component-to-component wiring and no lattice. A Rust guest binds this
-/// with `wit-bindgen` (a TS guest via the planned Bun + rquickjs shell, no jco);
-/// both call the same functions.
 interface actor {
     /// A process identifier (Erlang's pid).
     type pid = u64;
@@ -24,12 +19,20 @@ interface actor {
     /// SSE handler the host spawned for one accepted connection. Captured at accept time
     /// and fixed for the connection's life, so a handler reads it once in `open`.
     record connection-info {
+        /// Request method (`GET`, …), uppercased.
         method: string,
+        /// Path only, without the query string (`/events/plan/pages/42`).
         path: string,
+        /// Raw query string without the leading `?` (empty when absent).
         query: string,
+        /// Route parameters captured from the listener's `[serve.routes]` pattern
+        /// (`"GET /events/:plan" → [("plan", "…")]`); empty when the listener is unrouted.
         params: list<tuple<string, string>>,
+        /// Request headers, lowercased names, in arrival order (a name may repeat).
         headers: list<tuple<string, string>>,
+        /// Peer socket address (`ip:port`), empty if the transport can't report one.
         remote-addr: string,
+        /// The negotiated WebSocket subprotocol, if one was agreed (always none for SSE).
         subprotocol: option<string>,
     }
 
@@ -37,8 +40,9 @@ interface actor {
     own-pid: func() -> pid;
 
     /// This per-connection serving process's [`connection-info`], or `none` for every
-    /// other process. Read it once in a WebSocket/SSE handler's `open`. Additive: a guest
-    /// that never calls it is unaffected, and a non-connection process always gets `none`.
+    /// other process (a normal actor, a per-request HTTP handler, a service). Read it once
+    /// in a WebSocket/SSE handler's `open`. Additive and non-escalating: a guest that never
+    /// calls it is unaffected, and a non-connection process always gets `none`.
     connection: func() -> option<connection-info>;
 
     /// Send a **text** WebSocket frame on this connection (the binary path is a plain
@@ -47,16 +51,10 @@ interface actor {
     /// it keeps sending binary frames exactly as before.
     ws-send-text: func(payload: list<u8>) -> bool;
 
-    /// Close this WebSocket connection with a status `code` (e.g. 1000 normal, 1011 error)
-    /// and a `reason` — a server-initiated close frame, after which the connection tears
-    /// down. No-op for a non-WebSocket process.
+    /// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
     ws-close: func(code: u16, reason: string);
 
-    /// Emit a **rich** SSE event on this connection: `data` plus optional `event` (a named
-    /// event type), `id` (the event id the client echoes as `Last-Event-ID` on reconnect —
-    /// the basis for resumption), and `retry` (client reconnect backoff, ms). The plain
-    /// `data:`-only path is a regular `send` to the writer pid. Returns `false` if this is
-    /// not an SSE handler or the client has disconnected. Additive.
+    /// Emit a rich SSE event (data + optional event/id/retry); plain data: is a regular send.
     sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry: option<u32>) -> bool;
 
     /// Spawn a registered component (by the name it was registered under) as a new
@@ -113,12 +111,15 @@ interface actor {
     /// Attach a human-readable label for observability (`Process.set_label/1`).
     set-label: func(label: string);
 
-    /// **Process-group tags** (Erlang's `pg`): join/leave **this** process (unprivileged),
-    /// enumerate live members, and terminate a whole group. `kill-tag` is gated by
-    /// process-control, like `kill`. Memberships release on exit.
+    /// **Process-group tags** (Erlang's `pg`): a process joins a tag, many processes may
+    /// share a tag, and a process may hold many tags. Memberships release on exit (like
+    /// names). `register-tag`/`unregister-tag` join/leave **this** process — unprivileged.
     register-tag: func(tag: string);
     unregister-tag: func(tag: string);
+    /// Live members of `tag` (empty if unknown).
     whereis-tag: func(tag: string) -> list<pid>;
+    /// Terminate every live member of `tag`; returns the count. Capability-gated by
+    /// process-control (it terminates other processes), exactly like `kill`.
     kill-tag: func(tag: string) -> u32;
 
     /// Severity for [`log`] — maps to `console.{error,warn,log/info,debug}` (TS) and the
@@ -137,7 +138,8 @@ interface actor {
     /// name, pid, and format are the platform's, so a developer never wires them.
     /// `console.*` (TS) and the `log` crate (Rust) route here.
     log: func(level: log-level, message: string);
-/// A restart strategy for [`supervise`].
+
+    /// A restart strategy for [`supervise`].
     enum supervise-strategy {
         one-for-one,
         one-for-all,
@@ -176,29 +178,34 @@ interface actor {
     /// Read the next chunk from an accepted stream, suspending until one arrives.
     /// `none` at end-of-stream (the writer was closed/dropped).
     stream-read: func(handle: stream-id) -> option<list<u8>>;
-
-    /// Durable key-value storage — a sub-capability of the actor surface (like
-    /// `stream-*`), **gated by `storage`** (default-deny). Bytes in, bytes out,
-    /// namespaced by `bucket`; backed by an embedded store the node owns (no external
-    /// daemon). Each op `err`s with a message if storage is denied or unconfigured.
-    /// The host application owns the store's file; a guest just names buckets + keys.
-    kv-get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
-    kv-set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
-    kv-delete: func(bucket: string, key: string) -> result<bool, string>;
-    kv-exists: func(bucket: string, key: string) -> result<bool, string>;
-    kv-list: func(bucket: string) -> result<list<string>, string>;
 }
 
-/// A RUSM actor component: imports the actor API and exports an entry point the
-/// runtime calls to start the process.
+/// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).
+/// Bytes in, bytes out, namespaced by `bucket`; backed by an embedded store the node owns
+/// (no external daemon). Each op `err`s with a message if storage is denied or
+/// unconfigured. The host application owns the store's file; a guest just names buckets +
+/// keys. (`%list` is the WIT keyword-escape — `list` is reserved; wit-bindgen strips the
+/// `%`, so guests call `kv.list()`.)
+interface kv {
+    get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
+    set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
+    delete: func(bucket: string, key: string) -> result<bool, string>;
+    exists: func(bucket: string, key: string) -> result<bool, string>;
+    %list: func(bucket: string) -> result<list<string>, string>;
+}
+
+/// A RUSM actor component: imports the actor API + platform bridges, and exports an
+/// entry point the runtime calls to start the process.
 world process {
     import actor;
+    import kv;
     export run: func();
 }
 
-/// Imports only — what the `rusm-rs` library generates. A guest crate generates
-/// the full `process` world and maps `actor` to this crate's bindings (so the
-/// interface is imported once), then `export!`s its `run`.
+/// Imports only — what the `rusm-rs` library generates. A guest crate generates the
+/// full `process` world and maps these interfaces to this crate's bindings (so each is
+/// imported once), then `export!`s its `run`.
 world imports {
     import actor;
+    import kv;
 }

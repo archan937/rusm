@@ -1,10 +1,5 @@
 package rusm:runtime@0.1.0;
 
-/// The actor / process API a RUSM component imports. Composition is by **message
-/// passing** — components address each other by pid and send bytes; there is no
-/// static component-to-component wiring and no lattice. A Rust guest binds this
-/// with `wit-bindgen` (a TS guest via the planned Bun + rquickjs shell, no jco);
-/// both call the same functions.
 interface actor {
     /// A process identifier (Erlang's pid).
     type pid = u64;
@@ -183,22 +178,26 @@ interface actor {
     /// Read the next chunk from an accepted stream, suspending until one arrives.
     /// `none` at end-of-stream (the writer was closed/dropped).
     stream-read: func(handle: stream-id) -> option<list<u8>>;
-
-    /// Durable key-value storage — a sub-capability of the actor surface (like
-    /// `stream-*`), **gated by `storage`** (default-deny). Bytes in, bytes out,
-    /// namespaced by `bucket`; backed by an embedded store the node owns (no external
-    /// daemon). Each op `err`s with a message if storage is denied or unconfigured.
-    /// The host application owns the store's file; a guest just names buckets + keys.
-    kv-get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
-    kv-set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
-    kv-delete: func(bucket: string, key: string) -> result<bool, string>;
-    kv-exists: func(bucket: string, key: string) -> result<bool, string>;
-    kv-list: func(bucket: string) -> result<list<string>, string>;
 }
 
-/// A RUSM actor component: imports the actor API and exports an entry point the
-/// runtime calls to start the process.
+/// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).
+/// Bytes in, bytes out, namespaced by `bucket`; backed by an embedded store the node owns
+/// (no external daemon). Each op `err`s with a message if storage is denied or
+/// unconfigured. The host application owns the store's file; a guest just names buckets +
+/// keys. (`%list` is the WIT keyword-escape — `list` is reserved; wit-bindgen strips the
+/// `%`, so guests call `kv.list()`.)
+interface kv {
+    get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
+    set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
+    delete: func(bucket: string, key: string) -> result<bool, string>;
+    exists: func(bucket: string, key: string) -> result<bool, string>;
+    %list: func(bucket: string) -> result<list<string>, string>;
+}
+
+/// A RUSM actor component: imports the actor API + platform bridges, and exports an
+/// entry point the runtime calls to start the process.
 world process {
     import actor;
+    import kv;
     export run: func();
 }

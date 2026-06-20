@@ -40,6 +40,7 @@ wit_bindgen::generate!({ world: "bindings", path: "wit", generate_all });
 
 use exports::wasi::http::incoming_handler::Guest;
 use rusm::runtime::actor;
+use rusm::runtime::kv;
 use wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
@@ -145,24 +146,24 @@ fn js_send(to: String, data: TypedArray<u8>) {
     actor::send(to.parse().unwrap_or(0), data.as_bytes().unwrap_or(&[]));
 }
 fn js_kv_get(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<Option<TypedArray<'_, u8>>> {
-    match actor::kv_get(&bucket, &key) {
+    match kv::get(&bucket, &key) {
         Ok(Some(bytes)) => Ok(Some(TypedArray::new(ctx, bytes)?)),
         Ok(None) => Ok(None),
         Err(e) => Err(Exception::throw_message(&ctx, &e)),
     }
 }
 fn js_kv_set(ctx: Ctx<'_>, bucket: String, key: String, value: TypedArray<u8>) -> rquickjs::Result<()> {
-    actor::kv_set(&bucket, &key, value.as_bytes().unwrap_or(&[]))
+    kv::set(&bucket, &key, value.as_bytes().unwrap_or(&[]))
         .map_err(|e| Exception::throw_message(&ctx, &e))
 }
 fn js_kv_delete(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<bool> {
-    actor::kv_delete(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
+    kv::delete(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 fn js_kv_exists(ctx: Ctx<'_>, bucket: String, key: String) -> rquickjs::Result<bool> {
-    actor::kv_exists(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
+    kv::exists(&bucket, &key).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 fn js_kv_list(ctx: Ctx<'_>, bucket: String) -> rquickjs::Result<Vec<String>> {
-    actor::kv_list(&bucket).map_err(|e| Exception::throw_message(&ctx, &e))
+    kv::list(&bucket).map_err(|e| Exception::throw_message(&ctx, &e))
 }
 
 /// Wizer's build-time entry point (`./build.sh` runs `wizer --init-func wizer_initialize`):

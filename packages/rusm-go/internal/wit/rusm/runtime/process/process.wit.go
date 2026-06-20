@@ -2,6 +2,6 @@
 
 // Package process represents the world "rusm:runtime/process@0.1.0".
 //
-// A RUSM actor component: imports the actor API and exports an entry point the
-// runtime calls to start the process.
+// A RUSM actor component: imports the actor API + platform bridges, and exports an
+// entry point the runtime calls to start the process.
 package process

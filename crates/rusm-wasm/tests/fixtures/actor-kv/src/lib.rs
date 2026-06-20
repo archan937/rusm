@@ -13,6 +13,7 @@ wit_bindgen::generate!({
 });
 
 use rusm::runtime::actor;
+use rusm::runtime::kv;
 
 struct Component;
 
@@ -22,21 +23,21 @@ impl Guest for Component {
         let reply_to = u64::from_le_bytes(msg[0..8].try_into().unwrap());
 
         let mut flags = 0u8;
-        if actor::kv_set("specs", "k", b"v1").is_ok() {
+        if kv::set("specs", "k", b"v1").is_ok() {
             flags |= 1 << 0;
-            if actor::kv_get("specs", "k") == Ok(Some(b"v1".to_vec())) {
+            if kv::get("specs", "k") == Ok(Some(b"v1".to_vec())) {
                 flags |= 1 << 1;
             }
-            if actor::kv_exists("specs", "k") == Ok(true) {
+            if kv::exists("specs", "k") == Ok(true) {
                 flags |= 1 << 2;
             }
-            if actor::kv_list("specs") == Ok(vec!["k".to_string()]) {
+            if kv::list("specs") == Ok(vec!["k".to_string()]) {
                 flags |= 1 << 3;
             }
-            if actor::kv_delete("specs", "k") == Ok(true) {
+            if kv::delete("specs", "k") == Ok(true) {
                 flags |= 1 << 4;
             }
-            if actor::kv_get("specs", "k") == Ok(None) {
+            if kv::get("specs", "k") == Ok(None) {
                 flags |= 1 << 5;
             }
         }

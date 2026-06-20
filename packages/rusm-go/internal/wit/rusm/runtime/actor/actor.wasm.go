@@ -127,23 +127,3 @@ func wasmimport_StreamAccept() (result0 uint64)
 //go:wasmimport rusm:runtime/actor@0.1.0 stream-read
 //go:noescape
 func wasmimport_StreamRead(handle0 uint64, result *cm.Option[cm.List[uint8]])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 kv-get
-//go:noescape
-func wasmimport_KvGet(bucket0 *uint8, bucket1 uint32, key0 *uint8, key1 uint32, result *cm.Result[OptionListU8Shape, cm.Option[cm.List[uint8]], string])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 kv-set
-//go:noescape
-func wasmimport_KvSet(bucket0 *uint8, bucket1 uint32, key0 *uint8, key1 uint32, value0 *uint8, value1 uint32, result *cm.Result[string, struct{}, string])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 kv-delete
-//go:noescape
-func wasmimport_KvDelete(bucket0 *uint8, bucket1 uint32, key0 *uint8, key1 uint32, result *cm.Result[string, bool, string])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 kv-exists
-//go:noescape
-func wasmimport_KvExists(bucket0 *uint8, bucket1 uint32, key0 *uint8, key1 uint32, result *cm.Result[string, bool, string])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 kv-list
-//go:noescape
-func wasmimport_KvList(bucket0 *uint8, bucket1 uint32, result *cm.Result[cm.List[string], cm.List[string], string])

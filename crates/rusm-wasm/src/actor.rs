@@ -432,45 +432,14 @@ impl actor::Host for WasiHost {
             None => None, // end of stream
         }
     }
-
-    // --- durable key-value storage (gated by the `storage` capability) ---
-    // Each op resolves the node's store + the named bucket (capability-checked),
-    // then delegates to `rusm-kv`, rendering its error as a message for the guest.
-
-    async fn kv_get(&mut self, bucket: String, key: String) -> Result<Option<Vec<u8>>, String> {
-        self.kv_bucket(&bucket)?
-            .get(&key)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn kv_set(&mut self, bucket: String, key: String, value: Vec<u8>) -> Result<(), String> {
-        self.kv_bucket(&bucket)?
-            .set(&key, &value)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn kv_delete(&mut self, bucket: String, key: String) -> Result<bool, String> {
-        self.kv_bucket(&bucket)?
-            .delete(&key)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn kv_exists(&mut self, bucket: String, key: String) -> Result<bool, String> {
-        self.kv_bucket(&bucket)?
-            .exists(&key)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn kv_list(&mut self, bucket: String) -> Result<Vec<String>, String> {
-        self.kv_bucket(&bucket)?.list().map_err(|e| e.to_string())
-    }
 }
 
 impl WasiHost {
     /// Resolve the named bucket of the node's store, enforcing the **storage**
-    /// capability (default-deny) and that a store is actually configured. Shared by
-    /// every `kv-*` op so the gate lives in exactly one place.
-    fn kv_bucket(&self, bucket: &str) -> Result<rusm_kv::Bucket, String> {
+    /// capability (default-deny) and that a store is actually configured. Shared by the
+    /// `kv` bridge ([`crate::bridges::kv`]) and `spawn-from`'s `kv:` source loader, so the
+    /// gate lives in exactly one place.
+    pub(crate) fn kv_bucket(&self, bucket: &str) -> Result<rusm_kv::Bucket, String> {
         if !self.caps.storage_allowed() {
             return Err("kv denied: missing the storage capability".to_string());
         }

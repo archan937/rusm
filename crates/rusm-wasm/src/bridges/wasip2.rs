@@ -50,6 +50,7 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<ComponentLinker<WasiHost>>
     // and outbound `wasi:http` resolves. Idle for non-HTTP guests.
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
     crate::actor::add_to_linker(&mut linker)?;
+    super::kv::add_to_linker(&mut linker)?;
     Ok(linker)
 }
 
@@ -2480,8 +2481,9 @@ mod tests {
             Process.send(Process.whereis("collector"), "ran from kv");
         };"#;
         let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
-        host.kv_set("bundles".into(), "app".into(), BUNDLE.to_vec())
-            .await
+        host.kv_bucket("bundles")
+            .unwrap()
+            .set("app", BUNDLE)
             .unwrap();
         host.spawn_from("runner".into(), "kv:bundles/app".into())
             .await
