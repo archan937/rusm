@@ -53,7 +53,7 @@ crate — QUIC/TLS/gossip — that transparently extends `actor` cross-node), no
 |                | **Platform** (rusm ships it) | **Application** (app authors it in *its* `bridges/`) |
 |----------------|------------------------------|------------------------------------------------------|
 | **Polyfill**   | `log`, `fetch`, `crypto`, `wasip*` | a `tracing`/`metrics` polyfill over the app's collector |
-| **Introduced** | `actor`, `pg`, `stream`, `kv`, `serve` | `weather`, `db`, a native codec — RUSM's wasmCloud-provider answer |
+| **Introduced** | `actor`, `pg`, `streams`, `kv`, `serve` | `weather`, `db`, a native codec — RUSM's wasmCloud-provider answer |
 | **Transport**  | `http`, `ws`, `sse` | rare — an app seldom owns a protocol loop |
 
 The authorship axis *is* the platform-vs-application split, made structural: same directory
@@ -68,10 +68,10 @@ carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `
 
 | Bridge | Type | Guest API | Host backing | Gate | Files | Bench gate | Status |
 |---|---|---|---|---|---|---|:--:|
-| `types` | *(supporting)* | — (shared `pid`) | — | — | W | — | ⬜ |
+| `types` | *(supporting)* | — (shared `pid`) | — | — | W | — | ✅ |
 | `actor` | introduced | `Pid`/`send`/`receive`/`spawn`/`monitor`/`supervise` | rusm-otp | `spawn`/`process-control` (per-op) | W H R G J T | `ping-pong`, `component-storm`, `fault-recovery` | ⬜ |
 | `pg` | introduced | `register_tag`/`whereis_tag`/`kill_tag` | rusm-otp | `process-control` (kill-tag) | W H R G J T | `pubsub-fanout` | ⬜ |
-| `stream` | introduced | cross-process byte streams | rusm-otp | — | W H R G J T | `stream-pipe` | ⬜ |
+| `streams` | introduced | cross-process byte streams | rusm-otp | — | W H R G J | `stream-pipe` | ✅ |
 | `kv` | introduced | `kv.bucket(..)` | rusm-kv (redb) | `storage` | W H R G J T | `kv-storm` (ACID ceiling) | ✅ |
 | `log` | polyfill | `console.*` / `log` / `slog` | rusm-logfmt | — (level) | W H R G J | — (not hot) | ✅ |
 | `serve` | polyfill + introduced | `fetch` / WS+SSE handlers | http/ws/sse | — | W H R G J T | serving (below) | ⬜ |
@@ -83,7 +83,7 @@ carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `
 | `crypto` | polyfill (TS-only) | web `crypto.subtle` | RustCrypto | — | H J T | `crypto-ops` | ⬜ |
 
 > `actor` is the irreducible Erlang core (it keeps the interface name `actor`, so there is no
-> collision with `world process`). `pg`/`stream`/`log`/`serve` split out of it as siblings;
+> collision with `world process`). `pg`/`streams`/`log`/`serve` split out of it as siblings;
 > `kv` already has. Only **`pid`** is shared across interfaces → the minimal `types`
 > interface; `process-info`/`connection-info`/`stream-id` are each used by one interface and
 > stay local.

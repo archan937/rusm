@@ -34,9 +34,14 @@ pub mod kv;
 pub mod logging;
 pub mod pubsub;
 pub mod sse;
+pub mod streams;
 pub mod supervisor;
 pub mod wire;
 pub mod ws;
+
+/// The cross-process byte [`Stream`](streams::Stream), re-exported at the crate root so the
+/// public path stays `rusm_rs::Stream`.
+pub use streams::Stream;
 
 pub use supervisor::{Strategy, Supervisor};
 
@@ -331,38 +336,3 @@ pub fn receive_timeout<T: DeserializeOwned>(timeout_ms: u64) -> Option<serde_jso
     receive_bytes_timeout(timeout_ms).map(|raw| serde_json::from_slice(&raw))
 }
 
-/// A back-pressured byte stream to or from another process — the same primitive
-/// as the host's, surfaced ergonomically. `read` suspends the fiber until a chunk
-/// arrives; `None` is end-of-stream.
-pub struct Stream {
-    handle: u64,
-}
-
-impl Stream {
-    /// Open a stream to a pid; `None` if the target is gone.
-    pub fn open(to: Pid) -> Option<Stream> {
-        actor::stream_open(to.0).map(|handle| Stream { handle })
-    }
-
-    /// Block until an incoming stream arrives, and take it for reading.
-    pub fn accept() -> Stream {
-        Stream {
-            handle: actor::stream_accept(),
-        }
-    }
-
-    /// Write one chunk; `false` once the reader is gone.
-    pub fn write(&self, chunk: &[u8]) -> bool {
-        actor::stream_write(self.handle, chunk)
-    }
-
-    /// Read the next chunk, or `None` at end-of-stream.
-    pub fn read(&self) -> Option<Vec<u8>> {
-        actor::stream_read(self.handle)
-    }
-
-    /// Close the write end (signals end-of-stream to the reader).
-    pub fn close(self) {
-        actor::stream_close(self.handle);
-    }
-}

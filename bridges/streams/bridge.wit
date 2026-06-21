@@ -1,0 +1,32 @@
+/// Cross-process byte streams — an **introduced** bridge: a Tokio-backpressured pipe
+/// between two RUSM processes. The write end stays with the opener (under a handle); the
+/// read end is delivered to the target, which `stream-accept`s it and `stream-read`s
+/// chunks. `stream-write`/`-read`/`-accept` suspend the guest fiber under back-pressure /
+/// until data arrives (the "write blocking code, get async" property), never busy-spin.
+interface streams {
+    use types.{pid};
+
+    /// A handle to one byte stream this process owns (an id local to the process).
+    /// (`stream` is a reserved WIT keyword, hence `stream-id`.)
+    type stream-id = u64;
+
+    /// Open a Tokio-backpressured byte stream to another process: the read end is
+    /// delivered to `to` (it arrives via `stream-accept`), the write end is kept
+    /// here under the returned handle. `none` if `to` is already gone.
+    stream-open: func(to: pid) -> option<stream-id>;
+
+    /// Write one chunk to a stream, suspending if the buffer is full (the reader
+    /// applies natural back-pressure). `false` once the reader is gone / unknown id.
+    stream-write: func(handle: stream-id, chunk: list<u8>) -> bool;
+
+    /// Close the write end — the reader then sees end-of-stream.
+    stream-close: func(handle: stream-id);
+
+    /// Accept the next incoming byte stream, suspending until one arrives; returns
+    /// a handle for reading it. (Like `receive`, plain messages are skipped here.)
+    stream-accept: func() -> stream-id;
+
+    /// Read the next chunk from an accepted stream, suspending until one arrives.
+    /// `none` at end-of-stream (the writer was closed/dropped).
+    stream-read: func(handle: stream-id) -> option<list<u8>>;
+}

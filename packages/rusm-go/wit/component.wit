@@ -11,5 +11,6 @@ world component {
     import actor;
     import kv;
     import log;
+    import streams;
     export run: func();
 }

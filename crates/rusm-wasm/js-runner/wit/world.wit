@@ -1,8 +1,9 @@
 package rusm:runtime@0.1.0;
 
 interface actor {
-    /// A process identifier (Erlang's pid).
-    type pid = u64;
+    /// A process identifier (Erlang's pid) — the shared type, so a pid is interchangeable
+    /// across the actor/stream/pg interfaces.
+    use types.{pid};
 
     /// A snapshot of a process, mirroring the host's `Process.info`.
     record process-info {
@@ -137,30 +138,6 @@ interface actor {
     /// whole tree is torn down. This is the **one** restart implementation; the guest
     /// `Supervisor` SDKs delegate to it.
     supervise: func(strategy: supervise-strategy, children: list<string>, max-restarts: u32, within-ms: u32) -> result<pid, string>;
-
-    /// A handle to one byte stream this process owns (an id local to the process).
-    /// (`stream` is a reserved WIT keyword, hence `stream-id`.)
-    type stream-id = u64;
-
-    /// Open a Tokio-backpressured byte stream to another process: the read end is
-    /// delivered to `to` (it arrives via `stream-accept`), the write end is kept
-    /// here under the returned handle. `none` if `to` is already gone.
-    stream-open: func(to: pid) -> option<stream-id>;
-
-    /// Write one chunk to a stream, suspending if the buffer is full (the reader
-    /// applies natural back-pressure). `false` once the reader is gone / unknown id.
-    stream-write: func(handle: stream-id, chunk: list<u8>) -> bool;
-
-    /// Close the write end — the reader then sees end-of-stream.
-    stream-close: func(handle: stream-id);
-
-    /// Accept the next incoming byte stream, suspending until one arrives; returns
-    /// a handle for reading it. (Like `receive`, plain messages are skipped here.)
-    stream-accept: func() -> stream-id;
-
-    /// Read the next chunk from an accepted stream, suspending until one arrives.
-    /// `none` at end-of-stream (the writer was closed/dropped).
-    stream-read: func(handle: stream-id) -> option<list<u8>>;
 }
 
 /// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).
@@ -197,6 +174,50 @@ interface log {
     log: func(level: log-level, message: string);
 }
 
+/// Cross-process byte streams — an **introduced** bridge: a Tokio-backpressured pipe
+/// between two RUSM processes. The write end stays with the opener (under a handle); the
+/// read end is delivered to the target, which `stream-accept`s it and `stream-read`s
+/// chunks. `stream-write`/`-read`/`-accept` suspend the guest fiber under back-pressure /
+/// until data arrives (the "write blocking code, get async" property), never busy-spin.
+interface streams {
+    use types.{pid};
+
+    /// A handle to one byte stream this process owns (an id local to the process).
+    /// (`stream` is a reserved WIT keyword, hence `stream-id`.)
+    type stream-id = u64;
+
+    /// Open a Tokio-backpressured byte stream to another process: the read end is
+    /// delivered to `to` (it arrives via `stream-accept`), the write end is kept
+    /// here under the returned handle. `none` if `to` is already gone.
+    stream-open: func(to: pid) -> option<stream-id>;
+
+    /// Write one chunk to a stream, suspending if the buffer is full (the reader
+    /// applies natural back-pressure). `false` once the reader is gone / unknown id.
+    stream-write: func(handle: stream-id, chunk: list<u8>) -> bool;
+
+    /// Close the write end — the reader then sees end-of-stream.
+    stream-close: func(handle: stream-id);
+
+    /// Accept the next incoming byte stream, suspending until one arrives; returns
+    /// a handle for reading it. (Like `receive`, plain messages are skipped here.)
+    stream-accept: func() -> stream-id;
+
+    /// Read the next chunk from an accepted stream, suspending until one arrives.
+    /// `none` at end-of-stream (the writer was closed/dropped).
+    stream-read: func(handle: stream-id) -> option<list<u8>>;
+}
+
+/// Shared WIT type vocabulary — the types used across more than one bridge interface, so
+/// they're one nominal type, not N look-alikes (a `pid` from `actor.own-pid` must be the
+/// same type the `stream`/`pg` interfaces accept). This interface declares no `func`, so the
+/// assembler emits it into the package but never `import`s it into the world — every bridge
+/// that needs a type writes `use types.{…}` instead. Not a capability; no host impl, no
+/// guest binding (wit-bindgen materializes the types into each guest automatically).
+interface types {
+    /// A process identifier (Erlang's pid).
+    type pid = u64;
+}
+
 /// A RUSM actor component: imports the actor API + platform bridges, and exports an
 /// entry point the runtime calls to start the process.
 /// It also imports outbound `wasi:http` for the `fetch` polyfill (the host gates it
@@ -207,6 +228,7 @@ world process {
     import actor;
     import kv;
     import log;
+    import streams;
     import wasi:http/outgoing-handler@0.2.6;
     export run: func();
 }

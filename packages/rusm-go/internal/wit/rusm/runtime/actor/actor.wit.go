@@ -4,15 +4,14 @@
 package actor
 
 import (
+	"github.com/archan937/rusm/packages/rusm-go/internal/wit/rusm/runtime/types"
 	"go.bytecodealliance.org/cm"
 )
 
-// Pid represents the u64 "rusm:runtime/actor@0.1.0#pid".
+// Pid represents the type alias "rusm:runtime/actor@0.1.0#pid".
 //
-// A process identifier (Erlang's pid).
-//
-//	type pid = u64
-type Pid uint64
+// See [types.Pid] for more information.
+type Pid = types.Pid
 
 // ProcessInfo represents the record "rusm:runtime/actor@0.1.0#process-info".
 //
@@ -120,14 +119,6 @@ func (e *SuperviseStrategy) UnmarshalText(text []byte) error {
 
 var _SuperviseStrategyUnmarshalCase = cm.CaseUnmarshaler[SuperviseStrategy](_SuperviseStrategyStrings[:])
 
-// StreamID represents the u64 "rusm:runtime/actor@0.1.0#stream-id".
-//
-// A handle to one byte stream this process owns (an id local to the process).
-// (`stream` is a reserved WIT keyword, hence `stream-id`.)
-//
-//	type stream-id = u64
-type StreamID uint64
-
 // OwnPid represents the imported function "own-pid".
 //
 // This process's own pid (Erlang's `self()`).
@@ -137,7 +128,7 @@ type StreamID uint64
 //go:nosplit
 func OwnPid() (result Pid) {
 	result0 := wasmimport_OwnPid()
-	result = (Pid)((uint64)(result0))
+	result = (types.Pid)((uint64)(result0))
 	return
 }
 
@@ -483,77 +474,5 @@ func Supervise(strategy SuperviseStrategy, children cm.List[string], maxRestarts
 	maxRestarts0 := (uint32)(maxRestarts)
 	withinMs0 := (uint32)(withinMs)
 	wasmimport_Supervise((uint32)(strategy0), (*string)(children0), (uint32)(children1), (uint32)(maxRestarts0), (uint32)(withinMs0), &result)
-	return
-}
-
-// StreamOpen represents the imported function "stream-open".
-//
-// Open a Tokio-backpressured byte stream to another process: the read end is
-// delivered to `to` (it arrives via `stream-accept`), the write end is kept
-// here under the returned handle. `none` if `to` is already gone.
-//
-//	stream-open: func(to: pid) -> option<stream-id>
-//
-//go:nosplit
-func StreamOpen(to Pid) (result cm.Option[StreamID]) {
-	to0 := (uint64)(to)
-	wasmimport_StreamOpen((uint64)(to0), &result)
-	return
-}
-
-// StreamWrite represents the imported function "stream-write".
-//
-// Write one chunk to a stream, suspending if the buffer is full (the reader
-// applies natural back-pressure). `false` once the reader is gone / unknown id.
-//
-//	stream-write: func(handle: stream-id, chunk: list<u8>) -> bool
-//
-//go:nosplit
-func StreamWrite(handle StreamID, chunk cm.List[uint8]) (result bool) {
-	handle0 := (uint64)(handle)
-	chunk0, chunk1 := cm.LowerList(chunk)
-	result0 := wasmimport_StreamWrite((uint64)(handle0), (*uint8)(chunk0), (uint32)(chunk1))
-	result = (bool)(cm.U32ToBool((uint32)(result0)))
-	return
-}
-
-// StreamClose represents the imported function "stream-close".
-//
-// Close the write end — the reader then sees end-of-stream.
-//
-//	stream-close: func(handle: stream-id)
-//
-//go:nosplit
-func StreamClose(handle StreamID) {
-	handle0 := (uint64)(handle)
-	wasmimport_StreamClose((uint64)(handle0))
-	return
-}
-
-// StreamAccept represents the imported function "stream-accept".
-//
-// Accept the next incoming byte stream, suspending until one arrives; returns
-// a handle for reading it. (Like `receive`, plain messages are skipped here.)
-//
-//	stream-accept: func() -> stream-id
-//
-//go:nosplit
-func StreamAccept() (result StreamID) {
-	result0 := wasmimport_StreamAccept()
-	result = (StreamID)((uint64)(result0))
-	return
-}
-
-// StreamRead represents the imported function "stream-read".
-//
-// Read the next chunk from an accepted stream, suspending until one arrives.
-// `none` at end-of-stream (the writer was closed/dropped).
-//
-//	stream-read: func(handle: stream-id) -> option<list<u8>>
-//
-//go:nosplit
-func StreamRead(handle StreamID) (result cm.Option[cm.List[uint8]]) {
-	handle0 := (uint64)(handle)
-	wasmimport_StreamRead((uint64)(handle0), &result)
 	return
 }

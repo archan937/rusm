@@ -11,6 +11,7 @@ wit_bindgen::generate!({
 });
 
 use rusm::runtime::actor;
+use rusm::runtime::streams;
 
 struct Component;
 
@@ -22,17 +23,17 @@ impl Guest for Component {
 
         if role == 0 {
             // Producer: stream 3 x "hello!" to the peer, then close.
-            if let Some(id) = actor::stream_open(peer) {
+            if let Some(id) = streams::stream_open(peer) {
                 for _ in 0..3 {
-                    actor::stream_write(id, b"hello!");
+                    streams::stream_write(id, b"hello!");
                 }
-                actor::stream_close(id);
+                streams::stream_close(id);
             }
         } else if role == 1 {
             // Consumer: accept the stream, read to EOF, report the byte total.
-            let id = actor::stream_accept();
+            let id = streams::stream_accept();
             let mut total: u32 = 0;
-            while let Some(chunk) = actor::stream_read(id) {
+            while let Some(chunk) = streams::stream_read(id) {
                 total += chunk.len() as u32;
             }
             actor::send(peer, &total.to_le_bytes());
@@ -40,13 +41,13 @@ impl Guest for Component {
             // Error paths: open to a dead pid, write/read bogus handles. Report a
             // flags byte: bit0 open=none, bit1 write=false, bit2 read=none.
             let mut flags = 0u32;
-            if actor::stream_open(999_999).is_none() {
+            if streams::stream_open(999_999).is_none() {
                 flags |= 1;
             }
-            if !actor::stream_write(123, b"x") {
+            if !streams::stream_write(123, b"x") {
                 flags |= 2;
             }
-            if actor::stream_read(456).is_none() {
+            if streams::stream_read(456).is_none() {
                 flags |= 4;
             }
             actor::send(peer, &flags.to_le_bytes());

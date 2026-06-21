@@ -18,21 +18,9 @@
 const __inbox = [];
 globalThis.__rusm_stash = (raw) => __inbox.push(raw);
 
-class Stream {
-  constructor(handle) { this.handle = handle; }
-  // write accepts a string (UTF-8) or a Uint8Array.
-  write(chunk) {
-    return typeof chunk === "string"
-      ? __stream_write_text(this.handle, chunk)
-      : __stream_write(this.handle, chunk);
-  }
-  close() { __stream_close(this.handle); }
-  // Resolves to a Uint8Array, or null at end-of-stream (host None → undefined → null).
-  read() {
-    const c = __stream_read(this.handle);
-    return Promise.resolve(c === undefined ? null : c);
-  }
-}
+// `Stream` (the cross-process byte stream) is the stream bridge's binding — defined as a
+// global in bridge/stream.js (eval'd before this); Process.openStream/acceptStream below
+// construct it.
 
 // Each method is installed only when the host primitive backing it is present, so a
 // runner that wires a *subset* of the actor ABI exposes exactly the ops it can honor —
@@ -107,5 +95,3 @@ if (has("__stream_open"))
   };
 if (has("__stream_accept")) P.acceptStream = () => new Stream(__stream_accept());
 globalThis.Process = P;
-
-globalThis.__rusm_Stream = Stream;

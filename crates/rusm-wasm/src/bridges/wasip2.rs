@@ -52,6 +52,7 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<ComponentLinker<WasiHost>>
     crate::actor::add_to_linker(&mut linker)?;
     super::kv::add_to_linker(&mut linker)?;
     super::log::add_to_linker(&mut linker)?;
+    super::streams::add_to_linker(&mut linker)?;
     Ok(linker)
 }
 

@@ -73,6 +73,32 @@ fn bridge_files_in_sync() {
         include_str!("../../../bridges/log/guest.js"),
         include_str!("../js-runner/bridge/log.js"),
     );
+
+    // stream bridge — host + all three guests.
+    assert_synced(
+        "bridges/streams/host.rs",
+        "crates/rusm-wasm/src/bridges/streams.rs",
+        include_str!("../../../bridges/streams/host.rs"),
+        include_str!("../src/bridges/streams.rs"),
+    );
+    assert_synced(
+        "bridges/streams/guest.rs",
+        "crates/rusm-rs/src/streams.rs",
+        include_str!("../../../bridges/streams/guest.rs"),
+        include_str!("../../rusm-rs/src/streams.rs"),
+    );
+    assert_synced(
+        "bridges/streams/guest.go",
+        "packages/rusm-go/streams.go",
+        include_str!("../../../bridges/streams/guest.go"),
+        include_str!("../../../packages/rusm-go/streams.go"),
+    );
+    assert_synced(
+        "bridges/streams/guest.js",
+        "crates/rusm-wasm/js-runner/bridge/streams.js",
+        include_str!("../../../bridges/streams/guest.js"),
+        include_str!("../js-runner/bridge/streams.js"),
+    );
 }
 
 #[test]

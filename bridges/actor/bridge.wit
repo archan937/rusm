@@ -1,6 +1,7 @@
 interface actor {
-    /// A process identifier (Erlang's pid).
-    type pid = u64;
+    /// A process identifier (Erlang's pid) — the shared type, so a pid is interchangeable
+    /// across the actor/stream/pg interfaces.
+    use types.{pid};
 
     /// A snapshot of a process, mirroring the host's `Process.info`.
     record process-info {
@@ -135,28 +136,4 @@ interface actor {
     /// whole tree is torn down. This is the **one** restart implementation; the guest
     /// `Supervisor` SDKs delegate to it.
     supervise: func(strategy: supervise-strategy, children: list<string>, max-restarts: u32, within-ms: u32) -> result<pid, string>;
-
-    /// A handle to one byte stream this process owns (an id local to the process).
-    /// (`stream` is a reserved WIT keyword, hence `stream-id`.)
-    type stream-id = u64;
-
-    /// Open a Tokio-backpressured byte stream to another process: the read end is
-    /// delivered to `to` (it arrives via `stream-accept`), the write end is kept
-    /// here under the returned handle. `none` if `to` is already gone.
-    stream-open: func(to: pid) -> option<stream-id>;
-
-    /// Write one chunk to a stream, suspending if the buffer is full (the reader
-    /// applies natural back-pressure). `false` once the reader is gone / unknown id.
-    stream-write: func(handle: stream-id, chunk: list<u8>) -> bool;
-
-    /// Close the write end — the reader then sees end-of-stream.
-    stream-close: func(handle: stream-id);
-
-    /// Accept the next incoming byte stream, suspending until one arrives; returns
-    /// a handle for reading it. (Like `receive`, plain messages are skipped here.)
-    stream-accept: func() -> stream-id;
-
-    /// Read the next chunk from an accepted stream, suspending until one arrives.
-    /// `none` at end-of-stream (the writer was closed/dropped).
-    stream-read: func(handle: stream-id) -> option<list<u8>>;
 }

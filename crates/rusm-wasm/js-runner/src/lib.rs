@@ -30,6 +30,7 @@ use hmac::{Hmac, Mac};
 use rquickjs::{Context, Ctx, Exception, Function, Promise, Runtime, TypedArray};
 use rusm::runtime::actor;
 use rusm::runtime::kv;
+use rusm::runtime::streams as stream_iface;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 // Outbound `wasi:http` bindings come from wit-bindgen (the `process` world imports
@@ -58,10 +59,10 @@ fn js_receive_timeout(ctx: Ctx<'_>, ms: f64) -> rquickjs::Result<Option<TypedArr
     }
 }
 fn js_stream_write(h: f64, data: TypedArray<u8>) -> bool {
-    actor::stream_write(h as u64, data.as_bytes().unwrap_or(&[]))
+    stream_iface::stream_write(h as u64, data.as_bytes().unwrap_or(&[]))
 }
 fn js_stream_read(ctx: Ctx<'_>, h: f64) -> Option<TypedArray<'_, u8>> {
-    actor::stream_read(h as u64).map(|b| TypedArray::new(ctx, b).unwrap())
+    stream_iface::stream_read(h as u64).map(|b| TypedArray::new(ctx, b).unwrap())
 }
 // Cryptographically-secure random bytes from the host (wasi:random) — the basis for
 // the `crypto.getRandomValues` / `randomUUID` polyfill the web ecosystem assumes.
@@ -476,6 +477,7 @@ fn js_crypto_aes_gcm_decrypt<'a>(
 /// primitives). Both are evaluated before the user's bundle.
 const LOG_JS: &str = include_str!("../bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../bridge/webapi.js");
+const STREAM_JS: &str = include_str!("../bridge/streams.js");
 const PROCESS_JS: &str = include_str!("../bridge/process.js");
 const KV_JS: &str = include_str!("../bridge/kv.js");
 const RPC_JS: &str = include_str!("../bridge/rpc.js");
@@ -609,16 +611,16 @@ fn boot_bridge(ctx: Ctx<'_>) {
     });
 
     // --- streams (handles are small ints carried as JS numbers) ---
-    def!("__stream_open", |to: String| actor::stream_open(
+    def!("__stream_open", |to: String| stream_iface::stream_open(
         to.parse().unwrap_or(0)
     )
     .map_or(-1.0, |h| h as f64));
     def!("__stream_write", js_stream_write);
     def!("__stream_write_text", |h: f64, s: String| {
-        actor::stream_write(h as u64, s.as_bytes())
+        stream_iface::stream_write(h as u64, s.as_bytes())
     });
-    def!("__stream_close", |h: f64| actor::stream_close(h as u64));
-    def!("__stream_accept", || actor::stream_accept() as f64);
+    def!("__stream_close", |h: f64| stream_iface::stream_close(h as u64));
+    def!("__stream_accept", || stream_iface::stream_accept() as f64);
     def!("__stream_read", js_stream_read);
     // console output → WASI stderr (shown only if the `inherit_stdio`
     // capability is granted; discarded for a sandboxed guest). One `write_all` of
@@ -673,6 +675,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     // RPC/service layer.
     let _: () = ctx.eval(LOG_JS).unwrap();
     let _: () = ctx.eval(WEBAPI_JS).unwrap();
+    let _: () = ctx.eval(STREAM_JS).unwrap();
     let _: () = ctx.eval(PROCESS_JS).unwrap();
     let _: () = ctx.eval(KV_JS).unwrap();
     let _: () = ctx.eval(RPC_JS).unwrap();

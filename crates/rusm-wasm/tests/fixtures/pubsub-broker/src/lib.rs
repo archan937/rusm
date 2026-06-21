@@ -7,7 +7,7 @@
 wit_bindgen::generate!({
     world: "process",
     path: "wit",
-    with: { "rusm:runtime/actor@0.1.0": rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": rusm_rs::rusm::runtime::log },
+    with: { "rusm:runtime/actor@0.1.0": rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": rusm_rs::rusm::runtime::log, "rusm:runtime/streams@0.1.0": rusm_rs::rusm::runtime::streams },
 });
 
 use rusm_rs::serde_json::{self, Value};

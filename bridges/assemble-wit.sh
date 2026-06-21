@@ -68,8 +68,10 @@ IFACE_FILES=$(ls bridges/*/bridge.wit | sort)
 # Only **capability** interfaces — those that declare a `func` — are imported into the
 # `process` world. A types-only interface (e.g. `types`, holding the shared `pid`) declares
 # no func: it is emitted into the package but reached via `use types.{…}`, never imported.
-# So the import set is detected automatically, with no per-dir marker.
-IMPORT_NAMES=$(for f in $IFACE_FILES; do if grep -q ': func' "$f"; then basename "$(dirname "$f")"; fi; done | sort)
+# So the import set is detected automatically, with no per-dir marker. The import name is the
+# interface's *declared* name (from `interface <name> {`), so a `%`-escaped reserved name
+# (e.g. `%stream`) is imported verbatim — the dir name need not equal the WIT name.
+IMPORT_NAMES=$(for f in $IFACE_FILES; do if grep -q ': func' "$f"; then sed -n 's/^interface \([^ ]*\) {.*/\1/p' "$f"; fi; done | sort)
 
 emit_interfaces() { for f in $IFACE_FILES; do cat "$f"; echo; done; }
 emit_imports()    { for n in $IMPORT_NAMES; do echo "    import $n;"; done; }

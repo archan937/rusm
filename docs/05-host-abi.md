@@ -9,8 +9,9 @@ per artifact kind, plus the standard WASI interfaces.
 
 A WASI **component** imports the `rusm:runtime/actor` interface (a real WIT world,
 bound with `wasmtime::component::bindgen!`), so a guest in any language calls typed
-functions. Durable storage is a sibling interface, `rusm:runtime/kv` (a platform
-**bridge** — see below); both are imported into the one `process` world:
+functions. Several capabilities are **sibling interfaces** — platform *bridges* split out
+of the core: `rusm:runtime/{kv, log, streams}` (and the shared `types`); all are imported
+into the one `process` world:
 
 | Function | Meaning |
 | --- | --- |
@@ -26,7 +27,6 @@ functions. Durable storage is a sibling interface, `rusm:runtime/kv` (a platform
 | `kill-tag(tag) -> u32` | terminate a whole group (returns the count); gated by **process-control**, like `kill` |
 | `set-label(label)` | a human-readable label for the observer |
 | `spawn(name) / monitor(pid) / supervise(…)` | start, watch, and supervise child components (capability-gated) |
-| `stream-open/write/close/accept/read` | back-pressured byte streams between processes |
 | `connection() -> option<connection-info>` | a per-connection serving (WS/SSE) handler's request context — method, path, captured **route params**, query, headers, remote address, negotiated subprotocol |
 | `ws-send-text(payload) / ws-close(code, reason)` | a WebSocket handler's outbound **text** frame / **close** with status + reason (binary frames take the plain `send`→writer-process path) |
 | `sse-send(data, event?, id?, retry?) -> bool` | an SSE handler's **rich event** (`id`/`event`/`retry`); a plain `data:` event takes the `send`→writer path |

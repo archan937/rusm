@@ -51,6 +51,7 @@ use wasi::io::streams::OutputStream;
 // so `process.js`'s presence-guards expose exactly that subset here.
 const LOG_JS: &str = include_str!("../../js-runner/bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../../js-runner/bridge/webapi.js");
+const STREAM_JS: &str = include_str!("../../js-runner/bridge/streams.js");
 const PROCESS_JS: &str = include_str!("../../js-runner/bridge/process.js");
 const KV_JS: &str = include_str!("../../js-runner/bridge/kv.js");
 const HTTP_JS: &str = include_str!("../bridge/http.js");
@@ -132,6 +133,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     // standards), the actor `Process` (guarded to the wired subset), `kv`, then the HTTP glue.
     eval(&ctx, LOG_JS, "log.js").expect("log.js");
     eval(&ctx, WEBAPI_JS, "webapi.js").expect("webapi.js");
+    eval(&ctx, STREAM_JS, "stream.js").expect("stream.js");
     eval(&ctx, PROCESS_JS, "process.js").expect("process.js");
     eval(&ctx, KV_JS, "kv.js").expect("kv.js");
     eval(&ctx, HTTP_JS, "http.js").expect("http.js");

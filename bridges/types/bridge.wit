@@ -1,0 +1,10 @@
+/// Shared WIT type vocabulary — the types used across more than one bridge interface, so
+/// they're one nominal type, not N look-alikes (a `pid` from `actor.own-pid` must be the
+/// same type the `stream`/`pg` interfaces accept). This interface declares no `func`, so the
+/// assembler emits it into the package but never `import`s it into the world — every bridge
+/// that needs a type writes `use types.{…}` instead. Not a capability; no host impl, no
+/// guest binding (wit-bindgen materializes the types into each guest automatically).
+interface types {
+    /// A process identifier (Erlang's pid).
+    type pid = u64;
+}

@@ -14,6 +14,7 @@ pub(crate) mod kv;
 pub(crate) mod log;
 pub(crate) mod routed;
 pub(crate) mod sse;
+pub(crate) mod streams;
 pub(crate) mod tls;
 pub(crate) mod wasip1;
 pub(crate) mod wasip2;

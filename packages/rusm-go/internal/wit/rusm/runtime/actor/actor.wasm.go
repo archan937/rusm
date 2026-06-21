@@ -103,23 +103,3 @@ func wasmimport_KillTag(tag0 *uint8, tag1 uint32) (result0 uint32)
 //go:wasmimport rusm:runtime/actor@0.1.0 supervise
 //go:noescape
 func wasmimport_Supervise(strategy0 uint32, children0 *string, children1 uint32, maxRestarts0 uint32, withinMs0 uint32, result *cm.Result[string, Pid, string])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 stream-open
-//go:noescape
-func wasmimport_StreamOpen(to0 uint64, result *cm.Option[StreamID])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 stream-write
-//go:noescape
-func wasmimport_StreamWrite(handle0 uint64, chunk0 *uint8, chunk1 uint32) (result0 uint32)
-
-//go:wasmimport rusm:runtime/actor@0.1.0 stream-close
-//go:noescape
-func wasmimport_StreamClose(handle0 uint64)
-
-//go:wasmimport rusm:runtime/actor@0.1.0 stream-accept
-//go:noescape
-func wasmimport_StreamAccept() (result0 uint64)
-
-//go:wasmimport rusm:runtime/actor@0.1.0 stream-read
-//go:noescape
-func wasmimport_StreamRead(handle0 uint64, result *cm.Option[cm.List[uint8]])
