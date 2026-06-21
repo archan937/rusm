@@ -74,6 +74,21 @@ fn bridge_files_in_sync() {
         include_str!("../js-runner/bridge/log.js"),
     );
 
+    // actor bridge (the Erlang Process core) — host impl. The `bindgen!` itself lives in the
+    // neutral crate::bindings module (shared infra); this is the actor interface's impl.
+    assert_synced(
+        "bridges/actor/host.rs",
+        "crates/rusm-wasm/src/bridges/actor.rs",
+        include_str!("../../../bridges/actor/host.rs"),
+        include_str!("../src/bridges/actor.rs"),
+    );
+    assert_synced(
+        "bridges/actor/guest.rs",
+        "crates/rusm-rs/src/actor.rs",
+        include_str!("../../../bridges/actor/guest.rs"),
+        include_str!("../../rusm-rs/src/actor.rs"),
+    );
+
     // pg bridge (process-group tags) — host + all three guests.
     assert_synced(
         "bridges/pg/host.rs",

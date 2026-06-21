@@ -23,7 +23,7 @@ use wasmtime::{
     Config, Engine, InstanceAllocationStrategy, Linker, Module, PoolingAllocationConfig,
 };
 
-mod actor;
+mod bindings;
 mod bridges;
 mod caps;
 

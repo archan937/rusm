@@ -8,7 +8,7 @@
 //! line to stderr — the same stream + format as the platform's own lifecycle logs. Not
 //! capability-gated (operator-controlled via the level).
 
-use crate::actor::rusm::runtime::log as log_bridge;
+use crate::bindings::rusm::runtime::log as log_bridge;
 use crate::bridges::WasiHost;
 use rusm_otp::Pid;
 

@@ -1,3 +1,7 @@
+// Canonical source: bridges/actor/host.rs — the actor bridge's native host impl (the
+// Erlang Process core). Synced into rusm-wasm (crates/rusm-wasm/src/bridges/actor.rs) by
+// `make sync-bridges`; edit this file, not the copy. `bridge_host_in_sync` guards drift.
+
 //! The **actor host ABI**: binds the `rusm:runtime` WIT world and implements its
 //! `actor` interface on [`WasiHost`] as thin calls into `rusm-otp`.
 //!
@@ -14,14 +18,7 @@ use rusm_otp::{Context, ExitReason, Pid, Received, Runtime, Strategy};
 
 use crate::bridges::WasiHost;
 
-wasmtime::component::bindgen!({
-    world: "process",
-    path: "wit",
-    imports: { default: async },
-    exports: { default: async },
-});
-
-use rusm::runtime::actor;
+use crate::bindings::rusm::runtime::actor;
 
 /// Wires the actor interface into a component linker.
 pub(crate) fn add_to_linker(

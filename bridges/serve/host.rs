@@ -9,7 +9,7 @@
 //! the transport bridge wired at accept time. A normal process gets `none`/`false`. None of
 //! these touch `rusm-otp`; they are per-instance store state + channel sends.
 
-use crate::actor::rusm::runtime::serve;
+use crate::bindings::rusm::runtime::serve;
 use crate::bridges::conn::{SseEvent, WsOut};
 use crate::bridges::WasiHost;
 

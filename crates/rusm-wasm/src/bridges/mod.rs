@@ -7,6 +7,7 @@
 //! convention) and makes "add a WASI version" a local change.
 
 pub(crate) mod access;
+pub(crate) mod actor;
 pub(crate) mod compress;
 pub(crate) mod conn;
 pub(crate) mod http;

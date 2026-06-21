@@ -49,7 +49,7 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<ComponentLinker<WasiHost>>
     // wasi:http imports, so a component can be served as an HTTP handler (Phase 11)
     // and outbound `wasi:http` resolves. Idle for non-HTTP guests.
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
-    crate::actor::add_to_linker(&mut linker)?;
+    crate::bridges::actor::add_to_linker(&mut linker)?;
     super::kv::add_to_linker(&mut linker)?;
     super::log::add_to_linker(&mut linker)?;
     super::pg::add_to_linker(&mut linker)?;
@@ -491,7 +491,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_guest_can_spawn_a_registered_component() {
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         let rt = Runtime::new();
         let wr = WasmRuntime::new(rt.clone()).unwrap();
         let child = wr
@@ -517,7 +517,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_registered_component_runs_under_its_declared_profile_not_the_spawners() {
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         let rt = Runtime::new();
         let wr = WasmRuntime::new(rt.clone()).unwrap();
         let gate = wr
@@ -585,7 +585,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn spawn_is_denied_without_the_capability() {
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         let rt = Runtime::new();
         let wr = WasmRuntime::new(rt.clone()).unwrap();
         let child = wr
@@ -605,7 +605,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn spawn_of_an_unknown_component_errors() {
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         let rt = Runtime::new();
         let wr = WasmRuntime::new(rt.clone()).unwrap();
         let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
@@ -616,7 +616,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_spawned_child_inherits_the_parents_capabilities() {
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         // The child is non-escalating: it gets the spawner's caps. A parent with a
         // tight memory cap yields a child that crashes growing; a roomy parent's
         // child finishes — same component, capability inherited from the spawner.
@@ -2468,7 +2468,7 @@ mod tests {
         // a guest spawns an instance of it with a runtime-chosen source. Here the JS is
         // staged in the node store and spawned via `kv:` — it runs under the template's
         // declared profile and reports back, proving the dynamic-source path end to end.
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         let rt = Runtime::new();
         let path = kv_test_path("spawn-from");
         let wr = WasmRuntime::with_store(rt.clone(), &path).unwrap();
@@ -2506,7 +2506,7 @@ mod tests {
         // A `url:` source is fetched by the node-injected resolver (rusm-wasm stays
         // HTTP-free). The fetched JS runs under the template profile; the fetch is gated
         // by the spawner's own network capability.
-        use crate::actor::rusm::runtime::actor::Host;
+        use crate::bindings::rusm::runtime::actor::Host;
         let rt = Runtime::new();
         let wr = WasmRuntime::new(rt.clone()).unwrap();
         wr.register_js_template("runner", CapabilityProfile::Trusted.capabilities());

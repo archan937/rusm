@@ -11,7 +11,7 @@
 
 // The generated `streams` interface, aliased so it does not clash with `rusm_otp::stream`
 // (the byte-stream constructor fn).
-use crate::actor::rusm::runtime::streams as stream_iface;
+use crate::bindings::rusm::runtime::streams as stream_iface;
 use crate::bridges::WasiHost;
 use rusm_otp::{stream, Pid, Received};
 

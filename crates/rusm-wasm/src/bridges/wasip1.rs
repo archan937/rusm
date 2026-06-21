@@ -8,7 +8,7 @@
 //!  2. **The actor ABI is raw** — a core module can't pass a WIT `list<u8>`, so the
 //!     `rusm:runtime` world becomes flat `rusm::*` imports that marshal through the
 //!     guest's exported linear `memory` (pointer + length). The host functions are
-//!     the *same* thin calls into `rusm-otp` as the component [`actor`](crate::actor)
+//!     the *same* thin calls into `rusm-otp` as the component [`actor`](crate::bridges::actor)
 //!     glue; only the calling convention differs.
 //!
 //! The shared engine/epoch/pooling levers live in [`crate`]; this file is only the
@@ -119,7 +119,7 @@ fn read_string(caller: &mut Caller<'_, CoreHost>, ptr: i32, len: i32) -> Result<
 
 /// Builds the core-module linker once: preview1 WASI plus the raw `rusm::*` actor
 /// ABI. Every actor function is the same call into `rusm-otp` as the component
-/// world (see [`crate::actor`]); the difference is purely the calling convention —
+/// world (see [`crate::bridges::actor`]); the difference is purely the calling convention —
 /// scalars and `(ptr, len)` windows into the guest's linear memory.
 pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<CoreHost>> {
     let mut linker = Linker::new(engine);

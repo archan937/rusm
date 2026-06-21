@@ -7,7 +7,7 @@
 //! are unprivileged (a process tags itself; membership is a read); `kill-tag` is gated by
 //! `process-control` (it terminates other processes), exactly like `kill`.
 
-use crate::actor::rusm::runtime::pg;
+use crate::bindings::rusm::runtime::pg;
 use crate::bridges::WasiHost;
 use rusm_otp::Pid;
 

@@ -7,7 +7,7 @@
 //! in [`WasiHost::kv_bucket`] (shared with `spawn-from`'s `kv:` source loader, so the gate
 //! is in exactly one place); each op here is a thin lift→bucket→lower.
 
-use crate::actor::rusm::runtime::kv;
+use crate::bindings::rusm::runtime::kv;
 use crate::bridges::WasiHost;
 
 /// Wire the kv interface into a component linker.
