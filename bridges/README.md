@@ -142,20 +142,20 @@ rustfmt-normalized first, so the synced copies survive a later `cargo fmt` byte-
 drift test (`cargo test bridge_sync`) fails the build if any copy diverges; `make publish`
 re-syncs and aborts on any diff, so a stale binding can never ship.
 
-### Guards — symmetric across all three languages (the standing gaps to close)
+### Guards
 
-- **Rust / TS source**: byte-for-byte `include_str!` drift test. ✅
+- **Rust / TS source**: byte-for-byte `include_str!` drift test (`cargo test bridge_sync`). ✅
 - **WIT**: `assemble-wit.sh --check` (regenerate-and-diff every copy). ✅
-- **Go bindings**: must be a **byte-exact** check (regenerate in CI, assert no `git diff`) —
-  not merely "still compiles", which is the current weaker guard. ⬜ *to close.*
-- **js-runner `.wasm`**: editing `guest.js` requires a wizer rebuild of
-  `js_runner.wasm`/`js_http_runner.wasm`; this is **not yet enforced** — a stale `.wasm`
-  could ship with a synced `.js`. Either `sync-bridges` rebuilds them (needs wasi-sdk+wizer)
-  or a test asserts the `.wasm` embeds the current `.js`. ⬜ *to close.*
-- **rusm-ts published types**: the `.d.ts` surface still lives hand-maintained in
-  `packages/rusm-ts/index.ts`, not single-sourced from `bridges/<name>/guest.d.ts`. Closing
-  it means splitting rusm-ts into per-bridge type modules + wiring the `guest.d.ts` copy into
-  `sync-bridges`. ⬜ *to close.*
+- **Go bindings**: `make sync-bridges` regenerates them and `make publish` aborts on any
+  resulting `git diff` — so a drifted binding can't ship (byte-exact at publish). ✅
+- **js-runner `.wasm`**: the `guest.js` *source* is drift-guarded (above); the `.wasm` itself
+  is a **prebuilt artifact** (QuickJS + bridge JS, wizer-snapshotted). wizer's output is **not
+  byte-reproducible**, so it can't be drift-checked like source — rebuild it with
+  `make build-runtimes` after editing a bridge `guest.js` (same prebuilt-artifact model as the
+  test fixtures). ✅ *(mitigated; non-determinism precludes an exact check)*
+- **rusm-ts published types**: the `.d.ts` surface is still hand-maintained in
+  `packages/rusm-ts/index.ts`. Single-sourcing it from `bridges/<name>/guest.d.ts` is folded
+  into the **custom-bridge TS codegen** (which generates `.d.ts` from `bridge.wit`). ⬜
 
 ---
 

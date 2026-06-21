@@ -147,6 +147,19 @@ sync-bridges: ## Materialize bridges/<name>/ (canonical) into every crate: assem
 			&& echo "==> regenerated rusm-go bindings"; \
 	else echo "↷ skip rusm-go bindgen (mise/wit-bindgen-go unavailable) — \`go build\` guards drift"; fi
 	@echo "==> synced bridges → all crates (\`cargo test bridge_sync\` + \`go build\` guard drift)"
+	@echo "↪  if a bridge guest.js changed, run \`make build-runtimes\` to re-snapshot the js runners"
+
+.PHONY: build-runtimes
+build-runtimes: ## Rebuild the wizer-snapshotted js runners (run after editing a bridge guest.js or the runner sources)
+	@# The js_runner/js_http_runner .wasm are prebuilt artifacts (QuickJS + the bridge JS,
+	@# wizer-snapshotted). wizer's output is NOT byte-reproducible, so they can't be drift-
+	@# checked like source; instead rebuild them from current source here. The bridge .js
+	@# *source* is drift-guarded by `cargo test bridge_sync`; this re-snapshots it into the
+	@# images. Needs the wasi-sdk + wizer + wasm-tools toolchain.
+	@for r in js-runner js-http-runner; do \
+		echo "==> building $$r"; \
+		( cd crates/rusm-wasm/$$r && bash build.sh ) || { echo "✗ $$r build failed"; exit 1; }; \
+	done
 
 # Already on crates.io? (200 → that exact version exists; 404 → not yet.) The per-crate skip
 # that makes publishing resumable: a failed run re-runs cleanly and an already-uploaded
