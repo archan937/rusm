@@ -14,6 +14,7 @@ pub(crate) mod kv;
 pub(crate) mod log;
 pub(crate) mod pg;
 pub(crate) mod routed;
+pub(crate) mod serve;
 pub(crate) mod sse;
 pub(crate) mod streams;
 pub(crate) mod tls;
@@ -59,7 +60,7 @@ pub(crate) struct WasiHost {
     /// The HTTP connection context, when this process is a per-connection WebSocket/SSE
     /// handler the serving bridge spawned for one accepted connection; `None` for every
     /// other process. Backs the `connection` actor op (read once in the handler's `open`).
-    pub(crate) connection: Option<crate::actor::ConnectionInfo>,
+    pub(crate) connection: Option<crate::bridges::serve::ConnectionInfo>,
     /// A WebSocket handler's **control** channel to its connection's writer — backs the
     /// `ws-send-text` and `ws-close` ops (binary frames use the plain `send` path). Bounded,
     /// so a slow client back-pressures the handler. `None` for SSE / non-connection processes.

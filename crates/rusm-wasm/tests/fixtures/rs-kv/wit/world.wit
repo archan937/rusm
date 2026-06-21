@@ -16,47 +16,8 @@ interface actor {
         trap-exit: bool,
     }
 
-    /// The HTTP request context of a **per-connection serving process** — a WebSocket or
-    /// SSE handler the host spawned for one accepted connection. Captured at accept time
-    /// and fixed for the connection's life, so a handler reads it once in `open`.
-    record connection-info {
-        /// Request method (`GET`, …), uppercased.
-        method: string,
-        /// Path only, without the query string (`/events/plan/pages/42`).
-        path: string,
-        /// Raw query string without the leading `?` (empty when absent).
-        query: string,
-        /// Route parameters captured from the listener's `[serve.routes]` pattern
-        /// (`"GET /events/:plan" → [("plan", "…")]`); empty when the listener is unrouted.
-        params: list<tuple<string, string>>,
-        /// Request headers, lowercased names, in arrival order (a name may repeat).
-        headers: list<tuple<string, string>>,
-        /// Peer socket address (`ip:port`), empty if the transport can't report one.
-        remote-addr: string,
-        /// The negotiated WebSocket subprotocol, if one was agreed (always none for SSE).
-        subprotocol: option<string>,
-    }
-
     /// This process's own pid (Erlang's `self()`).
     own-pid: func() -> pid;
-
-    /// This per-connection serving process's [`connection-info`], or `none` for every
-    /// other process (a normal actor, a per-request HTTP handler, a service). Read it once
-    /// in a WebSocket/SSE handler's `open`. Additive and non-escalating: a guest that never
-    /// calls it is unaffected, and a non-connection process always gets `none`.
-    connection: func() -> option<connection-info>;
-
-    /// Send a **text** WebSocket frame on this connection (the binary path is a plain
-    /// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this is
-    /// not a WebSocket handler or the socket has closed. Additive: a guest that never calls
-    /// it keeps sending binary frames exactly as before.
-    ws-send-text: func(payload: list<u8>) -> bool;
-
-    /// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
-    ws-close: func(code: u16, reason: string);
-
-    /// Emit a rich SSE event (data + optional event/id/retry); plain data: is a regular send.
-    sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry: option<u32>) -> bool;
 
     /// Spawn a registered component (by the name it was registered under) as a new
     /// process, returning its pid (Erlang's `spawn`). Capability-gated and
@@ -182,6 +143,54 @@ interface pg {
     kill-tag: func(tag: string) -> u32;
 }
 
+/// Per-connection serving controls — the ABI a **WebSocket or SSE handler** uses to read
+/// its request context and push frames/events back. The host spawns one handler process per
+/// accepted connection (via the http/ws/sse transport bridges) and wires these ops to that
+/// connection's writer; a normal process gets `none`/`false`. A polyfill+introduced straddle:
+/// the HTTP `fetch`-handler shape is web-standard, the WS/SSE `open`/`message`/`close`
+/// handlers are a RUSM shape. The ergonomic guest wrappers (`ws::Connection`, `sse::Stream`)
+/// build on these.
+interface serve {
+    /// The HTTP request context of a **per-connection serving process** — a WebSocket or
+    /// SSE handler the host spawned for one accepted connection. Captured at accept time
+    /// and fixed for the connection's life, so a handler reads it once in `open`.
+    record connection-info {
+        /// Request method (`GET`, …), uppercased.
+        method: string,
+        /// Path only, without the query string (`/events/plan/pages/42`).
+        path: string,
+        /// Raw query string without the leading `?` (empty when absent).
+        query: string,
+        /// Route parameters captured from the listener's `[serve.routes]` pattern
+        /// (`"GET /events/:plan" → [("plan", "…")]`); empty when the listener is unrouted.
+        params: list<tuple<string, string>>,
+        /// Request headers, lowercased names, in arrival order (a name may repeat).
+        headers: list<tuple<string, string>>,
+        /// Peer socket address (`ip:port`), empty if the transport can't report one.
+        remote-addr: string,
+        /// The negotiated WebSocket subprotocol, if one was agreed (always none for SSE).
+        subprotocol: option<string>,
+    }
+
+    /// This per-connection serving process's [`connection-info`], or `none` for every
+    /// other process (a normal actor, a per-request HTTP handler, a service). Read it once
+    /// in a WebSocket/SSE handler's `open`. Additive and non-escalating: a guest that never
+    /// calls it is unaffected, and a non-connection process always gets `none`.
+    connection: func() -> option<connection-info>;
+
+    /// Send a **text** WebSocket frame on this connection (the binary path is a plain
+    /// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this is
+    /// not a WebSocket handler or the socket has closed. Additive: a guest that never calls
+    /// it keeps sending binary frames exactly as before.
+    ws-send-text: func(payload: list<u8>) -> bool;
+
+    /// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
+    ws-close: func(code: u16, reason: string);
+
+    /// Emit a rich SSE event (data + optional event/id/retry); plain data: is a regular send.
+    sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry: option<u32>) -> bool;
+}
+
 /// Cross-process byte streams — an **introduced** bridge: a Tokio-backpressured pipe
 /// between two RUSM processes. The write end stays with the opener (under a handle); the
 /// read end is delivered to the target, which `stream-accept`s it and `stream-read`s
@@ -233,6 +242,7 @@ world process {
     import kv;
     import log;
     import pg;
+    import serve;
     import streams;
     export run: func();
 }
@@ -245,5 +255,6 @@ world imports {
     import kv;
     import log;
     import pg;
+    import serve;
     import streams;
 }

@@ -13,5 +13,6 @@ world component {
     import log;
     import pg;
     import streams;
+    import serve;
     export run: func();
 }

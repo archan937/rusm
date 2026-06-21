@@ -21,7 +21,7 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 
 use super::{HttpCaps, WasiHost};
-use crate::actor::ConnectionInfo;
+use crate::bridges::serve::ConnectionInfo;
 use crate::caps::{Capabilities, CapabilityProfile};
 use crate::{Spawner, WasmRuntime};
 
@@ -53,6 +53,7 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<ComponentLinker<WasiHost>>
     super::kv::add_to_linker(&mut linker)?;
     super::log::add_to_linker(&mut linker)?;
     super::pg::add_to_linker(&mut linker)?;
+    super::serve::add_to_linker(&mut linker)?;
     super::streams::add_to_linker(&mut linker)?;
     Ok(linker)
 }

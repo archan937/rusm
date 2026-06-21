@@ -467,7 +467,7 @@ impl WsServer {
         prepared: PreparedComponent,
         bundle: Option<Arc<Vec<u8>>>,
         caps: Capabilities,
-        connection: crate::actor::ConnectionInfo,
+        connection: crate::bridges::serve::ConnectionInfo,
     ) {
         let (mut sink, mut stream) = conn.split();
         let rt = self.spawner.rt.clone();

@@ -37,47 +37,6 @@ type ProcessInfo struct {
 	TrapExit     bool              `json:"trap-exit"`
 }
 
-// ConnectionInfo represents the record "rusm:runtime/actor@0.1.0#connection-info".
-//
-// The HTTP request context of a **per-connection serving process** — a WebSocket
-// or
-// SSE handler the host spawned for one accepted connection. Captured at accept time
-// and fixed for the connection's life, so a handler reads it once in `open`.
-//
-//	record connection-info {
-//		method: string,
-//		path: string,
-//		query: string,
-//		params: list<tuple<string, string>>,
-//		headers: list<tuple<string, string>>,
-//		remote-addr: string,
-//		subprotocol: option<string>,
-//	}
-type ConnectionInfo struct {
-	_ cm.HostLayout `json:"-"`
-	// Request method (`GET`, …), uppercased.
-	Method string `json:"method"`
-
-	// Path only, without the query string (`/events/plan/pages/42`).
-	Path string `json:"path"`
-
-	// Raw query string without the leading `?` (empty when absent).
-	Query string `json:"query"`
-
-	// Route parameters captured from the listener's `[serve.routes]` pattern
-	// (`"GET /events/:plan" → [("plan", "…")]`); empty when the listener is unrouted.
-	Params cm.List[[2]string] `json:"params"`
-
-	// Request headers, lowercased names, in arrival order (a name may repeat).
-	Headers cm.List[[2]string] `json:"headers"`
-
-	// Peer socket address (`ip:port`), empty if the transport can't report one.
-	RemoteAddr string `json:"remote-addr"`
-
-	// The negotiated WebSocket subprotocol, if one was agreed (always none for SSE).
-	Subprotocol cm.Option[string] `json:"subprotocol"`
-}
-
 // SuperviseStrategy represents the enum "rusm:runtime/actor@0.1.0#supervise-strategy".
 //
 // A restart strategy for [`supervise`].
@@ -129,75 +88,6 @@ var _SuperviseStrategyUnmarshalCase = cm.CaseUnmarshaler[SuperviseStrategy](_Sup
 func OwnPid() (result Pid) {
 	result0 := wasmimport_OwnPid()
 	result = (types.Pid)((uint64)(result0))
-	return
-}
-
-// Connection represents the imported function "connection".
-//
-// This per-connection serving process's [`connection-info`], or `none` for every
-// other process (a normal actor, a per-request HTTP handler, a service). Read it
-// once
-// in a WebSocket/SSE handler's `open`. Additive and non-escalating: a guest that
-// never
-// calls it is unaffected, and a non-connection process always gets `none`.
-//
-//	connection: func() -> option<connection-info>
-//
-//go:nosplit
-func Connection() (result cm.Option[ConnectionInfo]) {
-	wasmimport_Connection(&result)
-	return
-}
-
-// WsSendText represents the imported function "ws-send-text".
-//
-// Send a **text** WebSocket frame on this connection (the binary path is a plain
-// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this
-// is
-// not a WebSocket handler or the socket has closed. Additive: a guest that never
-// calls
-// it keeps sending binary frames exactly as before.
-//
-//	ws-send-text: func(payload: list<u8>) -> bool
-//
-//go:nosplit
-func WsSendText(payload cm.List[uint8]) (result bool) {
-	payload0, payload1 := cm.LowerList(payload)
-	result0 := wasmimport_WsSendText((*uint8)(payload0), (uint32)(payload1))
-	result = (bool)(cm.U32ToBool((uint32)(result0)))
-	return
-}
-
-// WsClose represents the imported function "ws-close".
-//
-// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
-//
-//	ws-close: func(code: u16, reason: string)
-//
-//go:nosplit
-func WsClose(code uint16, reason string) {
-	code0 := (uint32)(code)
-	reason0, reason1 := cm.LowerString(reason)
-	wasmimport_WsClose((uint32)(code0), (*uint8)(reason0), (uint32)(reason1))
-	return
-}
-
-// SseSend represents the imported function "sse-send".
-//
-// Emit a rich SSE event (data + optional event/id/retry); plain data: is a regular
-// send.
-//
-//	sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry:
-//	option<u32>) -> bool
-//
-//go:nosplit
-func SseSend(data cm.List[uint8], event cm.Option[string], id cm.Option[string], retry cm.Option[uint32]) (result bool) {
-	data0, data1 := cm.LowerList(data)
-	event0, event1, event2 := lower_OptionString(event)
-	id0, id1, id2 := lower_OptionString(id)
-	retry0, retry1 := lower_OptionU32(retry)
-	result0 := wasmimport_SseSend((*uint8)(data0), (uint32)(data1), (uint32)(event0), (*uint8)(event1), (uint32)(event2), (uint32)(id0), (*uint8)(id1), (uint32)(id2), (uint32)(retry0), (uint32)(retry1))
-	result = (bool)(cm.U32ToBool((uint32)(result0)))
 	return
 }
 

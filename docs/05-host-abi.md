@@ -10,7 +10,7 @@ per artifact kind, plus the standard WASI interfaces.
 A WASI **component** imports the `rusm:runtime/actor` interface (a real WIT world,
 bound with `wasmtime::component::bindgen!`), so a guest in any language calls typed
 functions. Several capabilities are **sibling interfaces** — platform *bridges* split out
-of the core: `rusm:runtime/{kv, log, pg, streams}` (and the shared `types`); all are imported
+of the core: `rusm:runtime/{kv, log, pg, serve, streams}` (and the shared `types`); all are imported
 into the one `process` world:
 
 | Function | Meaning |
@@ -25,9 +25,6 @@ into the one `process` world:
 | `register(name) / whereis(name) / unregister(name)` | the named registry (1 name → 1 pid) |
 | `set-label(label)` | a human-readable label for the observer |
 | `spawn(name) / monitor(pid) / supervise(…)` | start, watch, and supervise child components (capability-gated) |
-| `connection() -> option<connection-info>` | a per-connection serving (WS/SSE) handler's request context — method, path, captured **route params**, query, headers, remote address, negotiated subprotocol |
-| `ws-send-text(payload) / ws-close(code, reason)` | a WebSocket handler's outbound **text** frame / **close** with status + reason (binary frames take the plain `send`→writer-process path) |
-| `sse-send(data, event?, id?, retry?) -> bool` | an SSE handler's **rich event** (`id`/`event`/`retry`); a plain `data:` event takes the `send`→writer path |
 
 ### The `kv` interface — durable storage (a platform bridge)
 
@@ -77,6 +74,17 @@ the TS `Process.registerTag`/etc., Go's `RegisterTag`/etc.
 **`rusm:runtime/log`** — platform logging (a polyfill bridge): a guest's standard logging —
 `console.*` (TS), the `log` crate (Rust), `log`/`slog` (Go) — routes to `log(level, message)`;
 the host stamps time, `component#pid`, and the severity colour, gated by the node `[log] level`.
+
+**`rusm:runtime/serve`** — per-connection serving controls for a WebSocket/SSE handler the
+host spawned for one accepted connection (a normal process gets `none`/`false`). Guest: the
+ergonomic `ws::Connection`/`sse::Stream` (RS), `web.Conn`/`web.Stream` (Go), `Process`
+methods (TS).
+
+| Function | Meaning |
+| --- | --- |
+| `connection() -> option<connection-info>` | this handler's request context — method, path, captured **route params**, query, headers, remote address, negotiated subprotocol |
+| `ws-send-text(payload) / ws-close(code, reason)` | a WebSocket handler's outbound **text** frame / **close** with status + reason (binary frames take the plain `send`→writer-process path) |
+| `sse-send(data, event?, id?, retry?) -> bool` | an SSE handler's **rich event** (`id`/`event`/`retry`); a plain `data:` event takes the `send`→writer path |
 
 Composition is **message passing** (spawn instances, then `send`/`receive`/
 `register`/`whereis`) — *not* WIT inter-component wiring, and no lattice. Standard

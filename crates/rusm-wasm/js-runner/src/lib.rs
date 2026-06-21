@@ -31,6 +31,7 @@ use rquickjs::{Context, Ctx, Exception, Function, Promise, Runtime, TypedArray};
 use rusm::runtime::actor;
 use rusm::runtime::kv;
 use rusm::runtime::pg;
+use rusm::runtime::serve;
 use rusm::runtime::streams as stream_iface;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
@@ -481,6 +482,7 @@ const WEBAPI_JS: &str = include_str!("../bridge/webapi.js");
 const STREAM_JS: &str = include_str!("../bridge/streams.js");
 const PROCESS_JS: &str = include_str!("../bridge/process.js");
 const PG_JS: &str = include_str!("../bridge/pg.js");
+const SERVE_JS: &str = include_str!("../bridge/serve.js");
 const KV_JS: &str = include_str!("../bridge/kv.js");
 const RPC_JS: &str = include_str!("../bridge/rpc.js");
 
@@ -536,7 +538,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     def!("__own_pid", || actor::own_pid().to_string());
     // The per-connection serving context (ws/sse handlers); JSON for the bridge to parse,
     // or `null` for any other process. Serialised here so header/param values escape safely.
-    def!("__connection", || actor::connection().map(|c| {
+    def!("__connection", || serve::connection().map(|c| {
         serde_json::json!({
             "method": c.method,
             "path": c.path,
@@ -549,9 +551,9 @@ fn boot_bridge(ctx: Ctx<'_>) {
         .to_string()
     }));
     // Send a text WebSocket frame (binary frames go through __send to the writer pid).
-    def!("__ws_send_text", |s: String| actor::ws_send_text(s.as_bytes()));
+    def!("__ws_send_text", |s: String| serve::ws_send_text(s.as_bytes()));
     // Close the WebSocket connection with a status code + reason (JS numbers are f64).
-    def!("__ws_close", |code: f64, reason: String| actor::ws_close(code as u16, &reason));
+    def!("__ws_close", |code: f64, reason: String| serve::ws_close(code as u16, &reason));
     // Emit a rich SSE event: data + optional event/id (empty string = none) + retry (0 = none).
     def!(
         "__sse_send",
@@ -559,7 +561,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
             let event = (!event.is_empty()).then_some(event);
             let id = (!id.is_empty()).then_some(id);
             let retry = (retry > 0.0).then_some(retry as u32);
-            actor::sse_send(data.as_bytes(), event.as_deref(), id.as_deref(), retry)
+            serve::sse_send(data.as_bytes(), event.as_deref(), id.as_deref(), retry)
         }
     );
     def!("__list", || actor::list_processes()
@@ -680,6 +682,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     let _: () = ctx.eval(STREAM_JS).unwrap();
     let _: () = ctx.eval(PROCESS_JS).unwrap();
     let _: () = ctx.eval(PG_JS).unwrap();
+    let _: () = ctx.eval(SERVE_JS).unwrap();
     let _: () = ctx.eval(KV_JS).unwrap();
     let _: () = ctx.eval(RPC_JS).unwrap();
     // A CommonJS surface so a Bun-bundled (`--format=cjs`) service/worker can

@@ -31,7 +31,7 @@ pub(crate) struct SseEvent {
     pub(crate) id: Option<String>,
     pub(crate) retry: Option<u32>,
 }
-use crate::actor::ConnectionInfo;
+use crate::bridges::serve::ConnectionInfo;
 use crate::caps::Capabilities;
 use crate::{PreparedComponent, Spawner};
 

@@ -34,6 +34,7 @@ pub mod kv;
 pub mod logging;
 pub mod pg;
 pub mod pubsub;
+pub mod serve;
 pub mod sse;
 pub mod streams;
 pub mod supervisor;
@@ -47,6 +48,12 @@ pub use streams::Stream;
 /// Process-group tag ops, re-exported at the crate root so the public paths stay
 /// `rusm_rs::{register_tag, unregister_tag, whereis_tag, kill_tag}`.
 pub use pg::{kill_tag, register_tag, unregister_tag, whereis_tag};
+
+/// The per-connection serving controls, re-exported at the crate root: `ConnectionInfo` +
+/// `connection` are public (`rusm_rs::ConnectionInfo`, `rusm_rs::connection`); the WS/SSE
+/// push ops stay `pub(crate)`, consumed by the `ws`/`sse` handler wrappers.
+pub use serve::{connection, ConnectionInfo};
+pub(crate) use serve::{sse_send, ws_close, ws_send_text};
 
 pub use supervisor::{Strategy, Supervisor};
 
@@ -153,82 +160,6 @@ pub fn set_label(label: &str) {
 }
 
 
-/// The HTTP context of a **per-connection** WebSocket or SSE handler — the request that
-/// opened this connection. Fixed for the connection's life; read it in your handler's
-/// `open` (via [`ws::Connection::info`] / [`sse::Stream::info`], or [`connection`] directly).
-/// A normal process (not a connection handler) has no context — [`connection`] returns
-/// `None`, and these accessors on a defaulted value are empty.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ConnectionInfo {
-    method: String,
-    path: String,
-    query: String,
-    params: Vec<(String, String)>,
-    headers: Vec<(String, String)>,
-    remote_addr: String,
-    subprotocol: Option<String>,
-}
-
-impl ConnectionInfo {
-    /// Request method, uppercased (`GET`, …).
-    pub fn method(&self) -> &str {
-        &self.method
-    }
-    /// Path without the query string (`/events/plan/pages/42`).
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-    /// Raw query string without the leading `?` (empty when absent).
-    pub fn query(&self) -> &str {
-        &self.query
-    }
-    /// All route parameters captured from the listener's `[serve.routes]` pattern.
-    pub fn params(&self) -> &[(String, String)] {
-        &self.params
-    }
-    /// One captured route parameter by name (`:plan` → `param("plan")`).
-    pub fn param(&self, name: &str) -> Option<&str> {
-        self.params
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
-    }
-    /// All request headers (lowercased names, arrival order; a name may repeat).
-    pub fn headers(&self) -> &[(String, String)] {
-        &self.headers
-    }
-    /// The first value of header `name` (case-insensitive), or `None`.
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
-    }
-    /// Peer socket address (`ip:port`), empty if the transport can't report one.
-    pub fn remote_addr(&self) -> &str {
-        &self.remote_addr
-    }
-    /// The negotiated WebSocket subprotocol, if any (always `None` for SSE).
-    pub fn subprotocol(&self) -> Option<&str> {
-        self.subprotocol.as_deref()
-    }
-}
-
-/// This process's [`ConnectionInfo`] when it is a per-connection WebSocket/SSE handler, or
-/// `None` for every other process. A WS/SSE handler usually reads it through
-/// [`ws::Connection::info`] / [`sse::Stream::info`] rather than calling this directly.
-pub fn connection() -> Option<ConnectionInfo> {
-    actor::connection().map(|c| ConnectionInfo {
-        method: c.method,
-        path: c.path,
-        query: c.query,
-        params: c.params,
-        headers: c.headers,
-        remote_addr: c.remote_addr,
-        subprotocol: c.subprotocol,
-    })
-}
-
 /// Whether a pid is still alive (subject to capability).
 pub fn is_alive(pid: Pid) -> bool {
     actor::is_alive(pid.0)
@@ -242,30 +173,6 @@ pub fn kill(pid: Pid) -> bool {
 /// Send raw bytes to a pid (dropped if it's gone).
 pub fn send_bytes(to: Pid, msg: &[u8]) {
     actor::send(to.0, msg);
-}
-
-/// Send a **text** WebSocket frame on this connection (used by [`ws::Connection::send_text`];
-/// a binary frame is a plain [`send_bytes`] to the writer pid). `false` if this process is
-/// not a WebSocket handler, or the socket has closed.
-pub(crate) fn ws_send_text(payload: &[u8]) -> bool {
-    actor::ws_send_text(payload)
-}
-
-/// Close this WebSocket connection with a status `code` + `reason` (used by
-/// [`ws::Connection::close`]). No-op for a non-WebSocket process.
-pub(crate) fn ws_close(code: u16, reason: &str) {
-    actor::ws_close(code, reason);
-}
-
-/// Emit a rich SSE event (data + optional event/id/retry); used by [`sse::Stream::emit`].
-/// `false` if this process is not an SSE handler or the client has disconnected.
-pub(crate) fn sse_send(
-    data: &[u8],
-    event: Option<&str>,
-    id: Option<&str>,
-    retry: Option<u32>,
-) -> bool {
-    actor::sse_send(data, event, id, retry)
 }
 
 thread_local! {

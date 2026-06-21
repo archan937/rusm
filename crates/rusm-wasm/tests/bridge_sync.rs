@@ -100,6 +100,32 @@ fn bridge_files_in_sync() {
         include_str!("../js-runner/bridge/pg.js"),
     );
 
+    // serve bridge (per-connection WS/SSE handler controls) — host + all three guests.
+    assert_synced(
+        "bridges/serve/host.rs",
+        "crates/rusm-wasm/src/bridges/serve.rs",
+        include_str!("../../../bridges/serve/host.rs"),
+        include_str!("../src/bridges/serve.rs"),
+    );
+    assert_synced(
+        "bridges/serve/guest.rs",
+        "crates/rusm-rs/src/serve.rs",
+        include_str!("../../../bridges/serve/guest.rs"),
+        include_str!("../../rusm-rs/src/serve.rs"),
+    );
+    assert_synced(
+        "bridges/serve/guest.go",
+        "packages/rusm-go/serve.go",
+        include_str!("../../../bridges/serve/guest.go"),
+        include_str!("../../../packages/rusm-go/serve.go"),
+    );
+    assert_synced(
+        "bridges/serve/guest.js",
+        "crates/rusm-wasm/js-runner/bridge/serve.js",
+        include_str!("../../../bridges/serve/guest.js"),
+        include_str!("../js-runner/bridge/serve.js"),
+    );
+
     // stream bridge — host + all three guests.
     assert_synced(
         "bridges/streams/host.rs",

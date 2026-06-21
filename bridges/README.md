@@ -74,7 +74,7 @@ carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `
 | `streams` | introduced | cross-process byte streams | rusm-otp | — | W H R G J | `stream-pipe` | ✅ |
 | `kv` | introduced | `kv.bucket(..)` | rusm-kv (redb) | `storage` | W H R G J T | `kv-storm` (ACID ceiling) | ✅ |
 | `log` | polyfill | `console.*` / `log` / `slog` | rusm-logfmt | — (level) | W H R G J | — (not hot) | ✅ |
-| `serve` | polyfill + introduced | `fetch` / WS+SSE handlers | http/ws/sse | — | W H R G J T | serving (below) | ⬜ |
+| `serve` | polyfill + introduced | `fetch` / WS+SSE handlers | http/ws/sse | — | W H R G J | serving | ✅ |
 | `http` | transport | — (drives handlers) | hyper | — | H | `http-throughput` / loadtest | ⬜ |
 | `ws` | transport | — (process per conn) | tokio-tungstenite | — | H | `ws-echo` | ⬜ |
 | `sse` | transport | — (stream per conn) | `wasi:http` body | — | H | `sse-fanout` | ⬜ |

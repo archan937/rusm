@@ -62,21 +62,8 @@ func Self() Pid { return Pid(actor.OwnPid()) }
 // SendBytes sends raw bytes to a pid (silently dropped if it is gone).
 func SendBytes(to Pid, msg []byte) { actor.Send(actor.Pid(to), cm.ToList(msg)) }
 
-// WsSendText sends a text WebSocket frame on this connection (binary frames are a plain
-// SendBytes to the writer pid). Returns false if this is not a WebSocket handler or the
-// socket has closed. Used by web.Conn.SendText.
-func WsSendText(payload []byte) bool { return actor.WsSendText(cm.ToList(payload)) }
-
-// WsClose closes this WebSocket connection with a status code + reason (used by
-// web.Conn.Close). No-op for a non-WebSocket process.
-func WsClose(code uint16, reason string) { actor.WsClose(code, reason) }
-
-// SseSend emits a rich SSE event (used by web.Stream.Emit): data plus an event name, id,
-// and retry — each omitted when "" / 0. Returns false if this is not an SSE handler or the
-// client disconnected.
-func SseSend(data []byte, event, id string, retry uint32) bool {
-	return actor.SseSend(cm.ToList(data), optString(event), optString(id), optU32(retry))
-}
+// WS/SSE handler controls (Connection/WsSendText/WsClose/SseSend) are the serve bridge —
+// see serve.go (package rusm, same surface).
 
 func optString(s string) cm.Option[string] {
 	if s == "" {

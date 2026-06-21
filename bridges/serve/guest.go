@@ -1,9 +1,15 @@
+// Canonical source: bridges/serve/guest.go — the serve bridge's Go guest binding (the
+// per-connection WS/SSE handler controls). Synced into rusm-go (packages/rusm-go/serve.go)
+// by `make sync-bridges`; edit this file, not the copy. `bridge_guest_in_sync` guards drift.
+
 package rusm
 
 import (
 	"strings"
 
-	"github.com/archan937/rusm/packages/rusm-go/internal/wit/rusm/runtime/actor"
+	"go.bytecodealliance.org/cm"
+
+	"github.com/archan937/rusm/packages/rusm-go/internal/wit/rusm/runtime/serve"
 )
 
 // ConnectionInfo is the HTTP context of a per-connection WebSocket or SSE handler — the
@@ -60,7 +66,7 @@ func find(pairs [][2]string, name string, fold bool) string {
 // WebSocket/SSE handler; ok is false for every other process. A handler usually reads it
 // through [web.Conn.Info] / [web.Stream.Info] rather than calling this directly.
 func Connection() (info ConnectionInfo, ok bool) {
-	o := actor.Connection()
+	o := serve.Connection()
 	if o.None() {
 		return ConnectionInfo{}, false
 	}
@@ -77,4 +83,20 @@ func Connection() (info ConnectionInfo, ok bool) {
 		info.subprotocol = c.Subprotocol.Value()
 	}
 	return info, true
+}
+
+// WsSendText sends a text WebSocket frame on this connection (binary frames are a plain
+// SendBytes to the writer pid). Returns false if this is not a WebSocket handler or the
+// socket has closed. Used by web.Conn.SendText.
+func WsSendText(payload []byte) bool { return serve.WsSendText(cm.ToList(payload)) }
+
+// WsClose closes this WebSocket connection with a status code + reason (used by
+// web.Conn.Close). No-op for a non-WebSocket process.
+func WsClose(code uint16, reason string) { serve.WsClose(code, reason) }
+
+// SseSend emits a rich SSE event (used by web.Stream.Emit): data plus an event name, id,
+// and retry — each omitted when "" / 0. Returns false if this is not an SSE handler or the
+// client disconnected.
+func SseSend(data []byte, event, id string, retry uint32) bool {
+	return serve.SseSend(cm.ToList(data), optString(event), optString(id), optU32(retry))
 }

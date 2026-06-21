@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use rusm_otp::{Context, ExitReason, Pid, Received, Runtime, Strategy};
 
-use crate::bridges::conn::{SseEvent, WsOut};
 use crate::bridges::WasiHost;
 
 wasmtime::component::bindgen!({
@@ -24,11 +23,6 @@ wasmtime::component::bindgen!({
 
 use rusm::runtime::actor;
 
-/// The per-connection HTTP context (method/path/query/params/headers/addr/subprotocol) a
-/// serving bridge attaches to a WebSocket/SSE handler process; re-exported so the bridges
-/// and store can name it without the full generated path. Returned by the `connection` op.
-pub(crate) use rusm::runtime::actor::ConnectionInfo;
-
 /// Wires the actor interface into a component linker.
 pub(crate) fn add_to_linker(
     linker: &mut wasmtime::component::Linker<WasiHost>,
@@ -39,56 +33,6 @@ pub(crate) fn add_to_linker(
 impl actor::Host for WasiHost {
     async fn own_pid(&mut self) -> u64 {
         self.pid
-    }
-
-    /// This process's connection context, set by the serving bridge when it spawned a
-    /// per-connection WebSocket/SSE handler; `None` for every other process. A plain
-    /// read of per-instance store state — no `rusm-otp` call, no capability gate.
-    async fn connection(&mut self) -> Option<actor::ConnectionInfo> {
-        self.connection.clone()
-    }
-
-    /// Send a text WebSocket frame to this connection's writer (binary frames use the
-    /// plain `send` path). `false` if this process is not a WebSocket handler, or the
-    /// bounded channel is closed (the client disconnected). The bound back-pressures a
-    /// handler that outruns a slow client — it parks on `send` rather than buffering.
-    async fn ws_send_text(&mut self, payload: Vec<u8>) -> bool {
-        match &self.ws_out {
-            Some(tx) => tx.send(WsOut::Text(payload)).await.is_ok(),
-            None => false,
-        }
-    }
-
-    /// Close this WebSocket connection with a status `code` + `reason` (a server-initiated
-    /// close frame), then the connection tears down. No-op for a non-WebSocket process.
-    async fn ws_close(&mut self, code: u16, reason: String) {
-        if let Some(tx) = &self.ws_out {
-            let _ = tx.send(WsOut::Close(code, reason)).await;
-        }
-    }
-
-    /// Emit a rich SSE event (data + optional event/id/retry) to this connection's writer
-    /// (the plain `data:` path is a `send` to the writer pid). `false` if this is not an SSE
-    /// handler, or the bounded channel is closed (the client disconnected).
-    async fn sse_send(
-        &mut self,
-        data: Vec<u8>,
-        event: Option<String>,
-        id: Option<String>,
-        retry: Option<u32>,
-    ) -> bool {
-        match &self.sse_out {
-            Some(tx) => tx
-                .send(SseEvent {
-                    data,
-                    event,
-                    id,
-                    retry,
-                })
-                .await
-                .is_ok(),
-            None => false,
-        }
     }
 
     /// Spawn a registered component by name as a new process — the actor model's
