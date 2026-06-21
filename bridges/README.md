@@ -108,11 +108,37 @@ gates on `storage`), and `rusm build` will only inject a bridge's WIT into compo
 profile grants it — so a non-granted component can neither call nor import it. Even `trusted`
 grants no custom bridge implicitly; an app-authored capability is always opt-in by name.
 
-> **Status:** the runtime seam, the composable builder, the shared `rusm_cli::host` serve
-> path, and the capability whitelist are live. The remaining *ergonomics* — `rusm build`
-> discovering an app's `bridges/<name>/`, generating the per-language guest stubs, and
-> scaffolding/running the app's host crate — are the next slices (see the roadmap). Until then
-> a host embeds `host::serve(root, &cfg, |l| my::add_to_linker(l))` directly, as above.
+## The `rusm build` / `rusm serve` pipeline (the ergonomic path)
+
+An app author writes only two files per bridge — `bridges/<name>/bridge.wit` (the contract)
+and `bridges/<name>/host.rs` (the impl, in the convention above) — plus a one-line host
+`main.rs`. `rusm build` then does the rest, deterministically:
+
+1. **discovers** `bridges/<name>/` (presence-based; a half-authored bridge fails loudly);
+2. **generates the host glue** into the app: `wit/world.wit` (a synthesized `rusm:host`
+   world importing every bridge interface), `wit/deps/<name>/bridge.wit` (each contract
+   vendored), `src/bindings.rs` (the `bindgen!`), `src/bridges.rs` (mounts each `host.rs`
+   via `#[path]` and exposes `extend`);
+3. **vendors** each bridge's WIT into the `wit/deps/` of every guest component its capability
+   profile grants it (default-deny), so a Rust/Go guest just declares the `import`;
+4. **compiles** the components and the **host binary** (`cargo build --release`).
+
+`rusm serve` then runs that host binary (which calls `rusm_cli::host::serve(.., bridges::extend)`)
+— so the bridge impls are compiled in, typed end to end. The author owns `bridges/<name>/`,
+`src/main.rs`, `Cargo.toml`, `rusm.toml`; everything in step 2 is generated (regenerated each
+build, never hand-edited). Worked example: **`examples/custom-bridge/`** (a `weather` bridge;
+its host crate compiles in the workspace as the host-side proof, and a drift test guarantees
+the committed generated files are byte-identical to what `rusm build` emits).
+
+> **Status.** Live: the runtime seam + composable builder, the shared `rusm_cli::host` serve
+> path, the capability whitelist, bridge discovery + host-crate codegen + guest-WIT vendoring,
+> and `rusm build`/`serve` wiring — i.e. the full **host side** plus **Rust/Go guest** WIT
+> vendoring. The runtime mechanism is proven end to end by `rusm-wasm`'s
+> `a_custom_application_bridge_is_callable_from_a_guest` (a guest calls a custom bridge, typed,
+> host returns a pid-stamped reply). Remaining: `rusm new --bridges` scaffolding; weaving a
+> custom `import` into the `#[rusm_rs::handlers]` macro (so an HTTP route handler — not just a
+> plain actor — can call a bridge; the macro currently hardcodes the `process` world); the **TS**
+> guest path (per-bridge typed globals + a js-runner re-wizer); and a genius-rusm native bridge.
 
 ---
 
