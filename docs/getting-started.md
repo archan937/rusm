@@ -643,12 +643,22 @@ from inside a real component.
 
 ## Streaming (from a component) {#streaming}
 
-A **byte stream** carries raw bytes from one process to another, Tokio-backpressured (see
-[byte streams](./concepts/byte-streams.md)). It has two ends, living in **two separate
-processes**: a **producer** opens the stream and writes; a **consumer** accepts it and
-reads to end-of-stream. The two snippets below are those two processes.
+Most of the time processes talk in **messages** (`send`/`receive`) — each a discrete whole
+value. A **byte stream** is the other tool: a continuous, ordered flow of bytes from one
+process to another, for data you *don't* want to deliver as one big message — a large or
+open-ended payload such as an HTTP request/response body, an SSE/WS feed, a file, or an LLM
+token stream. It's **back-pressured** (see [byte streams](./concepts/byte-streams.md)): if
+the reader is slow the writer automatically parks, so a fast producer can't pile gigabytes
+into memory. Reach for a stream when the data is large or unbounded and you want
+incremental, flow-controlled delivery; for small or request/reply payloads, just
+`send`/`receive`.
 
-**The producer** opens a stream to the other process — addressed by its pid (from `spawn`)
+It's a pipe with two ends, in **two separate processes**: a **producer** calls
+`openStream(peer)` to open the pipe to another process, then writes chunks and closes it; a
+**consumer** calls `acceptStream()` to take the next pipe opened to it, then reads to
+end-of-stream. The two snippets below are those two processes.
+
+**The producer** opens the pipe to the other process — addressed by its pid (from `spawn`)
 or a name it `register`ed — writes chunks (the write parks under back-pressure when the
 reader is slow), then closes it:
 
