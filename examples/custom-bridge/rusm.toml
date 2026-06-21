@@ -11,7 +11,6 @@ inherits = "sandboxed"
 bridges = ["weather"]
 
 [[serve]]
-name = "api"
 protocol = "http"
 listen = "127.0.0.1:8080"
 
@@ -27,7 +26,7 @@ listen = "127.0.0.1:8080"
 # A WebSocket listener whose per-connection handler is the TS guest (`tsweather`): each text
 # frame is a city, the reply is the bridge's forecast — the TS twin of the Rust/Go handlers.
 [[serve]]
-name = "tsweather"
+component = "tsweather"
 protocol = "ws"
 listen = "127.0.0.1:8082"
 

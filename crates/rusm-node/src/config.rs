@@ -257,10 +257,10 @@ impl ServeProtocol {
     }
 }
 
-/// One `[[serve]]` entry: a network listener hosted on its own port. HTTP/SSE
-/// listeners dispatch each request through the `[routes]` table to a handler
-/// component (process-per-request); a WebSocket listener runs one sandboxed component
-/// process per connection (loaded from `./wasm/<name>.{wasm,js}`).
+/// One `[[serve]]` entry: a network listener hosted on its own port. A routed listener has a
+/// `[serve.routes]` table and dispatches each request to a handler component
+/// (process-per-request); a routes-less listener names a single `component` to run (a
+/// WebSocket connection per process, or a handler-less `wasi:http` component).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServeSpec {
@@ -276,13 +276,13 @@ pub struct ServeSpec {
     pub routes: HashMap<String, String>,
     /// The single handler **component** for a listener that has no `[serve.routes]`: a
     /// WebSocket listener (one process per connection) or a handler-less `wasi:http`
-    /// HTTP component. Resolves to `./wasm/<name>.{wasm,js}`; its capability profile
-    /// comes from a matching `[components.<name>]` entry (else default-deny `sandboxed`).
-    /// Omitted for a routed HTTP/SSE listener — its routes name the components.
+    /// HTTP component. Resolves to `./wasm/<component>.{wasm,js}`; its capability profile
+    /// comes from a matching `[components.<component>]` entry (else default-deny `sandboxed`).
+    /// Omitted for a routed HTTP/SSE listener — its `[serve.routes]` name the components.
     #[serde(default)]
-    pub name: Option<String>,
+    pub component: Option<String>,
     /// Load the WS/HTTP component's (JS) bundle from a `url:`/`http(s)://` URL or
-    /// `kv:<bucket>/<key>` instead of `./wasm/<name>` (see [`BundleSource`]).
+    /// `kv:<bucket>/<key>` instead of `./wasm/<component>` (see [`BundleSource`]).
     #[serde(default)]
     pub source: Option<String>,
     /// Extra response headers for **this** listener, the `[serve.headers]` table:
@@ -520,7 +520,7 @@ mod tests {
             source = "kv:bundles/api"
 
             [[serve]]
-            name = "web"
+            component = "web"
             protocol = "http"
             listen = "127.0.0.1:8080"
             source = "https://cdn.example/web.js"
@@ -636,7 +636,7 @@ mod tests {
             listen = "127.0.0.1:8080"
 
             [[serve]]
-            name = "echo"
+            component = "echo"
             protocol = "ws"
             listen = "0.0.0.0:8081"
 
@@ -647,13 +647,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.serve.len(), 3);
-        // A pure listener: protocol + listen, no name (routed HTTP).
+        // A pure listener: protocol + listen, no component (routed HTTP).
         assert_eq!(cfg.serve[0].protocol, ServeProtocol::Http);
         assert_eq!(cfg.serve[0].listen, "127.0.0.1:8080");
-        assert!(cfg.serve[0].name.is_none());
+        assert!(cfg.serve[0].component.is_none());
         // A WS listener names its per-connection component.
         assert_eq!(cfg.serve[1].protocol, ServeProtocol::Ws);
-        assert_eq!(cfg.serve[1].name.as_deref(), Some("echo"));
+        assert_eq!(cfg.serve[1].component.as_deref(), Some("echo"));
         // SSE is an HTTP-hosted server; WS is not.
         assert_eq!(cfg.serve[2].protocol, ServeProtocol::Sse);
         assert!(cfg.serve[0].protocol.is_http() && cfg.serve[2].protocol.is_http());
@@ -670,7 +670,6 @@ mod tests {
         let cfg = NodeConfig::from_toml(
             r#"
             [[serve]]
-            name = "api"
             protocol = "http"
             listen = "127.0.0.1:8080"
 
@@ -679,7 +678,6 @@ mod tests {
             "POST /users/:id" = "api#update"
 
             [[serve]]
-            name = "admin"
             protocol = "http"
             listen = "127.0.0.1:9090"
 
@@ -712,7 +710,7 @@ mod tests {
         let cfg = NodeConfig::from_toml(
             r#"
             [[serve]]
-            name = "feed"
+            component = "feed"
             protocol = "sse"
             listen = "127.0.0.1:8081"
 
@@ -721,7 +719,7 @@ mod tests {
             "x-demo" = "1"
 
             [[serve]]
-            name = "plain"
+            component = "plain"
             protocol = "http"
             listen = "127.0.0.1:8080"
             "#,
@@ -749,7 +747,7 @@ mod tests {
         let cfg = NodeConfig::from_toml(
             r#"
             [[serve]]
-            name = "ws"
+            component = "ws"
             protocol = "ws"
             listen = "127.0.0.1:8081"
             max_connections = 1024
@@ -758,7 +756,7 @@ mod tests {
             compression = true
 
             [[serve]]
-            name = "plain"
+            component = "plain"
             protocol = "http"
             listen = "127.0.0.1:8080"
             "#,
@@ -786,7 +784,7 @@ mod tests {
         let cfg = NodeConfig::from_toml(
             r#"
             [[serve]]
-            name = "api"
+            component = "api"
             protocol = "http"
             listen = "127.0.0.1:8443"
 
@@ -795,7 +793,7 @@ mod tests {
             key = "certs/server.key"
 
             [[serve]]
-            name = "plain"
+            component = "plain"
             protocol = "http"
             listen = "127.0.0.1:8080"
             "#,
@@ -825,19 +823,20 @@ mod tests {
 
     #[test]
     fn unknown_serve_protocol_is_an_error() {
-        let toml = "[[serve]]\nname = \"x\"\nprotocol = \"grpc\"\nlisten = \"127.0.0.1:1\"\n";
+        let toml = "[[serve]]\ncomponent = \"x\"\nprotocol = \"grpc\"\nlisten = \"127.0.0.1:1\"\n";
         assert!(NodeConfig::from_toml(toml).is_err());
     }
 
     #[test]
     fn serve_requires_a_listen_address() {
-        let toml = "[[serve]]\nname = \"x\"\nprotocol = \"http\"\n";
+        let toml = "[[serve]]\ncomponent = \"x\"\nprotocol = \"http\"\n";
         assert!(NodeConfig::from_toml(toml).is_err());
     }
 
     #[test]
     fn unknown_serve_field_is_an_error() {
-        let toml = "[[serve]]\nname = \"x\"\nprotocol = \"http\"\nlisten = \"a:1\"\nnope = 1\n";
+        let toml =
+            "[[serve]]\ncomponent = \"x\"\nprotocol = \"http\"\nlisten = \"a:1\"\nnope = 1\n";
         assert!(NodeConfig::from_toml(toml).is_err());
     }
 }

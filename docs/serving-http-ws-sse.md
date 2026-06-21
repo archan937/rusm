@@ -90,7 +90,7 @@ dispatches to a `component#action` (per request). An `sse`/`ws` listener matches
 `#action` — the component *is* the per-connection handler, one process per connection); the
 captured path params reach it through its [connection context](#the-connection-context).
 
-A listener with **no** `[serve.routes]` instead binds a single handler component by `name`
+A listener with **no** `[serve.routes]` instead binds a single handler `component`
 (spawned per request for HTTP, per connection for ws/sse). A path that matches no route is a
 **404** (for ws/sse, the connection is refused before any upgrade).
 
@@ -219,7 +219,7 @@ existing manifests are unaffected):
 
 ```toml
 [[serve]]
-name = "chat"
+component = "chat"
 protocol = "ws"
 listen = "127.0.0.1:8080"
 max_connections = 10000                       # cap concurrent connections (any protocol)
@@ -249,7 +249,7 @@ never sees it:
 
 ```toml
 [[serve]]
-name = "api"
+component = "api"
 protocol = "http"
 listen = "127.0.0.1:8080"
 compression = true
@@ -281,7 +281,7 @@ per-connection process model are all unchanged; only the transport is encrypted.
 
 ```toml
 [[serve]]
-name = "api"
+component = "api"
 protocol = "http"
 listen = "0.0.0.0:8443"
 
@@ -346,7 +346,7 @@ pub fn post(_req: Request, p: Params) -> Response {
 ### SSE — a per-connection handler {#sse-a-per-connection-handler}
 
 Server-Sent Events are served like WebSocket — **one sandboxed process per connection**. A
-`protocol = "sse"` listener either names one handler component or routes by path via
+`protocol = "sse"` listener either names one handler `component` or routes by path via
 `[serve.routes]` (the [per-connection routes](#per-connection-routes-wssse) above). The
 handler subscribes to an event source in `open` (typically a **process-group tag**), emits
 each pushed event in `message`, and cleans up in `close`:
@@ -410,13 +410,13 @@ capability), and `[serve.routes]` names them. Its fields:
 |---|---|
 | `protocol` | `http` · `sse` · `ws`. |
 | `listen` | TCP address to bind, e.g. `"127.0.0.1:8080"`. |
-| `name` *(optional)* | The single handler component for a listener that has **no routes**: a **WS** listener, or a routes-less `wasi:http` **HTTP** listener (e.g. a TS `export default` fetch). A routed HTTP/SSE listener has **no `name`** — its `[serve.routes]` name the handlers instead. |
+| `component` *(optional)* | The single handler component for a listener that has **no routes**: a **WS** listener, or a routes-less `wasi:http` **HTTP** listener (e.g. a TS `export default` fetch). A routed HTTP/SSE listener has **no `component`** — its `[serve.routes]` name the handlers instead. |
 
 For **HTTP/SSE** with a `[serve.routes]` subtable, each request is resolved against that
 listener's routes → the matched handler component (a `[components.<name>]` entry) is spawned
 fresh under **its own** capability → the matched action is dispatched → its reply becomes
-the HTTP response. A **WS** `[[serve]]` (or a routes-less HTTP one) runs the `name`d
-component once per connection / request; that component's capability comes from a matching
+the HTTP response. A **WS** `[[serve]]` (or a routes-less HTTP one) runs its `component`
+once per connection / request; that component's capability comes from a matching
 `[components.<name>]` entry, else default-deny `sandboxed`.
 
 So the model is a clean split: **`[[serve]]` = the listener; `[components.<name>]` = the
@@ -437,7 +437,7 @@ together.**
 `rusm.toml`:
 
 ```toml
-[[serve]]                               # a pure listener — no name, no capability
+[[serve]]                               # a routed listener — no component, no capability
 protocol  = "http"                      # http | sse | ws
 listen    = "127.0.0.1:8080"
 

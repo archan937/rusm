@@ -376,7 +376,6 @@ fn bridge_rusm_toml() -> String {
          bridges = [\"weather\"]\n\
          \n\
          [[serve]]\n\
-         name = \"api\"\n\
          protocol = \"http\"\n\
          listen = \"127.0.0.1:8080\"\n\
          \n\
@@ -423,9 +422,9 @@ fn rusm_toml(app: &NewApp) -> String {
         format!(
             "{TOML_HEADER}\
              [[serve]]\n\
-             protocol = \"{proto}\"           # http | sse | ws\n\
-             listen = \"127.0.0.1:8080\"\n\
-             name = \"api\"               # loads {artifact}, built from components/api\n"
+             component = \"api\"           # loads {artifact}, built from components/api\n\
+             protocol = \"{proto}\"        # http | sse | ws\n\
+             listen = \"127.0.0.1:8080\"\n"
         )
     }
 }
@@ -946,13 +945,13 @@ mod tests {
                 "{lang:?}/{protocol:?}: routes present iff Rust/Go HTTP"
             );
             if routed {
-                // Routes name the `[components.api]` handler; the listener has no `name`.
-                assert!(cfg.serve[0].name.is_none(), "{lang:?}/{protocol:?}");
+                // Routes name the `[components.api]` handler; the listener has no `component`.
+                assert!(cfg.serve[0].component.is_none(), "{lang:?}/{protocol:?}");
                 assert!(cfg.components.contains_key("api"), "{lang:?}/{protocol:?}");
             } else {
-                // A single named handler component on the listener.
+                // A single handler `component` on the listener.
                 assert_eq!(
-                    cfg.serve[0].name.as_deref(),
+                    cfg.serve[0].component.as_deref(),
                     Some("api"),
                     "{lang:?}/{protocol:?}"
                 );

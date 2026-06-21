@@ -342,7 +342,10 @@ pub async fn serve_apps(
 
     let mut endpoints = Vec::with_capacity(specs.len());
     for spec in specs {
-        let label = spec.name.clone().unwrap_or_else(|| spec.listen.clone());
+        let label = spec
+            .component
+            .clone()
+            .unwrap_or_else(|| spec.listen.clone());
         let listener = TcpListener::bind(&spec.listen)
             .await
             .with_context(|| format!("binding {} for `{label}`", spec.listen))?;
@@ -400,14 +403,14 @@ pub async fn serve_apps(
         } else {
             // A single named handler component: a handler-less `wasi:http` HTTP component,
             // an SSE handler, or a WebSocket worker — each one process per request/connection.
-            let name = spec.name.as_deref().ok_or_else(|| {
+            let name = spec.component.as_deref().ok_or_else(|| {
                 let hint = if matches!(spec.protocol, ServeProtocol::Http) {
                     ", or a `[serve.routes]` table for HTTP"
                 } else {
                     ""
                 };
                 anyhow!(
-                    "the `{:?}` listener on {} needs a `name` (its handler component){hint}",
+                    "the `{:?}` listener on {} needs a `component` (its handler component){hint}",
                     spec.protocol,
                     spec.listen
                 )
@@ -813,7 +816,7 @@ mod tests {
             protocol: ServeProtocol::Http,
             listen: "127.0.0.1:0".to_string(), // ephemeral; we read back the real port
             routes: HashMap::new(),            // no routes → the handler-less wasi:http path
-            name: Some("api".to_string()),
+            component: Some("api".to_string()),
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
@@ -864,7 +867,7 @@ mod tests {
             protocol: ServeProtocol::Ws,
             listen: "127.0.0.1:0".to_string(),
             routes: HashMap::new(),
-            name: Some("echo".to_string()),
+            component: Some("echo".to_string()),
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
@@ -919,7 +922,7 @@ mod tests {
                 ("GET /hello/:name".to_string(), "api#hello".to_string()),
                 ("POST /echo".to_string(), "api#echo".to_string()),
             ]),
-            name: None,
+            component: None,
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),
@@ -966,7 +969,7 @@ mod tests {
             protocol: ServeProtocol::Http,
             listen: "127.0.0.1:0".to_string(),
             routes: HashMap::new(),
-            name: Some("ghost".to_string()),
+            component: Some("ghost".to_string()),
             source: None,
             headers: Default::default(),
             subprotocols: Vec::new(),

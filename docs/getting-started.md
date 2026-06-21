@@ -204,15 +204,15 @@ worker) — no idle parked instance.
 a `[[serve]]` listener and run `rusm serve` — it binds each on its TCP `listen` address.
 A `[[serve]]` entry is a **pure listener**: a routed HTTP/SSE listener names its handlers
 in `[serve.routes]` (each a `[components.<name>]` entry that carries its own capability);
-a WS or routes-less HTTP listener names its single handler component with `name`. The fastest
+a WS or routes-less HTTP listener names its single handler with `component`. The fastest
 way in is **`rusm new <name>`**, which scaffolds a ready-to-serve app (a zero-dependency
 TS HTTP component, a `rusm.toml` with a `[[serve]]` entry, `.gitignore`, README):
 
 ```toml
 [[serve]]
+component = "api"         # the per-connection handler → ./wasm/api.{wasm,js}
 protocol = "ws"           # "http" | "sse" | "ws"
 listen = "127.0.0.1:8080"
-name = "api"              # the per-connection handler → ./wasm/api.{wasm,js}
 ```
 
 ```sh
@@ -642,7 +642,8 @@ from inside a real component.
 
 Cross-process **byte streams** are Tokio-backpressured and ride the mailbox as
 `Received::Stream` — see [byte streams](./concepts/byte-streams.md). A component
-opens a stream to another process, writes chunks (the write parks under
+opens a stream to **another process** — `peer` below, identified by its pid (from
+`spawn`) or a name it `register`ed — writes chunks (the write parks under
 back-pressure when the reader is slow), and closes it; the other side accepts and
 reads to end-of-stream:
 
@@ -651,7 +652,9 @@ reads to end-of-stream:
 ```rust [Rust]
 use rusm::runtime::actor;
 
-// Producer: open a stream to `peer`, write chunks, then close.
+// Producer: find the peer by the name it registered (or use a pid from `spawn`),
+// open a stream to it, write chunks, then close.
+let peer = actor::whereis("consumer").expect("consumer is registered");
 if let Some(id) = actor::stream_open(peer) {
     actor::stream_write(id, b"hello!");   // false if the reader is gone
     actor::stream_close(id);              // signals end-of-stream
@@ -667,10 +670,13 @@ while let Some(chunk) = actor::stream_read(id) {
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
-// Producer: open a stream to `peer`, write chunks, then close.
-const out = Process.openStream(peer);                // null if `peer` is gone
-out.write(new TextEncoder().encode("hello!"));       // false once the reader is gone
-out.close();                                         // signals end-of-stream
+// Producer: open a stream to the peer (a pid, or — as here — a registered name;
+// `openStream` accepts either), write chunks, then close.
+const out = Process.openStream("consumer");          // null if the peer is gone
+if (out) {
+  out.write(new TextEncoder().encode("hello!"));     // false once the reader is gone
+  out.close();                                       // signals end-of-stream
+}
 
 // Consumer: accept the next incoming stream, read to EOF.
 const inc = Process.acceptStream();
@@ -683,7 +689,9 @@ while ((chunk = await inc.read()) !== null) {         // read() is async; null =
 ```go [Go]
 import rusm "github.com/archan937/rusm/packages/rusm-go"
 
-// Producer: open a stream to `peer`, write chunks, then close.
+// Producer: find the peer by the name it registered (or use a Pid from Spawn),
+// open a stream to it, write chunks, then close.
+peer, _ := rusm.Whereis("consumer")
 if out, ok := rusm.OpenStream(peer); ok { // ok == false if `peer` is gone
 	out.Write([]byte("hello!"))           // false once the reader is gone
 	out.Close()                           // signals end-of-stream

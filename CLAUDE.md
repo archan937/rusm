@@ -54,8 +54,8 @@ home(req, params) -> Response { … } }`; **SSE is a per-connection
 loaded by name like a WS component), streaming over a **bounded, back-pressured** byte stream (parks under back-pressure —
 never busy-spins — and exits on client disconnect, guarded by a routed
 disconnect-teardown test). **`rusm serve` is live**: it hosts `rusm.toml [[serve]]`
-entries (`name`, `protocol` = `http`|`sse`|`ws`, `listen`, `capability` = `sandboxed`
-by default) on real TCP ports — each listener's non-empty `[serve.routes]` subtable
+entries (`component` for a routes-less listener, `protocol` = `http`|`sse`|`ws`, `listen`)
+on real TCP ports — each listener's non-empty `[serve.routes]` subtable
 routes each HTTP/SSE request to a `#[handlers]` component per request; WS runs one
 component process per connection; TS HTTP/SSE keep the handler-less `wasi:http`
 `export default { fetch }` path (no routes table needed). The node only serves; it never generates

@@ -127,16 +127,16 @@ A listener carries no handler logic of its own. The **handler components live in
 one of two ways:
 
 - **routed** (the usual HTTP/SSE shape) — a [`[serve.routes]`](#serveroutes-per-listener-httpsse-route-table)
-  table names a handler action per route; the listener needs no `name`.
+  table names a handler action per route; the listener needs no `component`.
 - **single-handler** — a WebSocket listener, or a routes-less `wasi:http` HTTP
-  component (e.g. a TS `export default { fetch }`), names its one handler via `name`.
+  component (e.g. a TS `export default { fetch }`), names its one handler via `component`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `protocol` | enum | — (required) | `http` · `sse` · `ws`. |
 | `listen` | string | — (required) | TCP address to bind, e.g. `"127.0.0.1:8080"`. |
-| `name` | string? | none | The single handler **component** for a listener with **no** `[serve.routes]` (a WebSocket listener, or a routes-less `wasi:http` HTTP component). Resolves to `./wasm/<name>.*`; its capability comes from a matching `[components.<name>]` entry, else `sandboxed`. **Omitted** for a routed HTTP/SSE listener — its routes name the handlers. |
-| `source` | string? | none | Load the named handler's (JS) bundle from a URL or `kv:` instead of `./wasm/<name>` — see [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
+| `component` | string? | none | The single handler **component** for a listener with **no** `[serve.routes]` (a WebSocket listener, or a routes-less `wasi:http` HTTP component). Resolves to `./wasm/<component>.*`; its capability comes from a matching `[components.<name>]` entry, else `sandboxed`. **Omitted** for a routed HTTP/SSE listener — its routes name the handlers. |
+| `source` | string? | none | Load the handler's (JS) bundle from a URL or `kv:` instead of `./wasm/<component>` — see [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
 | `subprotocols` | string[] | `[]` | *(ws)* Supported WebSocket subprotocols. The host negotiates the first client-offered one present, echoes it in the `101`, and surfaces it on the connection context. |
 | `max_connections` | int? | none | *(http · sse · ws)* Most concurrent connections served at once. At the cap a new connection is **dropped before the handshake/stream opens** (a flood can't pile up unbounded handler instances); a freed slot is reused. `None` = unlimited. |
 | `max_message_size` | int? | none | *(ws)* Largest inbound frame in bytes; a larger frame **closes the connection**. `None` = the transport default. |
@@ -157,7 +157,7 @@ cluster transport.
 
 ```toml
 [[serve]]
-name = "api"
+component = "api"
 protocol = "http"
 listen = "0.0.0.0:8443"
 
@@ -245,7 +245,7 @@ itself):
 
 ```toml
 [[serve]]
-name = "feed"
+component = "feed"
 protocol = "sse"
 listen = "127.0.0.1:8081"
 
@@ -375,9 +375,9 @@ store = "data/app.redb"          # kv: sources read from here
 
 # A routes-less HTTP listener names its one handler — loaded from a remote bundle
 [[serve]]
+component = "api"
 protocol = "http"
 listen = "127.0.0.1:8080"
-name = "api"
 source = "https://cdn.example/api.js"   # deploy by replacing this bundle
 
 [components.worker]

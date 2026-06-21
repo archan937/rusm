@@ -31,7 +31,7 @@ listen = "127.0.0.1:8080"
 "OPTIONS /todos/:id"  = "api#preflight"
 
 [[serve]]
-name = "feed"
+component = "feed"
 protocol = "sse"
 listen = "127.0.0.1:8081"
 
@@ -41,7 +41,7 @@ listen = "127.0.0.1:8081"
 "access-control-allow-origin" = "*"
 
 [[serve]]
-name = "chat"
+component = "chat"
 protocol = "ws"
 listen = "127.0.0.1:8082"
 
