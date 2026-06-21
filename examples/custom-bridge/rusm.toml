@@ -1,10 +1,11 @@
-# A custom-bridge app: it serves an HTTP endpoint whose handler (a Rust guest) calls the
-# app's own `weather` bridge — a native host function registered by this app's host binary.
+# A custom-bridge app: it serves HTTP handlers (a Rust guest and a Go guest) that each call
+# the app's own `weather` bridge — a native host function registered by this app's host
+# binary. The two guests prove a custom bridge is callable from any wit-based language.
 [node]
 listen = "127.0.0.1:8080"
 
-# The handler may import the custom `weather` bridge — default-deny, granted by name. Built-in
-# capabilities (network/storage/…) are unrelated and stay off.
+# Both handlers may import the custom `weather` bridge — default-deny, granted by name.
+# Built-in capabilities (network/storage/…) are unrelated and stay off.
 [capabilities.forecaster]
 inherits = "sandboxed"
 bridges = ["weather"]
@@ -14,10 +15,14 @@ name = "api"
 protocol = "http"
 listen = "127.0.0.1:8080"
 
-# Route every request to the `api` handler component, which runs under the `forecaster`
-# profile so it may call the weather bridge.
+# `/forecast/:city` → the Rust handler; `/go/forecast/:city` → the Go handler. Both run under
+# `forecaster` (so they may call the weather bridge) and return the same host-computed value.
 [serve.routes]
 "GET /forecast/:city" = "api#forecast"
+"GET /go/forecast/:city" = "go-api#forecast"
 
 [components.api]
+capability = "forecaster"
+
+[components.go-api]
 capability = "forecaster"

@@ -113,9 +113,8 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     if !bridges.is_empty() {
         let names: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
         println!("custom bridge(s): {}", names.join(", "));
-        vendor_guest_wit(root, &bridges)?;
     }
-    let built = build_components(root)?;
+    let built = build_components(root, &bridges)?;
     if built.is_empty() {
         println!("no component crates found under ./components");
     } else {
@@ -132,29 +131,30 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Vendor each granted custom bridge's WIT into the guest components that may import it —
-/// per the manifest's capability whitelist, so a component reaches only the bridges its
-/// profile lists (default-deny). Only wit-based guests (Rust/Go) take vendored WIT; a TS
-/// guest runs on the js-runner. The author still declares the `import` in the component's
-/// own world; this only makes the dependency resolvable for the build.
-fn vendor_guest_wit(root: &Path, bridges: &[rusm_cli::bridges::BridgeSpec]) -> anyhow::Result<()> {
+/// Resolve, per component name, the custom bridges its capability profile **grants** (the
+/// default-deny whitelist). A wit-based guest (Rust/Go) gets these vendored into its build so
+/// it can `import` them; the map is empty when the app declares no bridges. Each builder
+/// looks up its component's slice and does the language-appropriate WIT setup.
+fn granted_bridges(
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> std::collections::HashMap<String, Vec<rusm_cli::bridges::BridgeSpec>> {
+    if bridges.is_empty() {
+        return std::collections::HashMap::new();
+    }
     let cfg = load_node_config(None, None);
     let by_name: std::collections::HashMap<&str, &rusm_cli::bridges::BridgeSpec> =
         bridges.iter().map(|b| (b.name.as_str(), b)).collect();
-    for (name, comp) in &cfg.components {
-        let dir = root.join("components").join(name);
-        let wit_guest = dir.join("Cargo.toml").is_file() || dir.join("go.mod").is_file();
-        if !wit_guest {
-            continue;
-        }
-        let caps = capabilities_for(&comp.capability, &cfg.capabilities);
-        let granted: Vec<rusm_cli::bridges::BridgeSpec> = caps
-            .granted_bridges()
-            .filter_map(|g| by_name.get(g).map(|b| (*b).clone()))
-            .collect();
-        rusm_cli::bridges::generate_guest_wit(&dir, &granted)?;
-    }
-    Ok(())
+    cfg.components
+        .iter()
+        .map(|(name, comp)| {
+            let caps = capabilities_for(&comp.capability, &cfg.capabilities);
+            let specs = caps
+                .granted_bridges()
+                .filter_map(|g| by_name.get(g).map(|b| (*b).clone()))
+                .collect();
+            (name.clone(), specs)
+        })
+        .collect()
 }
 
 /// Compile a custom-bridge app's **host binary** — the app's own crate at `root`, with its
@@ -315,8 +315,11 @@ async fn dev(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
     let rt = Runtime::new();
     let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;
     let root = Path::new(".");
+    // Guest WIT for any custom bridges so components build; dev hosts via the prebuilt
+    // runtime (no compiled-in bridge impls), so a bridge app's full flow is `build` + `serve`.
+    let bridges = rusm_cli::bridges::discover(root)?;
 
-    build_components(root)?;
+    build_components(root, &bridges)?;
     let mut hosted = spawn_components(root, &wasm, &cfg.components, &cfg.capabilities).await?;
     if hosted.is_empty() {
         println!("no [components] in rusm.toml — nothing to run");
@@ -340,7 +343,7 @@ async fn dev(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
                 // Tear down the resident supervisor + its services, then re-register
                 // (which overwrites every component's factory) and re-boot residents.
                 hosted.teardown(&rt);
-                if let Err(error) = build_components(root) {
+                if let Err(error) = build_components(root, &bridges) {
                     eprintln!("build failed: {error}");
                     continue;
                 }
@@ -395,10 +398,17 @@ fn source_fingerprint(dir: &Path) -> Vec<(std::path::PathBuf, std::time::SystemT
 /// (has `index.ts`/`src/index.ts`) bundles with `bun build` → `wasm/<name>.js`,
 /// run on the shared rquickjs js-runner. Returns the built component names.
 /// (Shell-orchestration glue, hence it lives in `main`.)
-fn build_components(dir: &Path) -> anyhow::Result<Vec<String>> {
+fn build_components(
+    dir: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<Vec<String>> {
     let components_dir = dir.join("components");
     let wasm_dir = dir.join("wasm");
     std::fs::create_dir_all(&wasm_dir)?;
+    // Per-component custom-bridge grants (empty unless the app declares bridges); each
+    // wit-based guest gets the bridges its profile grants wired into its build.
+    let granted = granted_bridges(bridges);
+    let none: Vec<rusm_cli::bridges::BridgeSpec> = Vec::new();
 
     // If the app declares JS dependencies (e.g. the `rusm-ts` package), make sure
     // they're installed so a TS component's `import` resolves during bundling.
@@ -424,11 +434,12 @@ fn build_components(dir: &Path) -> anyhow::Result<Vec<String>> {
     for entry in entries {
         let crate_dir = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        let component_bridges = granted.get(&name).unwrap_or(&none);
         if crate_dir.join("Cargo.toml").is_file() {
-            build_rust_component(&crate_dir, &name, &wasm_dir)?;
+            build_rust_component(&crate_dir, &name, &wasm_dir, component_bridges)?;
             built.push(name);
         } else if crate_dir.join("go.mod").is_file() {
-            build_go_component(&crate_dir, &name, &wasm_dir)?;
+            build_go_component(&crate_dir, &name, &wasm_dir, component_bridges)?;
             built.push(name);
         } else if let Some(ts_entry) = ts_entrypoint(&crate_dir) {
             build_ts_component(&ts_entry, &name, &wasm_dir)?;
@@ -445,8 +456,16 @@ fn build_components(dir: &Path) -> anyhow::Result<Vec<String>> {
 }
 
 /// Builds one Rust component crate to `wasm/<name>.wasm` via `cargo build
-/// --target wasm32-wasip2 --release` (which componentizes).
-fn build_rust_component(crate_dir: &Path, name: &str, wasm_dir: &Path) -> anyhow::Result<()> {
+/// --target wasm32-wasip2 --release` (which componentizes). If the component is granted
+/// custom bridges, its `wit/` is generated first so a `#[handlers(bridge=…)]`/`generate!`
+/// guest resolves the import.
+fn build_rust_component(
+    crate_dir: &Path,
+    name: &str,
+    wasm_dir: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<()> {
+    rusm_cli::bridges::generate_guest_wit(crate_dir, bridges)?;
     let status = Command::new("cargo")
         .args(["build", "--target", "wasm32-wasip2", "--release"])
         .current_dir(crate_dir)
@@ -474,7 +493,12 @@ const RUSM_GO_SDK: &str = "github.com/archan937/rusm/packages/rusm-go";
 /// TinyGo compiles straight to a `wasm32-wasip2` component, embedding the rusm-go SDK's
 /// `component` world. `-no-debug` strips DWARF, `-panic=trap` makes a Go panic a wasm
 /// trap (→ process Crashed, RUSM's crash model), `-opt=z` optimizes for size.
-fn build_go_component(crate_dir: &Path, name: &str, wasm_dir: &Path) -> anyhow::Result<()> {
+fn build_go_component(
+    crate_dir: &Path,
+    name: &str,
+    wasm_dir: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<()> {
     // Resolve the component's module deps (the rusm-go SDK + its transitive cm) so
     // `go list` below and TinyGo build on a fresh checkout — the Go analog of the
     // `bun install` the TS path runs. `tidy` (not just `download`) is needed to populate
@@ -487,7 +511,34 @@ fn build_go_component(crate_dir: &Path, name: &str, wasm_dir: &Path) -> anyhow::
     if !status.success() {
         return Err(anyhow!("`go mod tidy` failed for component `{name}`"));
     }
-    let wit = go_sdk_wit(crate_dir)?;
+    // With custom bridges, embed a per-component WIT (the SDK's WIT + the granted bridges,
+    // a `component` world for TinyGo) and generate the bridges' Go bindings into
+    // `internal/wit` from the `bridges` world (rusm:runtime stays the SDK's); otherwise embed
+    // the SDK's WIT directly.
+    let wit = if bridges.is_empty() {
+        go_sdk_wit(crate_dir)?
+    } else {
+        let sdk_wit = go_sdk_wit(crate_dir)?;
+        rusm_cli::bridges::generate_go_guest_wit(crate_dir, bridges, &sdk_wit)?;
+        let status = Command::new("wit-bindgen-go")
+            .args([
+                "generate",
+                "--world",
+                "bridges",
+                "--out",
+                "internal/wit",
+                "wit",
+            ])
+            .current_dir(crate_dir)
+            .status()
+            .with_context(|| "running wit-bindgen-go (mise-managed; in go.mod tool deps?)")?;
+        if !status.success() {
+            return Err(anyhow!("`wit-bindgen-go` failed for component `{name}`"));
+        }
+        // Absolute, because TinyGo runs with `current_dir(crate_dir)` (as `go_sdk_wit` is).
+        std::fs::canonicalize(crate_dir.join("wit"))
+            .with_context(|| "resolving the generated per-component wit/")?
+    };
     // TinyGo runs in crate_dir, so its `-o` path must be absolute to land in the app's
     // wasm/ (canonicalize is safe — build_components already created wasm_dir).
     let dest = std::fs::canonicalize(wasm_dir)
