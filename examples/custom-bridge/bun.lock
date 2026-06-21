@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "custom-bridge",
+      "dependencies": {
+        "rusm-ts": "file:../../packages/rusm-ts",
+      },
+    },
+  },
+  "packages": {
+    "rusm-ts": ["rusm-ts@file:../../packages/rusm-ts", {}],
+  }
+}

@@ -14,7 +14,7 @@ use rquickjs::{Ctx, Object};
 /// Install each custom bridge's host primitive onto `globals`. Called from each runner's
 /// `boot_bridge` alongside the built-in `__*` primitives, so the wizer snapshot captures
 /// them. A no-op by default.
-pub fn register(_ctx: &Ctx<'_>, _globals: &Object<'_>) {}
+pub fn register<'js>(_ctx: &Ctx<'js>, _globals: &Object<'js>) {}
 
 /// JS evaluated after the built-in bridge JS to expose each custom bridge's typed API on
 /// `globalThis` (over its `__<bridge>__<func>` primitives). Empty by default.

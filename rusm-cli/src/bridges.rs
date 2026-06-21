@@ -300,7 +300,7 @@ pub fn gen_runner_bridges_gen(bridges: &[BridgeSpec]) -> Result<String> {
          //! and `BRIDGE_JS` exposes `globalThis.<bridge>`. Regenerated from `bridges/` each build.\n\
          use rquickjs::{{Ctx, Function, Object}};\n\
          \n\
-         pub fn register(ctx: &Ctx<'_>, globals: &Object<'_>) {{\n\
+         pub fn register<'js>(ctx: &Ctx<'js>, globals: &Object<'js>) {{\n\
          {registers}}}\n\
          \n\
          pub const BRIDGE_JS: &str = {js:?};\n"
@@ -694,7 +694,7 @@ mod tests {
         assert!(gen.contains("pub const BRIDGE_JS: &str ="));
         assert!(gen.contains("globalThis.weather.lookup = (city) => __weather__lookup(city);"));
         // Shape matches the committed empty module (register + BRIDGE_JS).
-        assert!(gen.contains("pub fn register(ctx: &Ctx<'_>, globals: &Object<'_>)"));
+        assert!(gen.contains("pub fn register<'js>(ctx: &Ctx<'js>, globals: &Object<'js>)"));
     }
 
     #[test]

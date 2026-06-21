@@ -21,8 +21,20 @@ listen = "127.0.0.1:8080"
 "GET /forecast/:city" = "api#forecast"
 "GET /go/forecast/:city" = "go-api#forecast"
 
+# A WebSocket listener whose per-connection handler is the TS guest (`tsweather`): each text
+# frame is a city, the reply is the bridge's forecast — the TS twin of the Rust/Go handlers.
+[[serve]]
+name = "tsweather"
+protocol = "ws"
+listen = "127.0.0.1:8082"
+
 [components.api]
 capability = "forecaster"
 
 [components.go-api]
+capability = "forecaster"
+
+# A TypeScript guest that also calls the weather bridge — `rusm build` rebuilds the js-runner
+# with the bridge compiled in (only because a TS guest is granted it).
+[components.tsweather]
 capability = "forecaster"
