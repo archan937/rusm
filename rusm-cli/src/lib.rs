@@ -6,6 +6,10 @@ mod app;
 mod cli;
 mod component;
 mod endpoint;
+/// Hosting an app's node — the construction + serve loop shared by the `rusm` CLI and an
+/// app's own generated host crate (the custom-bridge model). Public so a host crate can
+/// `rusm_cli::host::serve(root, &cfg, |l| my_bridge::add_to_linker(l))`.
+pub mod host;
 mod render;
 mod repl;
 mod scaffold;

@@ -5,13 +5,12 @@ use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
-    command_help, node_overrides, normalize_target, parse, parse_new_args, prebuilt_wasm,
-    render_message, scaffold, serve_apps, spawn_components, usage, version, wants_help,
-    wants_version, Hosted, Protocol, ReplInput, DEFAULT_HOST, HELP,
+    command_help, host, node_overrides, normalize_target, parse, parse_new_args, prebuilt_wasm,
+    render_message, scaffold, spawn_components, usage, version, wants_help, wants_version,
+    Protocol, ReplInput, DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
-use rusm_wasm::WasmRuntime;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -165,7 +164,7 @@ async fn start_node(config: Option<&str>, listen: Option<&str>) -> anyhow::Resul
     let rt = Runtime::new();
     // `wasm` + `hosted` stay bound for the whole function: they own the hosted
     // components' runtime + resident supervisor, so they must outlive the server below.
-    let wasm = wasm_runtime(rt.clone(), &cfg)?;
+    let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;
     let hosted =
         spawn_components(Path::new("."), &wasm, &cfg.components, &cfg.capabilities).await?;
     let node = Node::new(rt.clone(), node_name(), cfg.node.ticks_per_second);
@@ -199,35 +198,18 @@ async fn run_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<(
 
     let cfg = load_node_config(config, listen);
     let rt = Runtime::new();
-    let wasm = wasm_runtime(rt.clone(), &cfg)?;
+    let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;
     let hosted =
         spawn_components(Path::new("."), &wasm, &cfg.components, &cfg.capabilities).await?;
     if hosted.is_empty() {
         println!("no [components] in rusm.toml — nothing to run");
         return Ok(());
     }
-    print_hosted(&hosted);
+    host::print_hosted(&hosted);
     println!("press Ctrl-C to stop");
     tokio::signal::ctrl_c().await?;
     println!("\nstopping {} process(es)…", rt.shutdown());
     Ok(())
-}
-
-/// One line describing what the node is hosting: the resident services (boot-spawned
-/// + supervised) and the on-demand components (registered, spawned per request/call).
-fn print_hosted(hosted: &Hosted) {
-    let on_demand: Vec<&str> = hosted
-        .names
-        .iter()
-        .filter(|n| !hosted.resident.contains(*n))
-        .map(String::as_str)
-        .collect();
-    if !hosted.resident.is_empty() {
-        println!("resident: {}", hosted.resident.join(", "));
-    }
-    if !on_demand.is_empty() {
-        println!("on demand: {}", on_demand.join(", "));
-    }
 }
 
 /// `rusm serve`: host each `[[serve]]` component as a real network server on its
@@ -237,40 +219,10 @@ fn print_hosted(hosted: &Hosted) {
 async fn serve_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
     // Env the Rust way: process env first, then ./.env.
     dotenvy::dotenv().ok();
-
     let cfg = load_node_config(config, listen);
-    let rt = Runtime::new();
-    let wasm = wasm_runtime(rt.clone(), &cfg)?;
-    // Register the app's `[components.<name>]` on the **same** node first, so a
-    // `[[serve]]` route can spawn a matched handler and a sibling can `whereis` a
-    // resident service — an app that serves HTTP *and* runs resident services comes
-    // up with one `rusm serve`. `hosted` holds the resident supervisor alive.
-    let hosted =
-        spawn_components(Path::new("."), &wasm, &cfg.components, &cfg.capabilities).await?;
-    let endpoints = serve_apps(
-        Path::new("."),
-        &wasm,
-        &cfg.serve,
-        &cfg.components,
-        &cfg.capabilities,
-    )
-    .await?;
-    if endpoints.is_empty() && hosted.is_empty() {
-        println!("no [[serve]] entries or [components] in rusm.toml — nothing to do");
-        return Ok(());
-    }
-    if !hosted.is_empty() {
-        print_hosted(&hosted);
-    }
-    println!("serving {} endpoint(s):", endpoints.len());
-    for ep in &endpoints {
-        let scheme = if ep.protocol.is_http() { "http" } else { "ws" };
-        println!("  {:<16} {scheme}://{}", ep.name, ep.addr);
-    }
-    println!("press Ctrl-C to stop");
-    tokio::signal::ctrl_c().await?;
-    println!("\nstopping {} process(es)…", rt.shutdown());
-    Ok(())
+    // The bare CLI wires no custom bridges; an app that needs them runs its own generated
+    // host crate, which calls `host::serve` with its `add_to_linker` extension instead.
+    host::serve(Path::new("."), &cfg, |_| Ok(())).await
 }
 
 /// `rusm dev`: build, spawn, and **watch** `./components` — on any source change,
@@ -280,7 +232,7 @@ async fn dev(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let cfg = load_node_config(config, listen);
     let rt = Runtime::new();
-    let wasm = wasm_runtime(rt.clone(), &cfg)?;
+    let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;
     let root = Path::new(".");
 
     build_components(root)?;
@@ -289,7 +241,7 @@ async fn dev(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
         println!("no [components] in rusm.toml — nothing to run");
         return Ok(());
     }
-    print_hosted(&hosted);
+    host::print_hosted(&hosted);
     println!("watching ./components — edit to reload, Ctrl-C to stop");
 
     let components = root.join("components");
@@ -314,7 +266,7 @@ async fn dev(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
                 match spawn_components(root, &wasm, &cfg.components, &cfg.capabilities).await {
                     Ok(reloaded) => {
                         hosted = reloaded;
-                        print_hosted(&hosted);
+                        host::print_hosted(&hosted);
                     }
                     Err(error) => eprintln!("reload failed: {error}"),
                 }
@@ -568,26 +520,6 @@ fn load_node_config(config: Option<&str>, listen: Option<&str>) -> NodeConfig {
         cfg.node.listen = listen.to_string();
     }
     cfg
-}
-
-/// Build the Wasm runtime for an app, opening the configured durable key-value
-/// store (`store = "..."` in rusm.toml, relative to the app dir) when set — so
-/// components granted `storage` can persist; otherwise a store-less runtime. The
-/// store's parent dir is created so a fresh app's first run doesn't trip on it.
-fn wasm_runtime(rt: Runtime, cfg: &NodeConfig) -> anyhow::Result<WasmRuntime> {
-    let wasm = match &cfg.node.store {
-        Some(rel) => {
-            let path = Path::new(".").join(rel);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            WasmRuntime::with_store(rt, &path)?
-        }
-        None => WasmRuntime::new(rt)?,
-    };
-    // Platform lifecycle logging: explicit, off by default — declared via `[log] level`.
-    wasm.set_log_level(cfg.log_level());
-    Ok(wasm)
 }
 
 async fn attach(url: &str) -> Result<(), Box<dyn std::error::Error>> {
