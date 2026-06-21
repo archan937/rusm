@@ -643,48 +643,72 @@ from inside a real component.
 
 ## Streaming (from a component) {#streaming}
 
-Cross-process **byte streams** are Tokio-backpressured and ride the mailbox as
-`Received::Stream` — see [byte streams](./concepts/byte-streams.md). A component
-opens a stream to **another process** — `peer` below, identified by its pid (from
-`spawn`) or a name it `register`ed — writes chunks (the write parks under
-back-pressure when the reader is slow), and closes it; the other side accepts and
-reads to end-of-stream:
+A **byte stream** carries raw bytes from one process to another, Tokio-backpressured (see
+[byte streams](./concepts/byte-streams.md)). It has two ends, living in **two separate
+processes**: a **producer** opens the stream and writes; a **consumer** accepts it and
+reads to end-of-stream. The two snippets below are those two processes.
+
+**The producer** opens a stream to the other process — addressed by its pid (from `spawn`)
+or a name it `register`ed — writes chunks (the write parks under back-pressure when the
+reader is slow), then closes it:
 
 ::: code-group
 
 ```rust [Rust]
 use rusm::runtime::actor;
 
-// Producer: find the peer by the name it registered (or use a pid from `spawn`),
-// open a stream to it, write chunks, then close.
+// Stream to the process registered as "consumer" (or pass a pid from `spawn`).
 let peer = actor::whereis("consumer").expect("consumer is registered");
 if let Some(id) = actor::stream_open(peer) {
     actor::stream_write(id, b"hello!");   // false if the reader is gone
     actor::stream_close(id);              // signals end-of-stream
-}
-
-// Consumer: accept the next incoming stream, read to EOF.
-let id = actor::stream_accept();          // blocks until a stream arrives
-while let Some(chunk) = actor::stream_read(id) {
-    // …handle chunk (Vec<u8>)…           // None == end-of-stream
 }
 ```
 
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
-// Producer: open a stream to the peer (a pid, or — as here — a registered name;
-// `openStream` accepts either), write chunks, then close.
+// Stream to the process registered as "consumer" (openStream takes a pid or a name).
 const out = Process.openStream("consumer");          // null if the peer is gone
 if (out) {
   out.write(new TextEncoder().encode("hello!"));     // false once the reader is gone
   out.close();                                       // signals end-of-stream
 }
+```
 
-// Consumer: accept the next incoming stream, read to EOF.
-const inc = Process.acceptStream();
-let chunk;
-while ((chunk = await inc.read()) !== null) {         // read() is async; null == EOF
+```go [Go]
+import rusm "github.com/archan937/rusm/packages/rusm-go"
+
+// Stream to the process registered as "consumer" (or use a Pid from Spawn).
+peer, _ := rusm.Whereis("consumer")
+if out, ok := rusm.OpenStream(peer); ok { // ok == false if the peer is gone
+	out.Write([]byte("hello!"))           // false once the reader is gone
+	out.Close()                           // signals end-of-stream
+}
+```
+
+:::
+
+**The consumer** (the other process) accepts the next incoming stream and reads it to
+end-of-stream:
+
+::: code-group
+
+```rust [Rust]
+use rusm::runtime::actor;
+
+let id = actor::stream_accept();              // blocks until a stream arrives
+while let Some(chunk) = actor::stream_read(id) {
+    // …handle chunk (Vec<u8>)…               // None == end-of-stream
+}
+```
+
+```ts [TypeScript]
+import { Process } from "rusm-ts";
+
+const inc = Process.acceptStream();           // the next incoming stream
+let chunk: Uint8Array | null;
+while ((chunk = await inc.read()) !== null) { // read() is async; null == end-of-stream
   // …handle chunk (Uint8Array)…
 }
 ```
@@ -692,15 +716,6 @@ while ((chunk = await inc.read()) !== null) {         // read() is async; null =
 ```go [Go]
 import rusm "github.com/archan937/rusm/packages/rusm-go"
 
-// Producer: find the peer by the name it registered (or use a Pid from Spawn),
-// open a stream to it, write chunks, then close.
-peer, _ := rusm.Whereis("consumer")
-if out, ok := rusm.OpenStream(peer); ok { // ok == false if `peer` is gone
-	out.Write([]byte("hello!"))           // false once the reader is gone
-	out.Close()                           // signals end-of-stream
-}
-
-// Consumer: accept the next incoming stream, read to EOF.
 inc := rusm.AcceptStream() // blocks until a stream arrives
 for {
 	chunk, ok := inc.Read() // ok == false at end-of-stream
