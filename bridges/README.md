@@ -139,9 +139,10 @@ the committed generated files are byte-identical to what `rusm build` emits).
 > `rusm:runtime` stays the SDK's). Proven **live** on `examples/custom-bridge`:
 > `rusm build && rusm serve` then `curl /forecast/:city` (Rust) and `/go/forecast/:city` (Go)
 > both return the host bridge's value; and at the unit level by `rusm-wasm`'s
-> `a_custom_application_bridge_is_callable_from_a_guest`. Remaining: the **TS** guest path
-> (per-bridge typed globals + a js-runner re-wizer); `rusm new --bridges` scaffolding; and a
-> genius-rusm native bridge.
+> `a_custom_application_bridge_is_callable_from_a_guest`. **`rusm new <name> --bridges
+> [--lang rust|go]`** scaffolds a whole bridge app (host crate + the example bridge + a guest
+> that calls it), so authoring is turnkey. Remaining: the **TS** guest path (per-bridge typed
+> globals + a js-runner re-wizer — the one language left); and a genius-rusm native bridge.
 
 ---
 
