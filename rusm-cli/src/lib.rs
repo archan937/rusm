@@ -12,6 +12,8 @@ mod endpoint;
 /// app's own generated host crate (the custom-bridge model). Public so a host crate can
 /// `rusm_cli::host::serve(root, &cfg, |l| my_bridge::add_to_linker(l))`.
 pub mod host;
+/// Building a per-app js-runner with custom bridges compiled in (the TS guest path).
+pub mod jsbuild;
 mod render;
 mod repl;
 mod scaffold;

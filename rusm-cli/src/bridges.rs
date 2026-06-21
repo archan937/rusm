@@ -193,6 +193,43 @@ pub fn bridge_functions(wit: &Path) -> Result<Vec<BridgeFn>> {
     Ok(out)
 }
 
+/// Stage a per-app **js-runner** build: copy the runner crate `src` into `dest` (minus
+/// `target/`), overwrite `src/bridges_gen.rs` with the generated glue, and inject each custom
+/// bridge into `wit/world.wit`'s `process` world (the import) + `wit/deps/<name>/` (the
+/// contract). The staged crate then builds (cargo → wizer → wasm-tools) into a runner with the
+/// app's bridges compiled in. Idempotent (the dest is rebuilt).
+pub fn stage_js_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Result<()> {
+    if dest.exists() {
+        std::fs::remove_dir_all(dest).with_context(|| format!("clearing {}", dest.display()))?;
+    }
+    copy_dir(src, dest)?;
+    std::fs::write(
+        dest.join("src/bridges_gen.rs"),
+        gen_runner_bridges_gen(bridges)?,
+    )?;
+
+    let world_path = dest.join("wit/world.wit");
+    let world = std::fs::read_to_string(&world_path)
+        .with_context(|| format!("reading {}", world_path.display()))?;
+    let mut imports = String::new();
+    for bridge in bridges {
+        for iface in parse_contract(&bridge.wit())?.interface_refs() {
+            imports.push_str(&format!("    import {iface};\n"));
+        }
+        vendor_into_component(dest, bridge)?; // dest/wit/deps/<name>/bridge.wit
+    }
+    // Insert the custom imports just before the process world's `export run` (the one export
+    // in the canonical rusm:runtime WIT; the `imports` world has none, so `replacen(.., 1)`
+    // targets `process`).
+    let world = world.replacen(
+        "    export run: func();",
+        &format!("{imports}    export run: func();"),
+        1,
+    );
+    std::fs::write(&world_path, world)?;
+    Ok(())
+}
+
 /// A WIT identifier (namespace / package / interface / bridge name) as a Rust/JS identifier:
 /// kebab → snake (`json-codec` → `json_codec`). The js-runner's generated WIT bindings + the
 /// `__<bridge>__<func>` primitives use this form.
@@ -458,13 +495,18 @@ pub fn go_component_wit(custom_refs: &[String]) -> String {
     out
 }
 
-/// Recursively copy a directory tree (the SDK's `wit/` into a per-component copy). `std::fs`
-/// has no recursive copy, and the tree is small (the WASI + rusm:runtime WIT).
+/// Recursively copy a directory tree, **skipping `target/`** (a crate's build cache, which is
+/// huge and rebuilt anyway). `std::fs` has no recursive copy. Used to stage the SDK's `wit/`
+/// (small) and the js-runner crate source (for a per-app TS-bridge build).
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst).with_context(|| format!("creating {}", dst.display()))?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
-        let (from, to) = (entry.path(), dst.join(entry.file_name()));
+        let from = entry.path();
+        if from.is_dir() && entry.file_name() == "target" {
+            continue;
+        }
+        let to = dst.join(entry.file_name());
         if from.is_dir() {
             copy_dir(&from, &to)?;
         } else {
@@ -653,6 +695,36 @@ mod tests {
         assert!(gen.contains("globalThis.weather.lookup = (city) => __weather__lookup(city);"));
         // Shape matches the committed empty module (register + BRIDGE_JS).
         assert!(gen.contains("pub fn register(ctx: &Ctx<'_>, globals: &Object<'_>)"));
+    }
+
+    #[test]
+    fn stage_js_runner_injects_the_glue_and_the_wit_import() {
+        // Stage a per-app js-runner from the real runner source; the slow cargo→wizer build
+        // itself is exercised by the example e2e — here we check the (fast) staging.
+        let dir = app_dir("stage-runner");
+        let dest = dir.join("runner");
+        stage_js_runner(
+            Path::new("../crates/rusm-wasm/js-runner"),
+            &dest,
+            std::slice::from_ref(&weather_bridge()),
+        )
+        .unwrap();
+        // bridges_gen overwritten with the generated glue.
+        let gen = std::fs::read_to_string(dest.join("src/bridges_gen.rs")).unwrap();
+        assert!(gen.contains("__weather__lookup"));
+        assert!(gen.contains("crate::weather::bridge::forecast::lookup(&city)"));
+        // the custom import injected into the process world (before `export run`), and the
+        // contract vendored as a dep.
+        let world = std::fs::read_to_string(dest.join("wit/world.wit")).unwrap();
+        let process = world.split("world process {").nth(1).unwrap();
+        assert!(process.contains("import weather:bridge/forecast@0.1.0;"));
+        assert!(dest.join("wit/deps/weather/bridge.wit").is_file());
+        // the runner source came along; `target/` did not.
+        assert!(dest.join("src/lib.rs").is_file() && dest.join("Cargo.toml").is_file());
+        assert!(
+            !dest.join("target").exists(),
+            "target/ is skipped (build cache)"
+        );
     }
 
     #[test]

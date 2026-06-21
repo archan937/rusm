@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusm_node::NodeConfig;
 use rusm_otp::Runtime;
 use rusm_wasm::{wasmtime, BridgeLinker, WasmRuntime};
@@ -35,6 +35,15 @@ pub fn build_runtime(
             std::fs::create_dir_all(parent).ok();
         }
         builder = builder.store(path);
+    }
+    // A per-app js-runner (TS guests that call a custom bridge) — `rusm build` rebuilds it with
+    // the bridges' typed imports compiled in and writes it to `wasm/`. Absent for pure-guest
+    // and Rust/Go-only apps, which use the embedded runner.
+    let runner = Path::new("./wasm/js_runner.wasm");
+    if runner.is_file() {
+        builder = builder.js_runner(
+            std::fs::read(runner).with_context(|| format!("reading {}", runner.display()))?,
+        );
     }
     let wasm = builder.build()?;
     // Platform lifecycle logging: explicit, off by default — declared via `[log] level`.

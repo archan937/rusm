@@ -130,9 +130,33 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
         );
     }
     if !bridges.is_empty() {
+        build_js_runner_if_ts_uses_bridges(root, &bridges)?;
         build_host_crate(root)?;
         println!("built host binary (custom bridges compiled in)");
     }
+    Ok(())
+}
+
+/// If any **TS** component is granted a custom bridge, rebuild the js-runner with every
+/// bridge's typed import + glue compiled in (a TS guest's actor/service/WS runner), and write
+/// it to `wasm/js_runner.wasm` for `host::build_runtime` to load. Skipped when no TS guest
+/// uses a bridge — Rust/Go guests need no runner (the slow build only runs when it must).
+fn build_js_runner_if_ts_uses_bridges(
+    root: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<()> {
+    let granted = granted_bridges(bridges);
+    let ts_uses_a_bridge = granted.iter().any(|(name, specs)| {
+        !specs.is_empty() && ts_entrypoint(&root.join("components").join(name)).is_some()
+    });
+    if !ts_uses_a_bridge {
+        return Ok(());
+    }
+    println!("building js-runner with custom bridges (TS guest) — first build compiles QuickJS…");
+    let wasm = rusm_cli::jsbuild::build_app_js_runner(root, bridges)?;
+    let dest = root.join("wasm/js_runner.wasm");
+    std::fs::write(&dest, wasm).with_context(|| format!("writing {}", dest.display()))?;
+    println!("built {} (custom bridges compiled in)", dest.display());
     Ok(())
 }
 
