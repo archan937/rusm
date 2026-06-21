@@ -36,23 +36,29 @@ gate itself on `self.caps().allows_bridge("weather")` and call out via `self.run
 ## Run it
 
 ```sh
-rusm build              # generates glue, compiles components/{api,go-api} + the host binary
-rusm serve              # runs the host binary; serves http://127.0.0.1:8080
+rusm build              # generates glue, compiles the 3 guests + the host binary
+rusm serve              # runs the host binary; serves http (8080) + ws (8082)
 curl http://127.0.0.1:8080/forecast/Amsterdam      # Rust handler
 # → sunny in Amsterdam (served by pid …)
 curl http://127.0.0.1:8080/go/forecast/Rotterdam   # Go handler
 # → sunny in Rotterdam (served by pid …)
+# TS handler (WebSocket): send a city, get the forecast
+bun -e 'const w=new WebSocket("ws://127.0.0.1:8082");w.onopen=()=>w.send("Amsterdam");w.onmessage=e=>{console.log(e.data);process.exit(0)}'
+# → sunny in Amsterdam (served by pid …)
 ```
 
-Two guests call the **same** bridge, proving it's language-neutral:
+**Three guests call the same bridge**, proving it's language-neutral:
 - `components/api` (Rust) — `#[rusm_rs::handlers(bridge = "weather:bridge/forecast@0.1.0")]`;
   the `bridge = …` attribute lets a handler import the bridge, called via `crate::forecast::lookup`.
 - `components/go-api` (Go) — `web.NewHandlers()` calling `forecast.Lookup` from the
   `wit-bindgen-go`-generated `internal/wit` package.
+- `components/tsweather` (TS) — a `websocket` handler calling `weather.lookup` (typed via the
+  generated `bridges.d.ts`). `rusm build` rebuilds the js-runner with the bridge compiled in.
 
-`rusm build` does the language-appropriate WIT setup for each (Rust: a `generate!` `wit/`; Go:
-a TinyGo embedding world + `wit-bindgen-go` bindings); the author just declares the import and
-calls it.
+`rusm build` does the language-appropriate setup for each (Rust: a `generate!` `wit/`; Go: a
+TinyGo embedding world + `wit-bindgen-go`; TS: a per-app js-runner + `bridges.d.ts`); the author
+just declares the import and calls it. (TS bridge functions are `string`-typed in v1; richer WIT
+types are a Rust/Go guest today — `rusm build` says so if a TS guest needs one.)
 
 ## The platform/application split
 
@@ -61,5 +67,5 @@ is no other language a host function can be. That is the only Rust an app must a
 native capability; its **guests stay in any language**. A guest calls `weather` as an ordinary
 typed WIT import — no dispatcher, no marshaling, the same cost as a built-in bridge.
 
-See `bridges/README.md` (repo root) for the full model and the current status of the guest
-ergonomics (Rust and Go are live; the TS path is the remaining guest work).
+See `bridges/README.md` (repo root) for the full model — Rust, Go, and TypeScript guests are
+all live; the remaining work is richer TS WIT types (records/variants) and a genius-rusm bridge.

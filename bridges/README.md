@@ -130,19 +130,25 @@ build, never hand-edited). Worked example: **`examples/custom-bridge/`** (a `wea
 its host crate compiles in the workspace as the host-side proof, and a drift test guarantees
 the committed generated files are byte-identical to what `rusm build` emits).
 
-> **Status.** Live: the runtime seam + composable builder, the shared `rusm_cli::host` serve
-> path, the capability whitelist, bridge discovery + host-crate codegen + guest-WIT vendoring,
-> `rusm build`/`serve` wiring, and **both Rust and Go HTTP handlers** calling a bridge —
-> Rust via `#[rusm_rs::handlers(bridge = "ns:pkg/iface@ver")]` (re-exported at `crate::<iface>`),
-> Go via `web.NewHandlers()` calling the `wit-bindgen-go`-generated package (`rusm build` emits
-> a per-component two-world WIT: `component` for TinyGo embedding, `bridges` for binding-gen, so
-> `rusm:runtime` stays the SDK's). Proven **live** on `examples/custom-bridge`:
-> `rusm build && rusm serve` then `curl /forecast/:city` (Rust) and `/go/forecast/:city` (Go)
-> both return the host bridge's value; and at the unit level by `rusm-wasm`'s
-> `a_custom_application_bridge_is_callable_from_a_guest`. **`rusm new <name> --bridges
-> [--lang rust|go]`** scaffolds a whole bridge app (host crate + the example bridge + a guest
-> that calls it), so authoring is turnkey. Remaining: the **TS** guest path (per-bridge typed
-> globals + a js-runner re-wizer — the one language left); and a genius-rusm native bridge.
+> **Status.** Live across **all three guest languages** — a custom bridge is callable from
+> Rust, Go, *and* TypeScript guests, proven end to end on `examples/custom-bridge` (one app,
+> one `weather` bridge, three guests):
+> - **Rust** — `#[rusm_rs::handlers(bridge = "ns:pkg/iface@ver")]`, re-exported at `crate::<iface>`;
+>   `curl /forecast/:city`.
+> - **Go** — `web.NewHandlers()` over the `wit-bindgen-go`-generated package; `rusm build` emits a
+>   per-component two-world WIT (`component` for TinyGo embedding, `bridges` for binding-gen, so
+>   `rusm:runtime` stays the SDK's); `curl /go/forecast/:city`.
+> - **TS** — `globalThis.<bridge>` (typed via a generated `bridges.d.ts`); `rusm build` rebuilds the
+>   js-runner with the bridge's typed `__<bridge>__<func>` primitive compiled in (the `bridges_gen`
+>   seam) and the host loads it; a WS handler returns `sunny in Amsterdam` over `ws://…`.
+>
+> The platform pieces underneath: the runtime seam + composable builder, `rusm_cli::host`, the
+> default-deny whitelist, discovery + host-crate codegen + guest-WIT vendoring + per-app js-runner
+> build, `rusm build`/`serve` wiring, and `rusm new --bridges` scaffolding. **TS type surface:** v1
+> supports `string` params + `string`/no result (the common provider shape); a richer WIT type
+> fails *loudly* at build with the Rust/Go-guest workaround — never a silent half-typed bridge
+> (serde-typed richer types are the documented next extension). Remaining: a genius-rusm native
+> bridge (real-world proof) and the optional richer-TS-types extension.
 
 ---
 
