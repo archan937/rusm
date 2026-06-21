@@ -132,16 +132,16 @@ the committed generated files are byte-identical to what `rusm build` emits).
 
 > **Status.** Live: the runtime seam + composable builder, the shared `rusm_cli::host` serve
 > path, the capability whitelist, bridge discovery + host-crate codegen + guest-WIT vendoring,
-> `rusm build`/`serve` wiring, and a **Rust HTTP handler** calling a bridge via
-> `#[rusm_rs::handlers(bridge = "ns:pkg/iface@ver")]` (it switches to the `rusm build`-generated
-> `wit/` `handler` world; the bridge is re-exported at `crate::<iface>`). Proven **live** on
-> `examples/custom-bridge`: `rusm build && rusm serve` then `curl /forecast/:city` returns the
-> host bridge's value; and at the unit level by `rusm-wasm`'s
-> `a_custom_application_bridge_is_callable_from_a_guest`. Remaining: the **Go** SDK's
-> serving/handler analog of `#[handlers(bridge=…)]` (Go WIT vendoring already works, so a
-> hand-written `generate!` Go guest can call a bridge today); the **TS** guest path (per-bridge
-> typed globals + a js-runner re-wizer); `rusm new --bridges` scaffolding; and a genius-rusm
-> native bridge.
+> `rusm build`/`serve` wiring, and **both Rust and Go HTTP handlers** calling a bridge —
+> Rust via `#[rusm_rs::handlers(bridge = "ns:pkg/iface@ver")]` (re-exported at `crate::<iface>`),
+> Go via `web.NewHandlers()` calling the `wit-bindgen-go`-generated package (`rusm build` emits
+> a per-component two-world WIT: `component` for TinyGo embedding, `bridges` for binding-gen, so
+> `rusm:runtime` stays the SDK's). Proven **live** on `examples/custom-bridge`:
+> `rusm build && rusm serve` then `curl /forecast/:city` (Rust) and `/go/forecast/:city` (Go)
+> both return the host bridge's value; and at the unit level by `rusm-wasm`'s
+> `a_custom_application_bridge_is_callable_from_a_guest`. Remaining: the **TS** guest path
+> (per-bridge typed globals + a js-runner re-wizer); `rusm new --bridges` scaffolding; and a
+> genius-rusm native bridge.
 
 ---
 

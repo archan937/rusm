@@ -36,16 +36,23 @@ gate itself on `self.caps().allows_bridge("weather")` and call out via `self.run
 ## Run it
 
 ```sh
-rusm build              # generates the glue, compiles components/api + the host binary
+rusm build              # generates glue, compiles components/{api,go-api} + the host binary
 rusm serve              # runs the host binary; serves http://127.0.0.1:8080
-curl http://127.0.0.1:8080/forecast/Amsterdam
+curl http://127.0.0.1:8080/forecast/Amsterdam      # Rust handler
 # → sunny in Amsterdam (served by pid …)
+curl http://127.0.0.1:8080/go/forecast/Rotterdam   # Go handler
+# → sunny in Rotterdam (served by pid …)
 ```
 
-`components/api` is a `#[rusm_rs::handlers(bridge = "weather:bridge/forecast@0.1.0")]` HTTP
-handler — an ordinary route handler that calls the bridge with `crate::forecast::lookup(city)`,
-no dispatcher. The `bridge = …` attribute is what lets a handler (not just a plain actor)
-import a custom bridge.
+Two guests call the **same** bridge, proving it's language-neutral:
+- `components/api` (Rust) — `#[rusm_rs::handlers(bridge = "weather:bridge/forecast@0.1.0")]`;
+  the `bridge = …` attribute lets a handler import the bridge, called via `crate::forecast::lookup`.
+- `components/go-api` (Go) — `web.NewHandlers()` calling `forecast.Lookup` from the
+  `wit-bindgen-go`-generated `internal/wit` package.
+
+`rusm build` does the language-appropriate WIT setup for each (Rust: a `generate!` `wit/`; Go:
+a TinyGo embedding world + `wit-bindgen-go` bindings); the author just declares the import and
+calls it.
 
 ## The platform/application split
 
@@ -55,4 +62,4 @@ native capability; its **guests stay in any language**. A guest calls `weather` 
 typed WIT import — no dispatcher, no marshaling, the same cost as a built-in bridge.
 
 See `bridges/README.md` (repo root) for the full model and the current status of the guest
-ergonomics (the Go SDK handler analog and the TS path are the remaining guest work).
+ergonomics (Rust and Go are live; the TS path is the remaining guest work).
