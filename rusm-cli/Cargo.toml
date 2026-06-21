@@ -22,6 +22,9 @@ rusm-jsc = { path = "../crates/rusm-jsc", version = "0.3.0" }
 # Reading a kv-sourced component bundle from the node's durable store.
 rusm-kv = { path = "../crates/rusm-kv", version = "0.3.0" }
 anyhow = { workspace = true }
+# Parsing a custom bridge's bridge.wit (package + interface names) to synthesize the
+# generated host crate's `bindgen!` world. The WIT-format parser only — no wasmtime.
+wit-parser = "0.248"
 dotenvy = "0.15"
 pico-args = { version = "0.5", features = ["eq-separator", "short-space-opt"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "io-util", "signal"] }

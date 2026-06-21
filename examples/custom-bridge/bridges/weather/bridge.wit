@@ -1,0 +1,10 @@
+// The custom bridge's contract — the app's OWN WIT package (not rusm:runtime), the single
+// source both the guest binding and the host impl derive from. Self-contained (its own
+// types), so the toolchain resolves it without vendoring rusm:runtime.
+package weather:bridge@0.1.0;
+
+interface forecast {
+    /// Look up a forecast for `city`. Backed by a native host function the app registers;
+    /// the result is composed host-side and returned to the guest, typed.
+    lookup: func(city: string) -> string;
+}
