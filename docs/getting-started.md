@@ -92,7 +92,7 @@ Run `make` with no target for the full list.
 
 The next sections cover both.
 
-## 1. Without a Wasm runtime — the OTP core
+## 1. Without a Wasm runtime — the OTP core {#otp-core}
 
 RUSM's heart is a **Wasm-free** Erlang/OTP actor library, `rusm-otp`. You can use
 it on its own — real lightweight processes, message passing, links, monitors,
@@ -134,7 +134,7 @@ You also get `spawn_link` (crash propagation), `trap_exit`, a named **registry**
 and **TCP** (`listen`/`connect`, one process per connection) — all in `rusm-otp`,
 all without touching Wasm. See [links & supervision](./concepts/links-and-supervision.md).
 
-## 2. With an already-compiled `.wasm` — embedding
+## 2. With an already-compiled `.wasm` — embedding {#embed-wasm}
 
 Add the `rusm-wasm` backend and host a prebuilt component as a process. A
 `WasmRuntime` wraps an `rusm-otp` `Runtime`; **construct it inside a Tokio runtime**
@@ -173,7 +173,7 @@ memory-cap denial.
 > **Core modules.** A `wasm32-wasip1` core module works the same way with
 > `compile` / `prepare(module, "run")` / `spawn` (see the wasip1 bridge).
 
-## 3. With an already-compiled `.wasm` — the app model
+## 3. With an already-compiled `.wasm` — the app model {#app-model}
 
 For a RUSM-first project, declare components in `rusm.toml` and let the CLI load
 and supervise them from `./wasm/`:
@@ -246,7 +246,7 @@ preopen = [{ host = "./data", guest = "/data", read-only = false }]
 capability = "agent"          # resolves to the custom profile above
 ```
 
-## 4. A Rust WASM component (source only)
+## 4. A Rust WASM component (source only) {#rust-component}
 
 Write the source, let RUSM build it. A component lives under `components/<name>/`:
 
@@ -294,7 +294,7 @@ One toolchain, no jco, no cargo-component — `cargo build --target wasm32-wasip
 componentizes directly. **`rusm dev`** keeps running: edit a component and save,
 and it rebuilds + reloads it automatically (a dependency-free mtime watch).
 
-## 5. A TS / JS WASM component (source only)
+## 5. A TS / JS WASM component (source only) {#ts-component}
 
 TypeScript guests are **first-class, sandboxed RUSM processes** — the
 `genius-wasmcloud` model, **no jco**. RUSM ships one **js-runner** component: it
@@ -433,7 +433,7 @@ methods are also typed by the standard `DOM` lib, and the `log` crate's sink is 
 for you by `#[rusm_rs::main]` / `#[handlers]`. Both feed the same stream as the runtime's
 own lifecycle lines; see the [`[log]` reference](./reference-configuration).
 
-## 6. Serve a component over HTTP (Rust, TypeScript, or Go)
+## 6. Serve a component over HTTP (Rust, TypeScript, or Go) {#serve}
 
 Any component can be a high-throughput **HTTP / WS / SSE** server — declare a
 `[[serve]]` entry and run `rusm serve`. Serving is always **ephemeral**: HTTP/SSE run
@@ -561,7 +561,7 @@ the Go twin `web.Sse{ Open, Message, Close }.Serve()`); or serve
 `web.WebSocket{ Open, Message, Close }.Serve()`). See
 [the serving model](./concepts/serving-model.md).
 
-## Process management from inside a component
+## Process management from inside a component {#process-management}
 
 A component imports the `rusm:runtime/actor` interface and calls the Erlang
 `Process` API directly — the same operations the host has:
@@ -638,7 +638,7 @@ from inside a real component.
 > `Process.register/whereis/isAlive/kill/setLabel`,
 > `Process.registerTag/killTag/whereisTag` (process groups).
 
-## Streaming (from a component)
+## Streaming (from a component) {#streaming}
 
 Cross-process **byte streams** are Tokio-backpressured and ride the mailbox as
 `Received::Stream` — see [byte streams](./concepts/byte-streams.md). A component
@@ -718,7 +718,7 @@ multiple GB/s.
 > handle-based ops above) is a future ergonomic layer; the handle-based API is the
 > real, working one today.
 
-## Capabilities & sandboxing
+## Capabilities & sandboxing {#capabilities}
 
 Every process is default-deny. Named profiles set the baseline; the `Capabilities`
 builder overrides per spawn:
@@ -737,7 +737,7 @@ Capabilities::nothing()                               // start from nothing…
 Grants map onto standard WASI plus a `StoreLimiter` memory cap. A breach traps
 *only that process*. See [permissions & sandboxing](./concepts/permissions-and-sandboxing.md).
 
-## Observe a running node
+## Observe a running node {#observe}
 
 **Your app** — start it as an attachable node, then attach a REPL to watch its
 live processes:

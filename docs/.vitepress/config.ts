@@ -20,26 +20,26 @@ const sections = [
       {
         text: 'Ways to use RUSM',
         items: [
-          { text: 'The OTP core (no Wasm)', link: '/getting-started#_1-without-a-wasm-runtime-—-the-otp-core' },
-          { text: 'Embed a .wasm', link: '/getting-started#_2-with-an-already-compiled-wasm-—-embedding' },
-          { text: 'The app model', link: '/getting-started#_3-with-an-already-compiled-wasm-—-the-app-model' },
+          { text: 'The OTP core (no Wasm)', link: '/getting-started#otp-core' },
+          { text: 'Embed a .wasm', link: '/getting-started#embed-wasm' },
+          { text: 'The app model', link: '/getting-started#app-model' },
         ],
       },
       {
         text: 'Write a component',
         items: [
-          { text: 'Rust component', link: '/getting-started#_4-a-rust-wasm-component-source-only' },
-          { text: 'TypeScript component', link: '/getting-started#_5-a-ts-js-wasm-component-source-only' },
-          { text: 'Serve over HTTP/WS/SSE', link: '/getting-started#_6-serve-a-component-over-http-typescript-or-rust' },
+          { text: 'Rust component', link: '/getting-started#rust-component' },
+          { text: 'TypeScript component', link: '/getting-started#ts-component' },
+          { text: 'Serve over HTTP/WS/SSE', link: '/getting-started#serve' },
         ],
       },
       {
         text: 'Inside a component',
         items: [
-          { text: 'Process management', link: '/getting-started#process-management-from-inside-a-component-rust' },
-          { text: 'Streaming', link: '/getting-started#streaming-from-a-component' },
-          { text: 'Capabilities & sandboxing', link: '/getting-started#capabilities-sandboxing' },
-          { text: 'Observe a node', link: '/getting-started#observe-a-running-node' },
+          { text: 'Process management', link: '/getting-started#process-management' },
+          { text: 'Streaming', link: '/getting-started#streaming' },
+          { text: 'Capabilities & sandboxing', link: '/getting-started#capabilities' },
+          { text: 'Observe a node', link: '/getting-started#observe' },
         ],
       },
     ],
