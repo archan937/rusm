@@ -110,17 +110,6 @@ interface actor {
     /// Attach a human-readable label for observability (`Process.set_label/1`).
     set-label: func(label: string);
 
-    /// **Process-group tags** (Erlang's `pg`): a process joins a tag, many processes may
-    /// share a tag, and a process may hold many tags. Memberships release on exit (like
-    /// names). `register-tag`/`unregister-tag` join/leave **this** process — unprivileged.
-    register-tag: func(tag: string);
-    unregister-tag: func(tag: string);
-    /// Live members of `tag` (empty if unknown).
-    whereis-tag: func(tag: string) -> list<pid>;
-    /// Terminate every live member of `tag`; returns the count. Capability-gated by
-    /// process-control (it terminates other processes), exactly like `kill`.
-    kill-tag: func(tag: string) -> u32;
-
     /// A restart strategy for [`supervise`].
     enum supervise-strategy {
         one-for-one,

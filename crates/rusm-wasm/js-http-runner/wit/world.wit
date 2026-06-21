@@ -16,5 +16,6 @@ world bindings {
   import rusm:runtime/actor@0.1.0;
   import rusm:runtime/kv@0.1.0;
   import rusm:runtime/log@0.1.0;
+  import rusm:runtime/pg@0.1.0;
   import rusm:runtime/streams@0.1.0;
 }

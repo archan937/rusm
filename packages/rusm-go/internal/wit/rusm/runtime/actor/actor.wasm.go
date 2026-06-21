@@ -84,22 +84,6 @@ func wasmimport_Unregister(name0 *uint8, name1 uint32) (result0 uint32)
 //go:noescape
 func wasmimport_SetLabel(label0 *uint8, label1 uint32)
 
-//go:wasmimport rusm:runtime/actor@0.1.0 register-tag
-//go:noescape
-func wasmimport_RegisterTag(tag0 *uint8, tag1 uint32)
-
-//go:wasmimport rusm:runtime/actor@0.1.0 unregister-tag
-//go:noescape
-func wasmimport_UnregisterTag(tag0 *uint8, tag1 uint32)
-
-//go:wasmimport rusm:runtime/actor@0.1.0 whereis-tag
-//go:noescape
-func wasmimport_WhereisTag(tag0 *uint8, tag1 uint32, result *cm.List[Pid])
-
-//go:wasmimport rusm:runtime/actor@0.1.0 kill-tag
-//go:noescape
-func wasmimport_KillTag(tag0 *uint8, tag1 uint32) (result0 uint32)
-
 //go:wasmimport rusm:runtime/actor@0.1.0 supervise
 //go:noescape
 func wasmimport_Supervise(strategy0 uint32, children0 *string, children1 uint32, maxRestarts0 uint32, withinMs0 uint32, result *cm.Result[string, Pid, string])

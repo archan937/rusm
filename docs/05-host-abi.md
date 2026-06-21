@@ -10,7 +10,7 @@ per artifact kind, plus the standard WASI interfaces.
 A WASI **component** imports the `rusm:runtime/actor` interface (a real WIT world,
 bound with `wasmtime::component::bindgen!`), so a guest in any language calls typed
 functions. Several capabilities are **sibling interfaces** — platform *bridges* split out
-of the core: `rusm:runtime/{kv, log, streams}` (and the shared `types`); all are imported
+of the core: `rusm:runtime/{kv, log, pg, streams}` (and the shared `types`); all are imported
 into the one `process` world:
 
 | Function | Meaning |
@@ -23,8 +23,6 @@ into the one `process` world:
 | `info(pid) -> option<process-info>` | links, monitors, names, label, mailbox depth, trap-exit |
 | `is-alive(pid) -> bool` / `kill(pid) -> bool` | liveness / forced termination |
 | `register(name) / whereis(name) / unregister(name)` | the named registry (1 name → 1 pid) |
-| `register-tag(tag) / unregister-tag(tag) / whereis-tag(tag) -> list<pid>` | process groups (Erlang `pg`: 1 tag → many pids); self-tag is unprivileged |
-| `kill-tag(tag) -> u32` | terminate a whole group (returns the count); gated by **process-control**, like `kill` |
 | `set-label(label)` | a human-readable label for the observer |
 | `spawn(name) / monitor(pid) / supervise(…)` | start, watch, and supervise child components (capability-gated) |
 | `connection() -> option<connection-info>` | a per-connection serving (WS/SSE) handler's request context — method, path, captured **route params**, query, headers, remote address, negotiated subprotocol |
@@ -49,6 +47,36 @@ one capability, owned end-to-end in [`bridges/kv/`](https://github.com/archan937
 
 The ergonomic guest wrappers are unchanged — `rusm_rs::kv::bucket(..)`, the TS `kv.bucket(..)`
 global, Go's `OpenBucket(..)` — each backed by the Wasm-free `rusm-kv` crate over redb.
+
+### The `streams`, `pg`, and `log` interfaces (sibling bridges)
+
+The same way `kv` split out, these capabilities are their own bridge interfaces — each owned
+end-to-end in `bridges/<name>/`, materialized by `make sync-bridges`, imported into the one
+`process` world. Same functions as before; only the interface they live in changed.
+
+**`rusm:runtime/streams`** — cross-process byte streams (Tokio back-pressured); `*-write`/
+`*-read`/`*-accept` suspend the fiber rather than busy-spin. Guest: `rusm_rs::Stream`, the TS
+`Process.openStream`/`Stream`, Go's `OpenStream`.
+
+| Function | Meaning |
+| --- | --- |
+| `stream-open(to: pid) -> option<stream-id>` | open a stream; the read end is delivered to `to` |
+| `stream-write(handle, chunk) -> bool` / `stream-close(handle)` | write a chunk (back-pressured) / signal EOF |
+| `stream-accept() -> stream-id` / `stream-read(handle) -> option<list<u8>>` | accept an incoming stream / read the next chunk (`none` = EOF) |
+
+**`rusm:runtime/pg`** — process-group tags (Erlang's `pg`), RUSM's pub/sub primitive
+(subscribe = `register-tag`, publish = `whereis-tag` + `send`). Guest: `rusm_rs::{register_tag, …}`,
+the TS `Process.registerTag`/etc., Go's `RegisterTag`/etc.
+
+| Function | Meaning |
+| --- | --- |
+| `register-tag(tag)` / `unregister-tag(tag)` | join / leave a tag (this process; unprivileged) |
+| `whereis-tag(tag) -> list<pid>` | live members of a tag |
+| `kill-tag(tag) -> u32` | terminate a whole group (count); gated by **process-control**, like `kill` |
+
+**`rusm:runtime/log`** — platform logging (a polyfill bridge): a guest's standard logging —
+`console.*` (TS), the `log` crate (Rust), `log`/`slog` (Go) — routes to `log(level, message)`;
+the host stamps time, `component#pid`, and the severity colour, gated by the node `[log] level`.
 
 Composition is **message passing** (spawn instances, then `send`/`receive`/
 `register`/`whereis`) — *not* WIT inter-component wiring, and no lattice. Standard
@@ -86,7 +114,7 @@ profiles — `Sandboxed` (CPU + bounded heap only), `NetworkClient` (+ outbound
 network), `Trusted` (+ stdio, large heap, durable **storage**) — set defaults; a
 per-spawn `Capabilities` builder overrides them (`allow-spawn`, `allow-process-control`,
 `allow-storage`, …). The **storage** grant opens the node's embedded durable key-value
-store (the `kv-*` ABI, backed by the Wasm-free `rusm-kv` crate over redb) — a
+store (the `kv` interface, backed by the Wasm-free `rusm-kv` crate over redb) — a
 sandboxed process has none. See
 [permissions & sandboxing](./concepts/permissions-and-sandboxing.md).
 

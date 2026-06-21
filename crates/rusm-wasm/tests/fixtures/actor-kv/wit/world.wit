@@ -112,17 +112,6 @@ interface actor {
     /// Attach a human-readable label for observability (`Process.set_label/1`).
     set-label: func(label: string);
 
-    /// **Process-group tags** (Erlang's `pg`): a process joins a tag, many processes may
-    /// share a tag, and a process may hold many tags. Memberships release on exit (like
-    /// names). `register-tag`/`unregister-tag` join/leave **this** process — unprivileged.
-    register-tag: func(tag: string);
-    unregister-tag: func(tag: string);
-    /// Live members of `tag` (empty if unknown).
-    whereis-tag: func(tag: string) -> list<pid>;
-    /// Terminate every live member of `tag`; returns the count. Capability-gated by
-    /// process-control (it terminates other processes), exactly like `kill`.
-    kill-tag: func(tag: string) -> u32;
-
     /// A restart strategy for [`supervise`].
     enum supervise-strategy {
         one-for-one,
@@ -172,6 +161,25 @@ interface log {
 
     /// Emit one line through the platform logger; the guest supplies only severity + message.
     log: func(level: log-level, message: string);
+}
+
+/// Process-group tags (Erlang's `pg`) — an **introduced** bridge. A process joins a tag,
+/// many processes may share a tag, and a process may hold many tags; memberships release on
+/// exit (like names). This is RUSM's cross-language pub/sub primitive: subscribe =
+/// `register-tag`, publish = `whereis-tag` + `send`. `register-tag`/`unregister-tag`
+/// join/leave **this** process (unprivileged); `kill-tag` terminates a whole group and is
+/// capability-gated by `process-control` (it targets other processes), exactly like `kill`.
+interface pg {
+    use types.{pid};
+
+    /// Join this process to `tag`.
+    register-tag: func(tag: string);
+    /// Leave a tag this process holds.
+    unregister-tag: func(tag: string);
+    /// Live members of `tag` (empty if unknown).
+    whereis-tag: func(tag: string) -> list<pid>;
+    /// Terminate every live member of `tag`; returns the count. Gated by process-control.
+    kill-tag: func(tag: string) -> u32;
 }
 
 /// Cross-process byte streams — an **introduced** bridge: a Tokio-backpressured pipe
@@ -224,6 +232,7 @@ world process {
     import actor;
     import kv;
     import log;
+    import pg;
     import streams;
     export run: func();
 }

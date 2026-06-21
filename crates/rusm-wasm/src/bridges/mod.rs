@@ -12,6 +12,7 @@ pub(crate) mod conn;
 pub(crate) mod http;
 pub(crate) mod kv;
 pub(crate) mod log;
+pub(crate) mod pg;
 pub(crate) mod routed;
 pub(crate) mod sse;
 pub(crate) mod streams;

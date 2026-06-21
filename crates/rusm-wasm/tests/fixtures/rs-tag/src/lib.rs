@@ -8,7 +8,7 @@ wit_bindgen::generate!({
     world: "process",
     path: "wit",
     // Reuse rusm-rs's actor import bindings instead of generating our own.
-    with: { "rusm:runtime/actor@0.1.0": rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": rusm_rs::rusm::runtime::log, "rusm:runtime/streams@0.1.0": rusm_rs::rusm::runtime::streams },
+    with: { "rusm:runtime/actor@0.1.0": rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": rusm_rs::rusm::runtime::log, "rusm:runtime/pg@0.1.0": rusm_rs::rusm::runtime::pg, "rusm:runtime/streams@0.1.0": rusm_rs::rusm::runtime::streams },
 });
 
 struct Component;

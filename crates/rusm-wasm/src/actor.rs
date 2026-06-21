@@ -265,35 +265,6 @@ impl actor::Host for WasiHost {
         self.rt.set_label(Pid::from_raw(self.pid), label);
     }
 
-    /// Join **this** process to a process-group tag. Unprivileged (self-tagging, like
-    /// `set_label`) — the gate is on `kill_tag`, which terminates *others*.
-    async fn register_tag(&mut self, tag: String) {
-        self.rt.register_tag(tag, Pid::from_raw(self.pid));
-    }
-
-    /// Leave a tag this process holds.
-    async fn unregister_tag(&mut self, tag: String) {
-        self.rt.unregister_tag(&tag, Pid::from_raw(self.pid));
-    }
-
-    /// Live members of `tag` (a read, like `whereis`/`list` — ungated).
-    async fn whereis_tag(&mut self, tag: String) -> Vec<u64> {
-        self.rt
-            .whereis_tag(&tag)
-            .into_iter()
-            .map(|p| p.raw())
-            .collect()
-    }
-
-    /// Terminate every live member of `tag`. Capability-gated by process-control like
-    /// `kill` — a group kill targets other processes, so there is no self-exception.
-    async fn kill_tag(&mut self, tag: String) -> u32 {
-        if !self.caps.process_control() {
-            return 0; // default-deny: cannot terminate other processes
-        }
-        self.rt.kill_tag(&tag) as u32
-    }
-
     /// Supervise named child components under the **native** `rusm-otp` supervisor —
     /// the single restart implementation the guest `Supervisor` SDKs delegate to.
     /// Capability-gated like `spawn`; each child is spawned with *this* process's

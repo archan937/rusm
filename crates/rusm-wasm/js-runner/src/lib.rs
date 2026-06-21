@@ -30,6 +30,7 @@ use hmac::{Hmac, Mac};
 use rquickjs::{Context, Ctx, Exception, Function, Promise, Runtime, TypedArray};
 use rusm::runtime::actor;
 use rusm::runtime::kv;
+use rusm::runtime::pg;
 use rusm::runtime::streams as stream_iface;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
@@ -479,6 +480,7 @@ const LOG_JS: &str = include_str!("../bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../bridge/webapi.js");
 const STREAM_JS: &str = include_str!("../bridge/streams.js");
 const PROCESS_JS: &str = include_str!("../bridge/process.js");
+const PG_JS: &str = include_str!("../bridge/pg.js");
 const KV_JS: &str = include_str!("../bridge/kv.js");
 const RPC_JS: &str = include_str!("../bridge/rpc.js");
 
@@ -585,13 +587,13 @@ fn boot_bridge(ctx: Ctx<'_>) {
     def!("__set_label", |l: String| actor::set_label(&l));
     // Process-group tags (Erlang `pg`): self-tag (unprivileged); `__kill_tag` is gated at
     // the host by process-control. Pids cross as decimal strings, like `__list`.
-    def!("__register_tag", |t: String| actor::register_tag(&t));
-    def!("__unregister_tag", |t: String| actor::unregister_tag(&t));
-    def!("__whereis_tag", |t: String| actor::whereis_tag(&t)
+    def!("__register_tag", |t: String| pg::register_tag(&t));
+    def!("__unregister_tag", |t: String| pg::unregister_tag(&t));
+    def!("__whereis_tag", |t: String| pg::whereis_tag(&t)
         .into_iter()
         .map(|p| p.to_string())
         .collect::<Vec<_>>());
-    def!("__kill_tag", |t: String| actor::kill_tag(&t) as f64);
+    def!("__kill_tag", |t: String| pg::kill_tag(&t) as f64);
     def!("__spawn", js_spawn);
     def!("__spawnFrom", js_spawn_from);
     def!("__monitor", |p: String| actor::monitor(
@@ -677,6 +679,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     let _: () = ctx.eval(WEBAPI_JS).unwrap();
     let _: () = ctx.eval(STREAM_JS).unwrap();
     let _: () = ctx.eval(PROCESS_JS).unwrap();
+    let _: () = ctx.eval(PG_JS).unwrap();
     let _: () = ctx.eval(KV_JS).unwrap();
     let _: () = ctx.eval(RPC_JS).unwrap();
     // A CommonJS surface so a Bun-bundled (`--format=cjs`) service/worker can

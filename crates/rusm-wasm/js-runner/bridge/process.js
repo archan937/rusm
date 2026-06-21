@@ -82,12 +82,8 @@ if (has("__whereis"))
 if (has("__is_alive")) P.isAlive = (pid) => __is_alive(String(pid));
 if (has("__kill")) P.kill = (pid) => __kill(String(pid));
 if (has("__set_label")) P.setLabel = (label) => __set_label(label);
-// Process-group tags (Erlang `pg`): tag this process, leave a tag, list a group's live
-// members (pids), or terminate a whole group (count). killTag needs process-control.
-if (has("__register_tag")) P.registerTag = (tag) => __register_tag(tag);
-if (has("__unregister_tag")) P.unregisterTag = (tag) => __unregister_tag(tag);
-if (has("__whereis_tag")) P.whereisTag = (tag) => __whereis_tag(tag).map((p) => BigInt(p));
-if (has("__kill_tag")) P.killTag = (tag) => __kill_tag(tag);
+// Process-group tags (`Process.registerTag`/etc.) are the pg bridge — see bridge/pg.js,
+// eval'd after this; it augments Process with the tag ops.
 if (has("__stream_open"))
   P.openStream = (to) => {
     const h = __stream_open(String(to));

@@ -205,18 +205,8 @@ func Unregister(name string) bool { return actor.Unregister(name) }
 // SetLabel sets this process's human-readable label (shown in introspection).
 func SetLabel(label string) { actor.SetLabel(label) }
 
-// RegisterTag joins this process to a process-group tag (Erlang's pg); released on exit.
-func RegisterTag(tag string) { actor.RegisterTag(tag) }
-
-// UnregisterTag leaves a process-group tag this process holds.
-func UnregisterTag(tag string) { actor.UnregisterTag(tag) }
-
-// WhereisTag returns the live members of a process-group tag.
-func WhereisTag(tag string) []Pid { return pids(actor.WhereisTag(tag)) }
-
-// KillTag terminates every live member of a process-group tag and returns how many
-// were killed (gated by process-control; 0 if denied or empty).
-func KillTag(tag string) uint32 { return actor.KillTag(tag) }
+// Process-group tags (RegisterTag/UnregisterTag/WhereisTag/KillTag) are the pg bridge —
+// see pg.go (package rusm, same surface).
 
 // List returns every live pid (subject to capability).
 func List() []Pid { return pids(actor.ListProcesses()) }

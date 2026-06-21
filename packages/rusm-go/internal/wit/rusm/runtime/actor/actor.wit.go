@@ -400,60 +400,6 @@ func SetLabel(label string) {
 	return
 }
 
-// RegisterTag represents the imported function "register-tag".
-//
-// **Process-group tags** (Erlang's `pg`): a process joins a tag, many processes may
-// share a tag, and a process may hold many tags. Memberships release on exit (like
-// names). `register-tag`/`unregister-tag` join/leave **this** process — unprivileged.
-//
-//	register-tag: func(tag: string)
-//
-//go:nosplit
-func RegisterTag(tag string) {
-	tag0, tag1 := cm.LowerString(tag)
-	wasmimport_RegisterTag((*uint8)(tag0), (uint32)(tag1))
-	return
-}
-
-// UnregisterTag represents the imported function "unregister-tag".
-//
-//	unregister-tag: func(tag: string)
-//
-//go:nosplit
-func UnregisterTag(tag string) {
-	tag0, tag1 := cm.LowerString(tag)
-	wasmimport_UnregisterTag((*uint8)(tag0), (uint32)(tag1))
-	return
-}
-
-// WhereisTag represents the imported function "whereis-tag".
-//
-// Live members of `tag` (empty if unknown).
-//
-//	whereis-tag: func(tag: string) -> list<pid>
-//
-//go:nosplit
-func WhereisTag(tag string) (result cm.List[Pid]) {
-	tag0, tag1 := cm.LowerString(tag)
-	wasmimport_WhereisTag((*uint8)(tag0), (uint32)(tag1), &result)
-	return
-}
-
-// KillTag represents the imported function "kill-tag".
-//
-// Terminate every live member of `tag`; returns the count. Capability-gated by
-// process-control (it terminates other processes), exactly like `kill`.
-//
-//	kill-tag: func(tag: string) -> u32
-//
-//go:nosplit
-func KillTag(tag string) (result uint32) {
-	tag0, tag1 := cm.LowerString(tag)
-	result0 := wasmimport_KillTag((*uint8)(tag0), (uint32)(tag1))
-	result = (uint32)((uint32)(result0))
-	return
-}
-
 // Supervise represents the imported function "supervise".
 //
 // Supervise named child components: restart a dead child per `strategy`, with a

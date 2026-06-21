@@ -40,6 +40,7 @@ wit_bindgen::generate!({ world: "bindings", path: "wit", generate_all });
 
 use exports::wasi::http::incoming_handler::Guest;
 use rusm::runtime::actor;
+use rusm::runtime::pg;
 use rusm::runtime::kv;
 use wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -53,6 +54,7 @@ const LOG_JS: &str = include_str!("../../js-runner/bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../../js-runner/bridge/webapi.js");
 const STREAM_JS: &str = include_str!("../../js-runner/bridge/streams.js");
 const PROCESS_JS: &str = include_str!("../../js-runner/bridge/process.js");
+const PG_JS: &str = include_str!("../../js-runner/bridge/pg.js");
 const KV_JS: &str = include_str!("../../js-runner/bridge/kv.js");
 const HTTP_JS: &str = include_str!("../bridge/http.js");
 /// wasi:io `blocking-write-and-flush` accepts at most 4096 bytes per call.
@@ -104,7 +106,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     def!("__whereis", |n: String| actor::whereis(&n)
         .map(|p| p.to_string())
         .unwrap_or_default());
-    def!("__whereis_tag", |t: String| actor::whereis_tag(&t)
+    def!("__whereis_tag", |t: String| pg::whereis_tag(&t)
         .into_iter()
         .map(|p| p.to_string())
         .collect::<Vec<_>>());
@@ -135,6 +137,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     eval(&ctx, WEBAPI_JS, "webapi.js").expect("webapi.js");
     eval(&ctx, STREAM_JS, "stream.js").expect("stream.js");
     eval(&ctx, PROCESS_JS, "process.js").expect("process.js");
+    eval(&ctx, PG_JS, "pg.js").expect("pg.js");
     eval(&ctx, KV_JS, "kv.js").expect("kv.js");
     eval(&ctx, HTTP_JS, "http.js").expect("http.js");
     eval(

@@ -32,6 +32,7 @@ pub use serde_json;
 pub mod http;
 pub mod kv;
 pub mod logging;
+pub mod pg;
 pub mod pubsub;
 pub mod sse;
 pub mod streams;
@@ -42,6 +43,10 @@ pub mod ws;
 /// The cross-process byte [`Stream`](streams::Stream), re-exported at the crate root so the
 /// public path stays `rusm_rs::Stream`.
 pub use streams::Stream;
+
+/// Process-group tag ops, re-exported at the crate root so the public paths stay
+/// `rusm_rs::{register_tag, unregister_tag, whereis_tag, kill_tag}`.
+pub use pg::{kill_tag, register_tag, unregister_tag, whereis_tag};
 
 pub use supervisor::{Strategy, Supervisor};
 
@@ -147,29 +152,6 @@ pub fn set_label(label: &str) {
     actor::set_label(label);
 }
 
-/// Join **this** process to a process-group `tag` (Erlang's `pg`): a process may hold many
-/// tags, a tag many processes. Released automatically on exit. Unprivileged — a process
-/// tags itself; terminating a group is the gated [`kill_tag`].
-pub fn register_tag(tag: &str) {
-    actor::register_tag(tag);
-}
-
-/// Leave a process-group `tag` this process holds.
-pub fn unregister_tag(tag: &str) {
-    actor::unregister_tag(tag);
-}
-
-/// Live members of process-group `tag` (empty if unknown).
-pub fn whereis_tag(tag: &str) -> Vec<Pid> {
-    actor::whereis_tag(tag).into_iter().map(Pid).collect()
-}
-
-/// Terminate every live member of process-group `tag`; returns how many were killed.
-/// Capability-gated by `process-control` (it terminates other processes); returns `0` if
-/// denied or the tag is empty.
-pub fn kill_tag(tag: &str) -> u32 {
-    actor::kill_tag(tag)
-}
 
 /// The HTTP context of a **per-connection** WebSocket or SSE handler — the request that
 /// opened this connection. Fixed for the connection's life; read it in your handler's
