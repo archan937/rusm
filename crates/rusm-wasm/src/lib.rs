@@ -56,6 +56,12 @@ pub use wasmtime;
 /// A bridge calls its generated `add_to_linker(linker, |h| h)` against it.
 pub type BridgeLinker = wasmtime::component::Linker<BridgeHost>;
 
+/// A custom-bridge linker extension: it adds typed host functions to the component linker
+/// (a bridge's generated `add_to_linker`), run once at construction on every engine tier.
+/// The owned form held by [`WasmRuntimeBuilder`]; the public entry points
+/// ([`WasmRuntime::with_bridges`], [`WasmRuntimeBuilder::bridges`]) take it as `impl Fn`.
+pub type BridgeExtension = dyn Fn(&mut BridgeLinker) -> wasmtime::Result<()>;
+
 /// How often the epoch is bumped. A guest runs at most this long before it must
 /// yield to the scheduler, so tight loops can't starve other processes.
 const EPOCH_TICK: Duration = Duration::from_millis(10);
@@ -202,12 +208,121 @@ pub struct WasmRuntime {
     epoch_ticker: Option<JoinHandle<()>>,
 }
 
+/// Composable construction for a [`WasmRuntime`] — created by [`WasmRuntime::builder`].
+/// Set pool limits, attach a durable store, opt into the on-demand overflow tier, and/or
+/// wire custom application bridges, in **any** combination, then [`build`](Self::build).
+/// Every option defaults to off / the standard value, so `WasmRuntime::builder(rt).build()`
+/// equals [`WasmRuntime::new`]. The fixed `WasmRuntime::with_*` constructors are shortcuts
+/// for the single-option cases; reach for the builder when an app needs more than one
+/// (e.g. a durable store **and** custom bridges, which no single constructor expresses).
+pub struct WasmRuntimeBuilder {
+    rt: Runtime,
+    max_instances: u32,
+    max_memory: usize,
+    store: Option<std::path::PathBuf>,
+    overflow: bool,
+    bridges: Box<BridgeExtension>,
+}
+
+impl WasmRuntimeBuilder {
+    fn new(rt: Runtime) -> Self {
+        Self {
+            rt,
+            max_instances: DEFAULT_MAX_INSTANCES,
+            max_memory: DEFAULT_MAX_MEMORY,
+            store: None,
+            overflow: false,
+            bridges: Box::new(|_| Ok(())),
+        }
+    }
+
+    /// Pooled instance slots — the most Wasm processes live at once (default
+    /// [`DEFAULT_MAX_INSTANCES`]). See [`WasmRuntime::with_limits`].
+    pub fn max_instances(mut self, max_instances: u32) -> Self {
+        self.max_instances = max_instances;
+        self
+    }
+
+    /// Per-instance linear-memory ceiling (default [`DEFAULT_MAX_MEMORY`]).
+    pub fn max_memory(mut self, max_memory: usize) -> Self {
+        self.max_memory = max_memory;
+        self
+    }
+
+    /// Attach a durable redb **key-value store** at `path` (created if absent), reached by
+    /// guests granted `storage`. See [`WasmRuntime::with_store`].
+    pub fn store(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.store = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Enable the **on-demand overflow tier** (off by default). See
+    /// [`WasmRuntime::with_overflow`].
+    pub fn overflow(mut self) -> Self {
+        self.overflow = true;
+        self
+    }
+
+    /// Wire **custom application bridges** into the component linker. `extend` runs after
+    /// the built-in bridges, on every engine tier; inside it a bridge calls its generated
+    /// `add_to_linker(linker, |h| h)` — a typed WIT host call, no dispatcher. The bridge's
+    /// `impl <iface>::Host for` [`BridgeHost`] reaches the calling process through
+    /// [`BridgeHost`]'s accessors. The same seam the built-in bridges use, exposed for
+    /// application code — RUSM's compiled-in, typed answer to a wasmCloud capability
+    /// provider. See `bridges/README.md`. Calling this again replaces the prior extension.
+    pub fn bridges(
+        mut self,
+        extend: impl Fn(&mut BridgeLinker) -> wasmtime::Result<()> + 'static,
+    ) -> Self {
+        self.bridges = Box::new(extend);
+        self
+    }
+
+    /// Construct the [`WasmRuntime`]. Must run inside a Tokio runtime (it starts the epoch
+    /// ticker).
+    pub fn build(self) -> Result<WasmRuntime> {
+        let engine = Engine::new(&WasmRuntime::pooled_config(
+            self.max_instances,
+            self.max_memory,
+        ))?;
+        // The overflow engine shares the compile config but uses the default (on-demand)
+        // allocator — no fixed cap, so the live count is bounded by memory, not the pool.
+        let overflow = if self.overflow {
+            Some(Engine::new(&WasmRuntime::base_config())?)
+        } else {
+            None
+        };
+        let store = match self.store {
+            Some(path) => Some(Arc::new(rusm_kv::Store::open(path)?)),
+            None => None,
+        };
+        WasmRuntime::assemble(
+            self.rt,
+            engine,
+            overflow,
+            self.max_instances,
+            store,
+            self.bridges.as_ref(),
+        )
+    }
+}
+
 impl WasmRuntime {
+    /// Start a [`WasmRuntimeBuilder`] over an existing process [`Runtime`]. The
+    /// composable construction path: set pool limits, attach a durable store, opt into
+    /// the on-demand overflow tier, and/or wire custom application bridges — in **any**
+    /// combination — then [`build`](WasmRuntimeBuilder::build). The `with_*` constructors
+    /// below are thin shortcuts for the single-option common cases. Must run inside a
+    /// Tokio runtime (build starts the epoch ticker).
+    pub fn builder(rt: Runtime) -> WasmRuntimeBuilder {
+        WasmRuntimeBuilder::new(rt)
+    }
+
     /// Builds a backend over an existing process [`Runtime`], with the default pool
     /// limits ([`DEFAULT_MAX_INSTANCES`] live instances × [`DEFAULT_MAX_MEMORY`] each).
     /// Must run inside a Tokio runtime (it starts the epoch ticker).
     pub fn new(rt: Runtime) -> Result<Self> {
-        Self::with_limits(rt, DEFAULT_MAX_INSTANCES, DEFAULT_MAX_MEMORY)
+        Self::builder(rt).build()
     }
 
     /// Like [`new`](Self::new) but with explicit pool limits — raise
@@ -215,48 +330,29 @@ impl WasmRuntime {
     /// reservation is lazy virtual memory; real RSS tracks live instances), and
     /// `max_memory` for components that need larger heaps.
     pub fn with_limits(rt: Runtime, max_instances: u32, max_memory: usize) -> Result<Self> {
-        let engine = Engine::new(&Self::pooled_config(max_instances, max_memory))?;
-        Self::assemble(rt, engine, None, max_instances, None, &|_| Ok(()))
+        Self::builder(rt)
+            .max_instances(max_instances)
+            .max_memory(max_memory)
+            .build()
     }
 
     /// Like [`new`](Self::new) but lets an application wire its own **custom bridges**
-    /// into the component linker. `extend` runs after the built-in bridges, on every
-    /// engine tier; inside it a bridge calls its generated `add_to_linker(linker, |h| h)`
-    /// — a typed WIT host call, no dispatcher. The bridge's `impl <iface>::Host for`
-    /// [`BridgeHost`] reaches the calling process through [`BridgeHost`]'s accessors.
-    /// This is the same seam the built-in bridges use, exposed for application code —
-    /// RUSM's answer to a wasmCloud capability provider, compiled in and typed end to
-    /// end. See `bridges/README.md`.
+    /// into the component linker (see [`WasmRuntimeBuilder::bridges`]). For combining
+    /// bridges with a store or other options, use [`builder`](Self::builder) directly.
     pub fn with_bridges(
         rt: Runtime,
-        extend: impl Fn(&mut BridgeLinker) -> wasmtime::Result<()>,
+        extend: impl Fn(&mut BridgeLinker) -> wasmtime::Result<()> + 'static,
     ) -> Result<Self> {
-        let engine = Engine::new(&Self::pooled_config(
-            DEFAULT_MAX_INSTANCES,
-            DEFAULT_MAX_MEMORY,
-        ))?;
-        Self::assemble(rt, engine, None, DEFAULT_MAX_INSTANCES, None, &extend)
+        Self::builder(rt).bridges(extend).build()
     }
 
     /// Like [`new`](Self::new) but with a durable **key-value store** at `path`
     /// (created if absent): guests granted the `storage` capability reach it through
     /// the actor ABI (`kv-*`). One embedded redb file the node owns — no external
-    /// daemon. Uses the default pool limits; a store + overflow combo isn't needed
-    /// today, so it's deliberately not offered (add a variant if it ever is).
+    /// daemon. Uses the default pool limits; for other combinations use
+    /// [`builder`](Self::builder).
     pub fn with_store(rt: Runtime, path: impl AsRef<std::path::Path>) -> Result<Self> {
-        let store = Arc::new(rusm_kv::Store::open(path)?);
-        let engine = Engine::new(&Self::pooled_config(
-            DEFAULT_MAX_INSTANCES,
-            DEFAULT_MAX_MEMORY,
-        ))?;
-        Self::assemble(
-            rt,
-            engine,
-            None,
-            DEFAULT_MAX_INSTANCES,
-            Some(store),
-            &|_| Ok(()),
-        )
+        Self::builder(rt).store(path).build()
     }
 
     /// Like [`with_limits`](Self::with_limits) but adds an **on-demand overflow
@@ -265,10 +361,11 @@ impl WasmRuntime {
     /// Wasm-process count is bounded by available memory, not the fixed pool size.
     /// The pooled tier stays the fast path; overflow only engages past capacity.
     pub fn with_overflow(rt: Runtime, max_instances: u32, max_memory: usize) -> Result<Self> {
-        let engine = Engine::new(&Self::pooled_config(max_instances, max_memory))?;
-        // Same compile config, but the default (on-demand) allocator: no fixed cap.
-        let overflow = Engine::new(&Self::base_config())?;
-        Self::assemble(rt, engine, Some(overflow), max_instances, None, &|_| Ok(()))
+        Self::builder(rt)
+            .max_instances(max_instances)
+            .max_memory(max_memory)
+            .overflow()
+            .build()
     }
 
     /// The compile/runtime config shared by both engines: epoch interruption (the
@@ -310,7 +407,7 @@ impl WasmRuntime {
         overflow: Option<Engine>,
         max_instances: u32,
         store: Option<Arc<rusm_kv::Store>>,
-        extend: &dyn Fn(&mut BridgeLinker) -> wasmtime::Result<()>,
+        extend: &BridgeExtension,
     ) -> Result<Self> {
         let linker = bridges::wasip1::build_linker(&engine)?;
         // The component linker carries the built-in bridges; `extend` then wires any

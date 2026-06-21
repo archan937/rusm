@@ -1623,6 +1623,53 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_builder_composes_a_store_with_custom_bridges() {
+        // The composable construction path: ONE runtime carrying BOTH a durable store and
+        // a custom application bridge — the combination the fixed `with_*` constructors
+        // can't express. Proves they coexist in a single runtime: a guest granted storage
+        // runs the full kv CRUD against the store, and the custom-bridge guest calls its
+        // host function — both succeed.
+        const CUSTOM_BRIDGE: &[u8] = include_bytes!("../../tests/fixtures/custom_bridge.wasm");
+        let rt = Runtime::new();
+        let path = kv_test_path("builder-bridges");
+        let wr = WasmRuntime::builder(rt.clone())
+            .store(&path)
+            .bridges(|linker| {
+                greet_bridge::demo::bridge::greet::add_to_linker::<
+                    _,
+                    wasmtime::component::HasSelf<crate::BridgeHost>,
+                >(linker, |host| host)
+            })
+            .build()
+            .unwrap();
+
+        // The store backs the full kv CRUD from a guest granted storage.
+        let flags =
+            run_kv_fixture(&wr, &rt, CapabilityProfile::Trusted.capabilities(), RS_KV).await;
+        assert_eq!(
+            flags, 0b11_1111,
+            "the builder's store backs the full kv CRUD"
+        );
+
+        // The custom bridge is callable in the same runtime.
+        let pre = wr
+            .prepare_component(&wr.compile_component(CUSTOM_BRIDGE).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let guest = wr.spawn_component(&pre);
+        rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            format!("hello, World from {}", guest.pid().raw()),
+            "the builder's custom bridge is callable alongside the store"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_go_guest_uses_the_actor_world() {
         // A component written in Go (TinyGo → wasm32-wasip2 component) over the same
         // `rusm:runtime` actor world: it receives a reply-to pid, labels itself, and

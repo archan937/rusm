@@ -91,10 +91,12 @@ let rt = rusm_wasm::WasmRuntime::with_bridges(runtime, |linker| {
 })?;
 ```
 
-The three public pieces (`rusm-wasm/src/lib.rs`): **`WasmRuntime::with_bridges`** (the seam),
+The public pieces (`rusm-wasm/src/lib.rs`): **`WasmRuntime::with_bridges`** (the one-option
+seam) and **`WasmRuntime::builder().bridges(…)`** (the composable path — the only way to
+combine bridges with a durable store or the overflow tier, which a real app needs);
 **`BridgeHost`** (the host context a bridge impls its `Host` for — fields private, only the
-`pid`/`runtime`/`caps` accessors exposed), **`BridgeLinker`** (the linker the closure
-extends), and a re-exported **`wasmtime`** so the app's `bindgen!` lowers against the exact
+`pid`/`runtime`/`caps` accessors exposed); **`BridgeLinker`** (the linker the closure
+extends); and a re-exported **`wasmtime`** so the app's `bindgen!` lowers against the exact
 version the runtime links. End-to-end proof: `wasip2.rs`'s
 `a_custom_application_bridge_is_callable_from_a_guest` (fixture `tests/fixtures/custom-bridge`,
 which vendors `rusm:runtime` as a WIT dep and defines its own `demo:bridge/greet`).
@@ -102,7 +104,7 @@ which vendors `rusm:runtime` as a WIT dep and defines its own `demo:bridge/greet
 > **Status:** the runtime seam is live (this section). The *ergonomics* on top — `rusm build`
 > discovering an app's `bridges/<name>/`, generating the guest stubs + the host shim, and a
 > profile whitelist gating which components may import a bridge — are the next slices (see the
-> roadmap). Until then a host embeds `with_bridges` directly, exactly as above.
+> roadmap). Until then a host embeds `with_bridges` / `builder().bridges(…)` directly, as above.
 
 ---
 
