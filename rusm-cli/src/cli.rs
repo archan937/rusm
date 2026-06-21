@@ -29,16 +29,19 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "new",
         usage: "rusm new <name> [--rust] [--lang ts|rust|go|generic] \
-                [--protocol http|sse|ws] [--template todo-board]",
+                [--protocol http|sse|ws] [--template todo-board] [--bridges]",
         summary: "scaffold a new RUSM app in ./<name>",
         details: "Creates ./<name> with a component, a rusm.toml, and a README. `--lang` \
                   picks the guest language (default TypeScript), `--protocol` the serving \
                   shape (default http). `--template todo-board` scaffolds the full \
-                  five-component example app instead of the minimal starter.",
+                  five-component example app. `--bridges` scaffolds a custom-bridge app — a \
+                  host crate plus an example native bridge and a guest (Rust or Go) that \
+                  calls it.",
         examples: &[
             "rusm new hello",
             "rusm new api --lang go --protocol ws",
             "rusm new board --template todo-board --lang rust",
+            "rusm new weatherapp --bridges --lang go",
         ],
     },
     CommandSpec {

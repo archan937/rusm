@@ -59,6 +59,11 @@ pub struct NewApp {
     /// single-component starter. The `protocol` field is unused in that case (a template
     /// brings its own listeners).
     pub template: Option<Template>,
+    /// `--bridges`: scaffold a **custom-bridge** app — a host crate (which registers the
+    /// app's native bridges, then serves) plus an example `weather` bridge and a guest that
+    /// calls it. The host impl is always Rust (the host *is* Rust); `lang` is the **guest**
+    /// language (Rust or Go — TS guests can't call a custom bridge yet).
+    pub bridges: bool,
 }
 
 /// Parse the arguments following `rusm new` into a [`NewApp`]: a single positional
@@ -69,6 +74,7 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     // Options first — pico-args consumes named options before free arguments. `--lang`
     // takes precedence over the `--rust` shorthand; `-p` is an alias for `--protocol`.
     let rust = args.contains("--rust");
+    let bridges = args.contains("--bridges");
     let lang = args.opt_value_from_str::<_, String>("--lang")?;
     let protocol_arg = match args.opt_value_from_str::<_, String>("--protocol")? {
         Some(value) => Some(value),
@@ -80,7 +86,7 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     let name: String = args.free_from_str().map_err(|_| {
         anyhow!(
             "usage: rusm new <name> [--rust] [--lang ts|rust|go|generic] \
-             [--protocol http|sse|ws] [--template todo-board]"
+             [--protocol http|sse|ws] [--template todo-board] [--bridges]"
         )
     })?;
     validate_name(&name)?;
@@ -97,6 +103,9 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     let lang = match lang {
         Some(value) => parse_lang(&value)?,
         None if rust => Lang::Rust,
+        // A custom-bridge guest defaults to Rust (its host is Rust anyway, and a TS guest
+        // can't call a bridge yet); a plain app defaults to TypeScript.
+        None if bridges => Lang::Rust,
         None => Lang::TypeScript,
     };
     let protocol = match &protocol_arg {
@@ -123,11 +132,27 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
         None => None,
     };
 
+    if bridges {
+        if template.is_some() {
+            bail!("`--bridges` can't be combined with `--template` (a template is a full app)");
+        }
+        match lang {
+            Lang::TypeScript => bail!(
+                "`--bridges`: a TS guest can't call a custom bridge yet — use `--lang rust` or `--lang go`"
+            ),
+            Lang::Generic => bail!(
+                "`--bridges` needs a guest language to call the bridge — use `--lang rust` or `--lang go`"
+            ),
+            Lang::Rust | Lang::Go => {}
+        }
+    }
+
     Ok(NewApp {
         name,
         lang,
         protocol,
         template,
+        bridges,
     })
 }
 
@@ -184,6 +209,10 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
     if app.template.is_some() {
         return template::files(app.lang, &app.name);
     }
+    // A custom-bridge app is a host crate + an example bridge + a guest that calls it.
+    if app.bridges {
+        return bridge_files(app);
+    }
     let mut out = vec![
         (PathBuf::from("rusm.toml"), rusm_toml(app)),
         (PathBuf::from(".gitignore"), GITIGNORE.to_string()),
@@ -235,6 +264,135 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
 /// `ws::serve` / `web.WebSocket`), and TS HTTP is a `wasi:http` `export default`.
 fn has_routes(app: &NewApp) -> bool {
     matches!(app.lang, Lang::Rust | Lang::Go) && app.protocol == Protocol::Http
+}
+
+/// Wasmtime version the scaffolded host crate pins — it **must** match what `rusm-wasm`
+/// links, because the `rusm build`-generated `src/bindings.rs` `bindgen!` emits `wasmtime::`
+/// paths whose types must be identical to the runtime's. `bridge_wasmtime_pin_tracks_rusm_wasm`
+/// guards it against drift.
+const WASMTIME_VERSION: &str = "45.0.1";
+
+// The host-side custom-bridge files are taken **verbatim** from the live `examples/custom-bridge`
+// (the single source, proven end to end) via `include_str!`, so a scaffolded app is exactly the
+// example: the host `main.rs`, the example bridge's contract + impl, and the Rust guest. (The Go
+// guest differs only by its module path — see `go_bridge_guest`.)
+const BRIDGE_HOST_MAIN: &str = include_str!("../../examples/custom-bridge/src/main.rs");
+const BRIDGE_WIT: &str = include_str!("../../examples/custom-bridge/bridges/weather/bridge.wit");
+const BRIDGE_HOST_IMPL: &str = include_str!("../../examples/custom-bridge/bridges/weather/host.rs");
+const BRIDGE_RUST_GUEST: &str =
+    include_str!("../../examples/custom-bridge/components/api/src/lib.rs");
+
+/// `.gitignore` for a custom-bridge app: build output plus the `rusm build`-generated bridge
+/// glue (the host crate's `wit/` + `src/{bindings,bridges}.rs`, and each guest's `wit/` +
+/// `internal/`) — all regenerated from `bridges/` every build, so source, not artifacts.
+const BRIDGE_GITIGNORE: &str = "\
+/wasm/
+/target/
+# `rusm build`-generated bridge glue (regenerated from bridges/ each build).
+/wit/
+/src/bindings.rs
+/src/bridges.rs
+/components/*/wit/
+/components/*/internal/
+";
+
+/// The files for a **custom-bridge** app (`rusm new <name> --bridges`): a host crate that
+/// registers the app's bridges then serves, an example `weather` bridge, and a guest (Rust or
+/// Go) that calls it. Host-side files come verbatim from `examples/custom-bridge`; only the
+/// dependency manifests, `rusm.toml`, `.gitignore`, and README are generated (version deps +
+/// the chosen guest language). The generated glue is `rusm build` output (git-ignored).
+fn bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
+    let mut out = vec![
+        (PathBuf::from("Cargo.toml"), host_cargo_toml(&app.name)),
+        (PathBuf::from("src/main.rs"), BRIDGE_HOST_MAIN.to_string()),
+        (
+            PathBuf::from("bridges/weather/bridge.wit"),
+            BRIDGE_WIT.to_string(),
+        ),
+        (
+            PathBuf::from("bridges/weather/host.rs"),
+            BRIDGE_HOST_IMPL.to_string(),
+        ),
+        (PathBuf::from("rusm.toml"), bridge_rusm_toml()),
+        (PathBuf::from(".gitignore"), BRIDGE_GITIGNORE.to_string()),
+        (PathBuf::from("README.md"), bridge_readme(app)),
+    ];
+    match app.lang {
+        Lang::Go => {
+            out.push((PathBuf::from("components/api/go.mod"), go_mod()));
+            out.push((PathBuf::from("components/api/main.go"), go_bridge_guest()));
+        }
+        // Rust is the default; TypeScript/Generic are rejected in `parse_new_args`.
+        _ => {
+            out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
+            out.push((
+                PathBuf::from("components/api/src/lib.rs"),
+                BRIDGE_RUST_GUEST.to_string(),
+            ));
+        }
+    }
+    out
+}
+
+/// The custom-bridge **host crate** `Cargo.toml`: the small Rust binary that registers the
+/// app's bridges and serves via `rusm_cli::host`. Depends on the runtime crates by version
+/// (like every scaffolded component) plus the exact-pinned `wasmtime` the generated bindings
+/// need. Detached from any parent workspace (`[workspace]`).
+fn host_cargo_toml(name: &str) -> String {
+    format!(
+        "[package]\n\
+         name = \"{name}\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2021\"\n\
+         \n\
+         [[bin]]\n\
+         name = \"{name}\"\n\
+         path = \"src/main.rs\"\n\
+         \n\
+         [dependencies]\n\
+         rusm-cli = \"{SDK_VERSION}\"\n\
+         rusm-wasm = \"{SDK_VERSION}\"\n\
+         rusm-node = \"{SDK_VERSION}\"\n\
+         wasmtime = \"{WASMTIME_VERSION}\"\n\
+         anyhow = \"1\"\n\
+         tokio = {{ version = \"1\", features = [\"rt-multi-thread\", \"macros\", \"signal\"] }}\n\
+         \n\
+         [workspace]\n"
+    )
+}
+
+/// The `rusm.toml` for a custom-bridge app: one HTTP listener routing to an `api` handler
+/// under the `forecaster` profile, which grants the `weather` bridge (default-deny, by name).
+/// Identical for a Rust or Go guest — the component is `api` either way.
+fn bridge_rusm_toml() -> String {
+    format!(
+        "{TOML_HEADER}\
+         [node]\n\
+         listen = \"127.0.0.1:8080\"\n\
+         \n\
+         # The handler may import the custom `weather` bridge — default-deny, granted by name.\n\
+         [capabilities.forecaster]\n\
+         inherits = \"sandboxed\"\n\
+         bridges = [\"weather\"]\n\
+         \n\
+         [[serve]]\n\
+         name = \"api\"\n\
+         protocol = \"http\"\n\
+         listen = \"127.0.0.1:8080\"\n\
+         \n\
+         [serve.routes]\n\
+         \"GET /forecast/:city\" = \"api#forecast\"\n\
+         \n\
+         [components.api]\n\
+         capability = \"forecaster\"\n"
+    )
+}
+
+/// The Go guest, single-sourced from the live example and retargeted from its `go-api` module
+/// to the scaffold's `api` module (the only difference — the logic is identical).
+fn go_bridge_guest() -> String {
+    include_str!("../../examples/custom-bridge/components/go-api/main.go")
+        .replace("go-api/internal", "api/internal")
 }
 
 const TOML_HEADER: &str =
@@ -628,6 +786,47 @@ fn readme(app: &NewApp) -> String {
     )
 }
 
+/// The README for a custom-bridge app — explains the bridge (the app's own native host
+/// capability), the host crate, and the build/serve flow, with the guest-specific call site.
+fn bridge_readme(app: &NewApp) -> String {
+    let name = &app.name;
+    let (guest, call) = match app.lang {
+        Lang::Go => (
+            "components/api/main.go (Go)",
+            "`forecast.Lookup(city)` (the wit-bindgen-go binding)",
+        ),
+        _ => (
+            "components/api/src/lib.rs (Rust)",
+            "`crate::forecast::lookup(city)` (re-exported by `#[handlers(bridge=…)]`)",
+        ),
+    };
+    format!(
+        "# {name}\n\n\
+         A RUSM app with a **custom bridge** — its own native host capability (`weather`),\n\
+         RUSM's compiled-in answer to a wasmCloud capability provider. The host impl is Rust\n\
+         (the host *is* Rust); the guest calls it as an ordinary typed import, in any language.\n\n\
+         ## Run it\n\n\
+         ```sh\n\
+         rusm build      # generates the bridge glue, compiles the guest + host binary\n\
+         rusm serve      # runs the host binary; serves http://127.0.0.1:8080\n\
+         curl http://127.0.0.1:8080/forecast/Amsterdam\n\
+         # -> sunny in Amsterdam (served by pid ...)\n\
+         ```\n\n\
+         ## Layout\n\n\
+         - `bridges/weather/bridge.wit` — the bridge contract (the app's own WIT package).\n\
+         - `bridges/weather/host.rs` — the native impl (`impl forecast::Host for BridgeHost`).\n\
+         - `{guest}` — the guest handler; it calls the bridge via {call}.\n\
+         - `src/main.rs` — the host binary: registers the bridges, then serves `rusm.toml`.\n\
+         - `Cargo.toml` / `rusm.toml` — the host crate's deps and the app manifest.\n\n\
+         `rusm build` generates the typed glue (`src/bindings.rs`, `src/bridges.rs`, the `wit/`\n\
+         dirs) from `bridges/` — git-ignored build output. Add a bridge by dropping a new\n\
+         `bridges/<name>/` (a `bridge.wit` + `host.rs`) and granting it in a `[capabilities.*]`\n\
+         `bridges = [...]` list.\n\n\
+         > The host crate depends on the `rusm-*` runtime crates by version; until they are\n\
+         > published, point them at a local RUSM checkout (a `[patch.crates-io]` or `path`).\n",
+    )
+}
+
 /// A project name must be a single safe path segment (no separators, no `..`), so
 /// scaffolding can never escape the target directory.
 fn validate_name(name: &str) -> Result<()> {
@@ -654,6 +853,7 @@ mod tests {
             lang,
             protocol,
             template: None,
+            bridges: false,
         }
     }
 
@@ -900,6 +1100,7 @@ mod tests {
             lang: Lang::TypeScript,
             protocol: Protocol::Http,
             template: None,
+            bridges: false,
         };
         let err = scaffold(dir.path(), &occupied).unwrap_err();
         assert!(err.to_string().contains("already exists"));
@@ -914,6 +1115,7 @@ mod tests {
                 lang,
                 protocol: Protocol::Http,
                 template: Some(Template::TodoBoard),
+                bridges: false,
             };
             let created = scaffold(dir.path(), &app).unwrap();
             let root = dir.path().join("demo");
@@ -936,5 +1138,121 @@ mod tests {
             );
             assert!(root.join("README.md").is_file(), "{lang:?}: README");
         }
+    }
+
+    fn parse(args: &[&str]) -> Result<NewApp> {
+        let os: Vec<std::ffi::OsString> = args.iter().map(std::ffi::OsString::from).collect();
+        parse_new_args(pico_args::Arguments::from_vec(os))
+    }
+
+    #[test]
+    fn bridges_flag_parses_defaults_to_rust_and_rejects_unsupported_guests() {
+        // `--bridges` defaults the *guest* to Rust (its host is Rust; a TS guest can't yet).
+        let rust = parse(&["app", "--bridges"]).unwrap();
+        assert!(rust.bridges && rust.lang == Lang::Rust);
+        assert!(parse(&["app", "--bridges", "--lang", "go"]).unwrap().lang == Lang::Go);
+        // TS / generic guests and `--template` are rejected with a clear message.
+        assert!(
+            parse(&["app", "--bridges", "--lang", "ts"]).is_err(),
+            "TS guest"
+        );
+        assert!(
+            parse(&["app", "--bridges", "--lang", "generic"]).is_err(),
+            "generic guest"
+        );
+        assert!(
+            parse(&["app", "--bridges", "--template", "todo-board"]).is_err(),
+            "template"
+        );
+        // A plain app is unaffected.
+        assert!(!parse(&["app"]).unwrap().bridges);
+    }
+
+    /// `rusm new <name> --bridges` scaffolds a coherent custom-bridge app whose host-side
+    /// files are exactly the live example, with a generated (version-dep) host crate +
+    /// manifest. Asserted for both guest languages.
+    #[test]
+    fn bridges_scaffolds_a_host_app_for_each_guest() {
+        for (lang, guest_src) in [
+            (Lang::Rust, "components/api/src/lib.rs"),
+            (Lang::Go, "components/api/main.go"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let app = NewApp {
+                name: "weatherapp".into(),
+                lang,
+                protocol: Protocol::Http,
+                template: None,
+                bridges: true,
+            };
+            let created = scaffold(dir.path(), &app).unwrap();
+            let root = dir.path().join("weatherapp");
+            for rel in &created {
+                assert!(root.join(rel).is_file(), "{lang:?}: missing {rel:?}");
+            }
+            // Host crate + the example bridge + the guest.
+            for rel in [
+                "Cargo.toml",
+                "src/main.rs",
+                "bridges/weather/bridge.wit",
+                "bridges/weather/host.rs",
+                "rusm.toml",
+                ".gitignore",
+                "README.md",
+                guest_src,
+            ] {
+                assert!(root.join(rel).is_file(), "{lang:?}: missing {rel}");
+            }
+
+            // Host-side files are the live example verbatim (single source).
+            assert_eq!(
+                std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
+                include_str!("../../examples/custom-bridge/src/main.rs"),
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("bridges/weather/host.rs")).unwrap(),
+                include_str!("../../examples/custom-bridge/bridges/weather/host.rs"),
+            );
+
+            // The host crate pins the runtime crates + the exact wasmtime, named after the app.
+            let cargo = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+            assert!(cargo.contains("name = \"weatherapp\""));
+            assert!(cargo.contains(&format!("rusm-wasm = \"{SDK_VERSION}\"")));
+            assert!(cargo.contains(&format!("wasmtime = \"{WASMTIME_VERSION}\"")));
+
+            // The manifest routes to `api` under a profile granting the `weather` bridge.
+            let cfg =
+                NodeConfig::from_toml(&std::fs::read_to_string(root.join("rusm.toml")).unwrap())
+                    .expect("bridge rusm.toml parses");
+            assert_eq!(cfg.capabilities["forecaster"].bridges, ["weather"]);
+            assert!(cfg.components.contains_key("api"));
+
+            // Generated glue is git-ignored (it's `rusm build` output, not scaffolded).
+            let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+            assert!(ignore.contains("/src/bindings.rs") && ignore.contains("/components/*/wit/"));
+        }
+    }
+
+    /// The Go guest is the example's, retargeted to the scaffold's `api` module.
+    #[test]
+    fn go_bridge_guest_is_retargeted_from_the_example() {
+        let go = go_bridge_guest();
+        assert!(go.contains("\"api/internal/wit/weather/bridge/forecast\""));
+        assert!(
+            !go.contains("go-api/internal"),
+            "the go-api module path is retargeted"
+        );
+        assert!(go.contains("forecast.Lookup"));
+    }
+
+    /// The host crate's pinned wasmtime must track what `rusm-wasm` links (bindgen type
+    /// identity) — guard the constant against the runtime crate going out of sync.
+    #[test]
+    fn bridge_wasmtime_pin_tracks_rusm_wasm() {
+        let rusm_wasm_cargo = include_str!("../../crates/rusm-wasm/Cargo.toml");
+        assert!(
+            rusm_wasm_cargo.contains(&format!("wasmtime = \"{WASMTIME_VERSION}\"")),
+            "WASMTIME_VERSION ({WASMTIME_VERSION}) is stale vs crates/rusm-wasm/Cargo.toml",
+        );
     }
 }

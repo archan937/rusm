@@ -83,10 +83,15 @@ fn cmd_new(args: Arguments) {
     if let Err(error) = scaffold(Path::new("."), &app) {
         die(format!("new failed: {error}"), 1);
     }
-    let probe = match app.protocol {
-        Protocol::Http => "curl http://127.0.0.1:8080/",
-        Protocol::Sse => "curl -N http://127.0.0.1:8080/",
-        Protocol::Ws => "websocat ws://127.0.0.1:8080/",
+    let probe = if app.bridges {
+        // The bridge starter routes `GET /forecast/:city` to a handler that calls the bridge.
+        "curl http://127.0.0.1:8080/forecast/Amsterdam"
+    } else {
+        match app.protocol {
+            Protocol::Http => "curl http://127.0.0.1:8080/",
+            Protocol::Sse => "curl -N http://127.0.0.1:8080/",
+            Protocol::Ws => "websocat ws://127.0.0.1:8080/",
+        }
     };
     println!("created {}/", app.name);
     println!("\nnext:");
