@@ -67,6 +67,9 @@ fn to_capabilities(spec: &CapabilitySpec) -> Capabilities {
     for p in &spec.preopen {
         caps = caps.preopen(&p.host, &p.guest, p.read_only);
     }
+    for bridge in &spec.bridges {
+        caps = caps.allow_bridge(bridge);
+    }
     caps
 }
 
@@ -648,6 +651,7 @@ mod tests {
             allow_stdio: None,
             allow_storage: None,
             max_memory_mb: None,
+            bridges: Vec::new(),
             env: Vec::new(),
             preopen: Vec::new(),
         };
@@ -655,6 +659,23 @@ mod tests {
             !to_capabilities(&bare).can_spawn(),
             "default base is sandboxed"
         );
+    }
+
+    #[test]
+    fn custom_bridge_grant_maps_through() {
+        // `bridges = [...]` on a profile grants exactly those custom bridges (default-deny):
+        // the manifest half of the gate the bridge's host impl enforces via `allows_bridge`.
+        let cfg = rusm_node::NodeConfig::from_toml(
+            "[capabilities.weatherman]\ninherits = \"sandboxed\"\nbridges = [\"weather\"]\n",
+        )
+        .unwrap();
+        let caps = to_capabilities(&cfg.capabilities["weatherman"]);
+        assert!(caps.allows_bridge("weather"), "a listed bridge is granted");
+        assert!(!caps.allows_bridge("db"), "an unlisted bridge stays denied");
+        // Omitting `bridges` grants none — even on a trusted base (no implicit grant).
+        let cfg =
+            rusm_node::NodeConfig::from_toml("[capabilities.t]\ninherits = \"trusted\"\n").unwrap();
+        assert!(!to_capabilities(&cfg.capabilities["t"]).allows_bridge("weather"));
     }
 
     #[test]
@@ -691,6 +712,7 @@ mod tests {
                 allow_stdio: None,
                 allow_storage: None,
                 max_memory_mb: Some(16),
+                bridges: Vec::new(),
                 env: Vec::new(),
                 preopen: Vec::new(),
             },

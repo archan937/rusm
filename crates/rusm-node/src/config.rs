@@ -111,6 +111,12 @@ pub struct CapabilitySpec {
     pub allow_storage: Option<bool>,
     /// Per-process memory ceiling in MiB.
     pub max_memory_mb: Option<usize>,
+    /// `bridges`: names of **custom application bridges** (`bridges/<name>/` dirs in the
+    /// app) this profile may import. Default-deny — a component reaches an app-authored
+    /// bridge only when its profile lists it here (built-in bridges have their own grants
+    /// like `allow-storage`, so they never appear in this list).
+    #[serde(default)]
+    pub bridges: Vec<String>,
     /// Environment-variable keys to grant; values are resolved from the process
     /// environment (process env, then `.env`) at load — keys with no value are skipped.
     #[serde(default)]

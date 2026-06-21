@@ -8,6 +8,7 @@
 //! `StoreLimiter` memory cap — no wasmCloud-style config-store. Env *values* are
 //! resolved at the app layer (process env → `.env`); this only carries the grants.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use wasmtime_wasi::p1::WasiP1Ctx;
@@ -90,6 +91,12 @@ pub struct Capabilities {
     allow_process_control: bool,
     allow_spawn: bool,
     allow_storage: bool,
+    /// Names of the **custom application bridges** this process may import. Default-deny
+    /// (empty): a component reaches a custom bridge only when its capability profile lists
+    /// it (`[capabilities.<name>] bridges = ["weather"]`). Built-in bridges (`kv`, `pg`, …)
+    /// are *not* listed here — they have their own grants (`allow_storage`, etc.); this
+    /// gates only app-authored bridges. A `BTreeSet` so the spawn-log summary is stable.
+    bridges: BTreeSet<String>,
 }
 
 impl Capabilities {
@@ -104,6 +111,7 @@ impl Capabilities {
             allow_process_control: false,
             allow_spawn: false,
             allow_storage: false,
+            bridges: BTreeSet::new(),
         }
     }
 
@@ -130,6 +138,12 @@ impl Capabilities {
         }
         if !self.env.is_empty() {
             parts.push(format!("env={}", self.env.len()));
+        }
+        if !self.bridges.is_empty() {
+            parts.push(format!(
+                "bridge={}",
+                self.bridges.iter().cloned().collect::<Vec<_>>().join(",")
+            ));
         }
         if parts.is_empty() {
             parts.push("sandboxed".into());
@@ -232,6 +246,21 @@ impl Capabilities {
         self.allow_storage
     }
 
+    /// Grants this process the right to import the **custom application bridge** `name`.
+    /// Default-deny: a bridge a profile doesn't list is unreachable. The bridge's host impl
+    /// gates itself on [`allows_bridge`](Self::allows_bridge) (the same way `kv` checks
+    /// `storage_allowed`), and `rusm build` only injects a bridge's WIT into components whose
+    /// profile grants it — so a non-granted component can neither call nor even import it.
+    pub fn allow_bridge(mut self, name: impl Into<String>) -> Self {
+        self.bridges.insert(name.into());
+        self
+    }
+
+    /// Whether this process may import the custom application bridge `name`.
+    pub fn allows_bridge(&self, name: &str) -> bool {
+        self.bridges.contains(name)
+    }
+
     /// The memory ceiling, for the runtime's `StoreLimiter`.
     pub fn memory_limit(&self) -> usize {
         self.max_memory
@@ -316,6 +345,36 @@ mod tests {
         assert!(Capabilities::nothing()
             .allow_storage(true)
             .storage_allowed());
+        // Custom application bridges are default-deny for *every* profile, Trusted included:
+        // an app-authored bridge is granted only by listing it, never by a broad profile.
+        assert!(
+            !trusted.allows_bridge("weather"),
+            "even Trusted grants no custom bridge implicitly"
+        );
+        assert!(!sandbox.allows_bridge("weather"));
+    }
+
+    #[test]
+    fn custom_bridge_grants_are_per_name_and_default_deny() {
+        let caps = Capabilities::nothing()
+            .allow_bridge("weather")
+            .allow_bridge("codec");
+        assert!(caps.allows_bridge("weather"));
+        assert!(caps.allows_bridge("codec"));
+        assert!(
+            !caps.allows_bridge("db"),
+            "a bridge that wasn't granted stays denied"
+        );
+        // Granted bridges surface in the spawn-log summary (visibility), sorted+stable.
+        assert!(
+            caps.summary().contains("bridge=codec,weather"),
+            "summary lists granted bridges: {}",
+            caps.summary()
+        );
+        assert!(
+            !Capabilities::nothing().summary().contains("bridge="),
+            "a bare sandbox shows no bridge grants"
+        );
     }
 
     #[test]

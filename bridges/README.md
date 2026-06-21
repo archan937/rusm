@@ -101,10 +101,18 @@ version the runtime links. End-to-end proof: `wasip2.rs`'s
 `a_custom_application_bridge_is_callable_from_a_guest` (fixture `tests/fixtures/custom-bridge`,
 which vendors `rusm:runtime` as a WIT dep and defines its own `demo:bridge/greet`).
 
-> **Status:** the runtime seam is live (this section). The *ergonomics* on top — `rusm build`
-> discovering an app's `bridges/<name>/`, generating the guest stubs + the host shim, and a
-> profile whitelist gating which components may import a bridge — are the next slices (see the
-> roadmap). Until then a host embeds `with_bridges` / `builder().bridges(…)` directly, as above.
+**Default-deny gate.** A custom bridge is reachable only by a component whose capability
+profile **lists** it — `[capabilities.<name>] bridges = ["weather"]`. This flows to
+`Capabilities::allows_bridge(name)` (the query a bridge's host impl gates on, the way `kv`
+gates on `storage`), and `rusm build` will only inject a bridge's WIT into components whose
+profile grants it — so a non-granted component can neither call nor import it. Even `trusted`
+grants no custom bridge implicitly; an app-authored capability is always opt-in by name.
+
+> **Status:** the runtime seam, the composable builder, the shared `rusm_cli::host` serve
+> path, and the capability whitelist are live. The remaining *ergonomics* — `rusm build`
+> discovering an app's `bridges/<name>/`, generating the per-language guest stubs, and
+> scaffolding/running the app's host crate — are the next slices (see the roadmap). Until then
+> a host embeds `host::serve(root, &cfg, |l| my::add_to_linker(l))` directly, as above.
 
 ---
 
