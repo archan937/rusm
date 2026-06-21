@@ -39,6 +39,7 @@ crates/rusm-wasm/tests/fixtures/actor-kv/wit/world.wit:host
 crates/rusm-wasm/tests/fixtures/actor-timeout/wit/world.wit:host
 crates/rusm-wasm/tests/fixtures/callback/wit/world.wit:host
 crates/rusm-wasm/tests/fixtures/stream-pipe/wit/world.wit:host
+crates/rusm-wasm/tests/fixtures/custom-bridge/wit/deps/rusm-runtime/world.wit:guest
 crates/rusm-wasm/tests/fixtures/pubsub-broker/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-flaky/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-guest/wit/world.wit:guest

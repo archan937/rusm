@@ -36,6 +36,26 @@ pub use bridges::wasip2::PreparedComponent;
 pub use bridges::ws::{serve_ws_echo, WsServer};
 pub use caps::{Capabilities, CapabilityProfile};
 
+/// The host state every bridge's `Host` impl is written against — including a
+/// **custom application bridge**. An app's own `bridges/<name>/host.rs` does
+/// `impl my_iface::Host for rusm_wasm::BridgeHost { … }` and reaches the calling
+/// process through [`BridgeHost`]'s public accessors ([`pid`](BridgeHost::pid) /
+/// [`runtime`](BridgeHost::runtime) / [`caps`](BridgeHost::caps)). The struct's
+/// fields stay private: a bridge gets process identity, the runtime handle, and its
+/// capabilities — the same surface the built-in bridges use, nothing more. Register
+/// it with [`WasmRuntime::with_bridges`].
+pub use bridges::WasiHost as BridgeHost;
+
+/// Re-exported so a custom bridge's `bindgen!` lowers against the **exact** Wasmtime
+/// the runtime links. Typed host calls must resolve against one `Linker` type, so an
+/// app authoring a bridge writes `rusm_wasm::wasmtime::component::bindgen!{…}` rather
+/// than depending on Wasmtime directly (a version skew would fail to type-check).
+pub use wasmtime;
+
+/// The component linker a custom bridge extends inside [`WasmRuntime::with_bridges`].
+/// A bridge calls its generated `add_to_linker(linker, |h| h)` against it.
+pub type BridgeLinker = wasmtime::component::Linker<BridgeHost>;
+
 /// How often the epoch is bumped. A guest runs at most this long before it must
 /// yield to the scheduler, so tight loops can't starve other processes.
 const EPOCH_TICK: Duration = Duration::from_millis(10);
@@ -196,7 +216,26 @@ impl WasmRuntime {
     /// `max_memory` for components that need larger heaps.
     pub fn with_limits(rt: Runtime, max_instances: u32, max_memory: usize) -> Result<Self> {
         let engine = Engine::new(&Self::pooled_config(max_instances, max_memory))?;
-        Self::assemble(rt, engine, None, max_instances, None)
+        Self::assemble(rt, engine, None, max_instances, None, &|_| Ok(()))
+    }
+
+    /// Like [`new`](Self::new) but lets an application wire its own **custom bridges**
+    /// into the component linker. `extend` runs after the built-in bridges, on every
+    /// engine tier; inside it a bridge calls its generated `add_to_linker(linker, |h| h)`
+    /// — a typed WIT host call, no dispatcher. The bridge's `impl <iface>::Host for`
+    /// [`BridgeHost`] reaches the calling process through [`BridgeHost`]'s accessors.
+    /// This is the same seam the built-in bridges use, exposed for application code —
+    /// RUSM's answer to a wasmCloud capability provider, compiled in and typed end to
+    /// end. See `bridges/README.md`.
+    pub fn with_bridges(
+        rt: Runtime,
+        extend: impl Fn(&mut BridgeLinker) -> wasmtime::Result<()>,
+    ) -> Result<Self> {
+        let engine = Engine::new(&Self::pooled_config(
+            DEFAULT_MAX_INSTANCES,
+            DEFAULT_MAX_MEMORY,
+        ))?;
+        Self::assemble(rt, engine, None, DEFAULT_MAX_INSTANCES, None, &extend)
     }
 
     /// Like [`new`](Self::new) but with a durable **key-value store** at `path`
@@ -210,7 +249,14 @@ impl WasmRuntime {
             DEFAULT_MAX_INSTANCES,
             DEFAULT_MAX_MEMORY,
         ))?;
-        Self::assemble(rt, engine, None, DEFAULT_MAX_INSTANCES, Some(store))
+        Self::assemble(
+            rt,
+            engine,
+            None,
+            DEFAULT_MAX_INSTANCES,
+            Some(store),
+            &|_| Ok(()),
+        )
     }
 
     /// Like [`with_limits`](Self::with_limits) but adds an **on-demand overflow
@@ -222,7 +268,7 @@ impl WasmRuntime {
         let engine = Engine::new(&Self::pooled_config(max_instances, max_memory))?;
         // Same compile config, but the default (on-demand) allocator: no fixed cap.
         let overflow = Engine::new(&Self::base_config())?;
-        Self::assemble(rt, engine, Some(overflow), max_instances, None)
+        Self::assemble(rt, engine, Some(overflow), max_instances, None, &|_| Ok(()))
     }
 
     /// The compile/runtime config shared by both engines: epoch interruption (the
@@ -264,13 +310,22 @@ impl WasmRuntime {
         overflow: Option<Engine>,
         max_instances: u32,
         store: Option<Arc<rusm_kv::Store>>,
+        extend: &dyn Fn(&mut BridgeLinker) -> wasmtime::Result<()>,
     ) -> Result<Self> {
         let linker = bridges::wasip1::build_linker(&engine)?;
-        let component_linker = bridges::wasip2::build_linker(&engine)?;
-        let overflow_component_linker = overflow
-            .as_ref()
-            .map(bridges::wasip2::build_linker)
-            .transpose()?;
+        // The component linker carries the built-in bridges; `extend` then wires any
+        // custom application bridges on top — on *every* engine tier (pooled +
+        // overflow), so an overflow-tier instance resolves the same custom imports.
+        let mut component_linker = bridges::wasip2::build_linker(&engine)?;
+        extend(&mut component_linker)?;
+        let overflow_component_linker = match overflow.as_ref() {
+            Some(engine) => {
+                let mut linker = bridges::wasip2::build_linker(engine)?;
+                extend(&mut linker)?;
+                Some(linker)
+            }
+            None => None,
+        };
 
         // Bump the epoch on a cadence — on a **dedicated OS thread**, not a Tokio
         // task. The whole point is to preempt guests that are pinning the Tokio

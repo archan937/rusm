@@ -61,6 +61,51 @@ shape, different owner. A custom app bridge is mechanically identical to a platf
 
 ---
 
+## Registering a custom bridge — the `WasmRuntime::with_bridges` seam
+
+A platform bridge is wired into the component linker inside `rusm-wasm`
+(`bridges::wasip2::build_linker`). An **application** bridge is wired the same way, through
+one public seam — so an app's own `bridges/<name>/host.rs` adds a *typed* host function with
+no fork and no dispatcher:
+
+```rust
+// The app's bridge contract — its own WIT package, not rusm:runtime.
+rusm_wasm::wasmtime::component::bindgen!({
+    inline: "package acme:weather@0.1.0;
+             interface forecast { lookup: func(city: string) -> string; }
+             world host { import forecast; }",
+    imports: { default: async },
+});
+
+// The impl is written against the public host context; it reaches the calling process
+// through BridgeHost's accessors (pid / runtime / caps) — the same surface built-ins use.
+impl acme::weather::forecast::Host for rusm_wasm::BridgeHost {
+    async fn lookup(&mut self, city: String) -> String { /* … self.pid(), self.caps() … */ }
+}
+
+// Register at startup. `extend` runs after the built-in bridges, on every engine tier.
+let rt = rusm_wasm::WasmRuntime::with_bridges(runtime, |linker| {
+    acme::weather::forecast::add_to_linker::<_, rusm_wasm::wasmtime::component::HasSelf<_>>(
+        linker, |h| h,
+    )
+})?;
+```
+
+The three public pieces (`rusm-wasm/src/lib.rs`): **`WasmRuntime::with_bridges`** (the seam),
+**`BridgeHost`** (the host context a bridge impls its `Host` for — fields private, only the
+`pid`/`runtime`/`caps` accessors exposed), **`BridgeLinker`** (the linker the closure
+extends), and a re-exported **`wasmtime`** so the app's `bindgen!` lowers against the exact
+version the runtime links. End-to-end proof: `wasip2.rs`'s
+`a_custom_application_bridge_is_callable_from_a_guest` (fixture `tests/fixtures/custom-bridge`,
+which vendors `rusm:runtime` as a WIT dep and defines its own `demo:bridge/greet`).
+
+> **Status:** the runtime seam is live (this section). The *ergonomics* on top — `rusm build`
+> discovering an app's `bridges/<name>/`, generating the guest stubs + the host shim, and a
+> profile whitelist gating which components may import a bridge — are the next slices (see the
+> roadmap). Until then a host embeds `with_bridges` directly, exactly as above.
+
+---
+
 ## Bridge inventory
 
 **files**: which of `bridge.wit`(W) / `host.rs`(H) / `guest.{rs,go,js,d.ts}`(R/G/J/T) the dir

@@ -1568,6 +1568,60 @@ mod tests {
         );
     }
 
+    /// Host bindings for the **custom application bridge** the `custom_bridge` fixture
+    /// imports — generated from the same `demo:bridge` WIT the fixture declares. This
+    /// mirrors how an app's own `bridges/<name>/host.rs` would `bindgen!` its contract
+    /// and implement it over [`crate::BridgeHost`].
+    mod greet_bridge {
+        wasmtime::component::bindgen!({
+            inline: "
+                package demo:bridge@0.1.0;
+                interface greet { greet: func(name: string) -> string; }
+                world greet-host { import greet; }
+            ",
+            imports: { default: async },
+        });
+    }
+
+    impl greet_bridge::demo::bridge::greet::Host for crate::BridgeHost {
+        async fn greet(&mut self, name: String) -> String {
+            // Reaches real process state through the curated public accessor — the custom
+            // bridge gets the same host context the built-in bridges do, nothing more.
+            format!("hello, {name} from {}", self.pid())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_custom_application_bridge_is_callable_from_a_guest() {
+        // The load-bearing seam for app-authored bridges: `WasmRuntime::with_bridges`
+        // wires a custom *typed* host function into the component linker, and a guest
+        // calls it as an ordinary WIT import — no dispatcher, typed end to end. This is
+        // exactly the surface a `bridges/<name>/host.rs` in an application repo uses.
+        const CUSTOM_BRIDGE: &[u8] = include_bytes!("../../tests/fixtures/custom_bridge.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::with_bridges(rt.clone(), |linker| {
+            greet_bridge::demo::bridge::greet::add_to_linker::<
+                _,
+                wasmtime::component::HasSelf<crate::BridgeHost>,
+            >(linker, |host| host)
+        })
+        .unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(CUSTOM_BRIDGE).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let guest = wr.spawn_component(&pre);
+        rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            format!("hello, World from {}", guest.pid().raw()),
+            "the guest called the app-registered custom host bridge and got its typed reply"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_go_guest_uses_the_actor_world() {
         // A component written in Go (TinyGo → wasm32-wasip2 component) over the same

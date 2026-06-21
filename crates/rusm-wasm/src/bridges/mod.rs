@@ -47,7 +47,11 @@ use crate::Spawner;
 /// ceiling enforced as a `ResourceLimiter`, and the actor handles (pid, runtime,
 /// mailbox) that back the `rusm:runtime` host ABI. One host type serves both WASI
 /// versions, since both `add_to_linker` entry points only require [`WasiView`].
-pub(crate) struct WasiHost {
+///
+/// Public as [`crate::BridgeHost`] so a **custom application bridge** can
+/// `impl my_iface::Host for BridgeHost` and reach the calling process; the fields
+/// stay crate-private, so a bridge sees only the curated accessors below.
+pub struct WasiHost {
     pub(crate) wasi: WasiCtx,
     pub(crate) table: ResourceTable,
     /// `wasi:http` host context, for serving a component as an HTTP handler
@@ -91,6 +95,31 @@ pub(crate) struct WasiHost {
     pub(crate) in_streams: HashMap<u64, StreamHandle>,
     /// Monotonic handle source for this process's streams.
     pub(crate) next_stream: u64,
+}
+
+/// The curated, **public** surface a custom application bridge reaches the calling
+/// process through (the struct's fields stay crate-private). Deliberately minimal:
+/// process identity, the runtime handle, and the process's capability grants — the
+/// same primitives the built-in bridges build on.
+impl WasiHost {
+    /// The pid of the process making the call. A bridge stamps it onto outbound
+    /// work, sends a reply to it, or scopes per-process state by it.
+    pub fn pid(&self) -> u64 {
+        self.pid
+    }
+
+    /// The actor runtime, so a bridge can `send`/`spawn`/consult the registry —
+    /// i.e. integrate a custom capability with the process model, the way `actor`
+    /// and `pg` do.
+    pub fn runtime(&self) -> &Runtime {
+        &self.rt
+    }
+
+    /// This process's capability grants. A custom bridge gates itself **default-deny**
+    /// off these, exactly like every built-in capability (`storage`, `network`, …).
+    pub fn caps(&self) -> &Capabilities {
+        &self.caps
+    }
 }
 
 impl WasiView for WasiHost {
