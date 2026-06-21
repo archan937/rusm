@@ -1,17 +1,19 @@
-// process.js — the RUSM actor API for JS guests.
+// Canonical source: bridges/actor/guest.js — the actor bridge's JS guest binding (the
+// `Process` API). Synced into the js-runner (crates/rusm-wasm/js-runner/bridge/actor.js,
+// which the js-http-runner also include_str!s) by `make sync-bridges`; edit this file, not
+// the copy. `bridge_guest_in_sync` guards drift.
 //
-// Separation of concerns: this file is *only* the `Process`/`Stream` bridge over
-// the host primitives the runner installs (the `__*` globals). Web API polyfills
-// live in webapi.js; the RPC/service layer (typed clients, dispatch) in rpc.js;
-// lifecycle/host wiring in the runner (lib.rs).
+// Separation of concerns: this file is *only* the `Process` actor API over the host
+// primitives the runner installs (the `__*` globals). Web API polyfills live in webapi.js;
+// `console` in log.js; the cross-process `Stream` in stream.js; tags in pg.js; the
+// connection controls in serve.js; the RPC/service layer in rpc.js.
 //
-// Async by design: `receive`/`receiveText` and `Stream.read` return Promises, so
-// guests `await` them — idiomatic JS, and they compose with other Promises. The
-// host call still suspends the whole instance's fiber (freeing the Tokio worker),
-// so "blocking" is cheap; the Promise is driven by the QuickJS job queue.
+// Async by design: `receive`/`receiveText` return Promises, so guests `await` them —
+// idiomatic JS. The host call still suspends the whole instance's fiber (freeing the Tokio
+// worker), so "blocking" is cheap; the Promise is driven by the QuickJS job queue.
 //
-// Pids cross the boundary as decimal strings (a u64 doesn't fit a JS number) and
-// surface as BigInt; messages/chunks are Uint8Array, with text helpers.
+// Pids cross the boundary as decimal strings (a u64 doesn't fit a JS number) and surface as
+// BigInt; messages/chunks are Uint8Array, with text helpers.
 
 // Messages the RPC client set aside while awaiting a reply (so a typed call never
 // swallows the app's own mail). `Process.receive*` drains this before the host.

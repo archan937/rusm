@@ -88,6 +88,18 @@ fn bridge_files_in_sync() {
         include_str!("../../../bridges/actor/guest.rs"),
         include_str!("../../rusm-rs/src/actor.rs"),
     );
+    assert_synced(
+        "bridges/actor/guest.go",
+        "packages/rusm-go/actor.go",
+        include_str!("../../../bridges/actor/guest.go"),
+        include_str!("../../../packages/rusm-go/actor.go"),
+    );
+    assert_synced(
+        "bridges/actor/guest.js",
+        "crates/rusm-wasm/js-runner/bridge/actor.js",
+        include_str!("../../../bridges/actor/guest.js"),
+        include_str!("../js-runner/bridge/actor.js"),
+    );
 
     // pg bridge (process-group tags) — host + all three guests.
     assert_synced(

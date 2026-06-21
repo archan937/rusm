@@ -69,7 +69,7 @@ carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `
 | Bridge | Type | Guest API | Host backing | Gate | Files | Bench gate | Status |
 |---|---|---|---|---|---|---|:--:|
 | `types` | *(supporting)* | — (shared `pid`) | — | — | W | — | ✅ |
-| `actor` | introduced | `Pid`/`send`/`receive`/`spawn`/`monitor`/`supervise` | rusm-otp | `spawn`/`process-control` (per-op) | W H R G J T | `ping-pong`, `component-storm`, `fault-recovery` | ⬜ |
+| `actor` | introduced | `Pid`/`send`/`receive`/`spawn`/`monitor`/`supervise` | rusm-otp | `spawn`/`process-control` (per-op) | W H R G J | `ping-pong`, `component-storm`, `fault-recovery` | ✅ |
 | `pg` | introduced | `register_tag`/`whereis_tag`/`kill_tag` | rusm-otp | `process-control` (kill-tag) | W H R G J | `pubsub-fanout` | ✅ |
 | `streams` | introduced | cross-process byte streams | rusm-otp | — | W H R G J | `stream-pipe` | ✅ |
 | `kv` | introduced | `kv.bucket(..)` | rusm-kv (redb) | `storage` | W H R G J T | `kv-storm` (ACID ceiling) | ✅ |

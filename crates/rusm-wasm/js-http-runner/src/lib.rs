@@ -49,11 +49,11 @@ use wasi::io::streams::OutputStream;
 
 // The actor bridge JS is shared verbatim with the js-runner (single source of truth) —
 // only the *backing* native `__*` ops differ (this runner wires the no-mailbox subset),
-// so `process.js`'s presence-guards expose exactly that subset here.
+// so `actor.js`'s presence-guards expose exactly that subset here.
 const LOG_JS: &str = include_str!("../../js-runner/bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../../js-runner/bridge/webapi.js");
 const STREAM_JS: &str = include_str!("../../js-runner/bridge/streams.js");
-const PROCESS_JS: &str = include_str!("../../js-runner/bridge/process.js");
+const ACTOR_JS: &str = include_str!("../../js-runner/bridge/actor.js");
 const PG_JS: &str = include_str!("../../js-runner/bridge/pg.js");
 const KV_JS: &str = include_str!("../../js-runner/bridge/kv.js");
 const HTTP_JS: &str = include_str!("../bridge/http.js");
@@ -99,7 +99,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
 
     // The actor-ABI subset a *request* handler can back: no mailbox, so storage, the
     // platform logger, and the outbound/lookup ops (publish to subscribers, find a peer)
-    // — but no `receive`/`spawn`/`monitor`/tag-join. `process.js`'s presence-guards turn
+    // — but no `receive`/`spawn`/`monitor`/tag-join. `actor.js`'s presence-guards turn
     // this set into exactly `Process.{self,send,whereis,whereisTag}`; `console.*` routes
     // to `__log`; `kv` is gated by the component's `storage` capability.
     def!("__own_pid", || actor::own_pid().to_string());
@@ -136,7 +136,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     eval(&ctx, LOG_JS, "log.js").expect("log.js");
     eval(&ctx, WEBAPI_JS, "webapi.js").expect("webapi.js");
     eval(&ctx, STREAM_JS, "stream.js").expect("stream.js");
-    eval(&ctx, PROCESS_JS, "process.js").expect("process.js");
+    eval(&ctx, ACTOR_JS, "actor.js").expect("actor.js");
     eval(&ctx, PG_JS, "pg.js").expect("pg.js");
     eval(&ctx, KV_JS, "kv.js").expect("kv.js");
     eval(&ctx, HTTP_JS, "http.js").expect("http.js");

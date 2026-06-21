@@ -480,7 +480,7 @@ fn js_crypto_aes_gcm_decrypt<'a>(
 const LOG_JS: &str = include_str!("../bridge/log.js");
 const WEBAPI_JS: &str = include_str!("../bridge/webapi.js");
 const STREAM_JS: &str = include_str!("../bridge/streams.js");
-const PROCESS_JS: &str = include_str!("../bridge/process.js");
+const ACTOR_JS: &str = include_str!("../bridge/actor.js");
 const PG_JS: &str = include_str!("../bridge/pg.js");
 const SERVE_JS: &str = include_str!("../bridge/serve.js");
 const KV_JS: &str = include_str!("../bridge/kv.js");
@@ -680,7 +680,7 @@ fn boot_bridge(ctx: Ctx<'_>) {
     let _: () = ctx.eval(LOG_JS).unwrap();
     let _: () = ctx.eval(WEBAPI_JS).unwrap();
     let _: () = ctx.eval(STREAM_JS).unwrap();
-    let _: () = ctx.eval(PROCESS_JS).unwrap();
+    let _: () = ctx.eval(ACTOR_JS).unwrap();
     let _: () = ctx.eval(PG_JS).unwrap();
     let _: () = ctx.eval(SERVE_JS).unwrap();
     let _: () = ctx.eval(KV_JS).unwrap();
