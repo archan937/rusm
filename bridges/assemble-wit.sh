@@ -52,8 +52,13 @@ crates/rusm-wasm/tests/fixtures/rs-timeout/wit/world.wit:guest
 TARGETS=$(echo "$TARGETS" | grep .)   # drop blank lines
 
 # --- total-awareness cross-check: discovered set must equal the mapped set ----------------
+# Only **git-tracked** world.wit count: a `rusm build` run leaves generated, git-ignored guest
+# WIT on disk (an app's `components/*/wit/`, the example's), which is build output, not an
+# assembler target — `git ls-files` excludes it (and `target/`) by definition.
 mapped=$(echo "$TARGETS" | cut -d: -f1 | sort)
-discovered=$(grep -rl "$PKG" --include=world.wit . | sed 's#^\./##' | grep -vE '(^|/)target/' | sort)
+discovered=$(git ls-files '*world.wit' | while IFS= read -r f; do
+	grep -q "$PKG" "$f" 2>/dev/null && echo "$f"
+done | sort)
 if [ "$mapped" != "$discovered" ]; then
 	echo "✗ TARGETS is out of sync with the rusm:runtime world.wit files on disk:"
 	diff <(echo "$mapped") <(echo "$discovered") | sed 's/^/    /'

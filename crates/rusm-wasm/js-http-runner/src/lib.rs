@@ -38,6 +38,11 @@ use std::cell::OnceCell;
 
 wit_bindgen::generate!({ world: "bindings", path: "wit", generate_all });
 
+/// Per-app custom-bridge glue — the **same** generated file the js-runner uses (one source,
+/// both runners), empty in the prebuilt runner.
+#[path = "../../js-runner/src/bridges_gen.rs"]
+mod bridges_gen;
+
 use exports::wasi::http::incoming_handler::Guest;
 use rusm::runtime::actor;
 use rusm::runtime::pg;
@@ -131,6 +136,9 @@ fn boot_bridge(ctx: Ctx<'_>) {
     def!("__kv_exists", js_kv_exists);
     def!("__kv_list", js_kv_list);
 
+    // Custom application bridges (generated per-app; a no-op in the prebuilt runner).
+    bridges_gen::register(&ctx, &g);
+
     // Bridge JS, in dependency order: log (console → `__log`), webapi (the base Web
     // standards), the actor `Process` (guarded to the wired subset), `kv`, then the HTTP glue.
     eval(&ctx, LOG_JS, "log.js").expect("log.js");
@@ -140,6 +148,10 @@ fn boot_bridge(ctx: Ctx<'_>) {
     eval(&ctx, PG_JS, "pg.js").expect("pg.js");
     eval(&ctx, KV_JS, "kv.js").expect("kv.js");
     eval(&ctx, HTTP_JS, "http.js").expect("http.js");
+    // Custom application bridges' JS API (over their `__*` primitives); empty by default.
+    if !bridges_gen::BRIDGE_JS.is_empty() {
+        eval(&ctx, bridges_gen::BRIDGE_JS, "bridges_gen.js").expect("bridges_gen.js");
+    }
     eval(
         &ctx,
         "globalThis.module={exports:{}};globalThis.exports=module.exports;",

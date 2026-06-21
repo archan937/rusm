@@ -20,6 +20,10 @@ wit_bindgen::generate!({
     generate_all,
 });
 
+/// Per-app custom-bridge glue (empty in the prebuilt runner; `rusm build` regenerates it for
+/// an app with custom bridges). See [`bridges_gen`].
+mod bridges_gen;
+
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
@@ -675,6 +679,11 @@ fn boot_bridge(ctx: Ctx<'_>) {
     // (an ungranted/absent key is `null`). Surfaced to JS as `process.env`.
     def!("__getenv", |key: String| std::env::var(key).ok());
 
+    // Custom application bridges (generated per-app; a no-op in the prebuilt runner). Their
+    // `__<bridge>__<func>` primitives are installed here, with the built-ins, so the snapshot
+    // captures them.
+    bridges_gen::register(&ctx, &g);
+
     // Web API polyfills, the raw actor API, durable storage, then the
     // RPC/service layer.
     let _: () = ctx.eval(LOG_JS).unwrap();
@@ -685,6 +694,10 @@ fn boot_bridge(ctx: Ctx<'_>) {
     let _: () = ctx.eval(SERVE_JS).unwrap();
     let _: () = ctx.eval(KV_JS).unwrap();
     let _: () = ctx.eval(RPC_JS).unwrap();
+    // Custom application bridges' JS API (over their `__*` primitives); empty by default.
+    if !bridges_gen::BRIDGE_JS.is_empty() {
+        let _: () = ctx.eval(bridges_gen::BRIDGE_JS).unwrap();
+    }
     // A CommonJS surface so a Bun-bundled (`--format=cjs`) service/worker can
     // populate `module.exports`; a bare script just ignores it. Empty in the
     // snapshot — each per-instance bundle populates it in `run`.
