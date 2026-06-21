@@ -244,6 +244,24 @@ pub fn generate_host_files(root: &Path) -> Result<Vec<BridgeSpec>> {
     Ok(bridges)
 }
 
+/// Vendor a bridge's contract into a **guest component**'s WIT tree, at
+/// `<component_dir>/wit/deps/<name>/bridge.wit`, so the guest can `import` it (the author
+/// still declares the import in the component's own world + `generate!` — vendoring only
+/// makes the dependency resolvable). Idempotent; only meaningful for a wit-based guest
+/// (Rust/Go). A TS guest runs on the js-runner and needs no per-component WIT.
+pub fn vendor_into_component(component_dir: &Path, bridge: &BridgeSpec) -> Result<()> {
+    let dep = component_dir.join("wit").join("deps").join(&bridge.name);
+    std::fs::create_dir_all(&dep).with_context(|| format!("creating {}", dep.display()))?;
+    std::fs::copy(bridge.wit(), dep.join("bridge.wit")).with_context(|| {
+        format!(
+            "vendoring `{}` into {}",
+            bridge.name,
+            component_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +416,35 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("src/bridges.rs")).unwrap(),
             include_str!("../../examples/custom-bridge/src/bridges.rs"),
+        );
+    }
+
+    #[test]
+    fn vendors_a_bridge_into_a_guest_component() {
+        let root = app_dir("vendor");
+        let weather = root.join("bridges/weather");
+        std::fs::create_dir_all(&weather).unwrap();
+        std::fs::copy(
+            "../examples/custom-bridge/bridges/weather/bridge.wit",
+            weather.join("bridge.wit"),
+        )
+        .unwrap();
+        std::fs::write(weather.join("host.rs"), "// host\n").unwrap();
+        let bridges = discover(&root).unwrap();
+
+        let component = root.join("components/api");
+        std::fs::create_dir_all(&component).unwrap();
+        vendor_into_component(&component, &bridges[0]).unwrap();
+
+        let vendored = component.join("wit/deps/weather/bridge.wit");
+        assert!(
+            vendored.is_file(),
+            "bridge.wit lands in the guest's wit/deps/"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&vendored).unwrap(),
+            std::fs::read_to_string(weather.join("bridge.wit")).unwrap(),
+            "vendored copy is the contract verbatim",
         );
     }
 

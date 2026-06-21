@@ -261,6 +261,12 @@ impl Capabilities {
         self.bridges.contains(name)
     }
 
+    /// The custom application bridges this profile grants, sorted. `rusm build` uses it to
+    /// vendor each granted bridge's WIT into the component's guest build.
+    pub fn granted_bridges(&self) -> impl Iterator<Item = &str> {
+        self.bridges.iter().map(String::as_str)
+    }
+
     /// The memory ceiling, for the runtime's `StoreLimiter`.
     pub fn memory_limit(&self) -> usize {
         self.max_memory

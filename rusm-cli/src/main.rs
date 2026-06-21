@@ -5,9 +5,9 @@ use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
-    command_help, host, node_overrides, normalize_target, parse, parse_new_args, prebuilt_wasm,
-    render_message, scaffold, spawn_components, usage, version, wants_help, wants_version,
-    Protocol, ReplInput, DEFAULT_HOST, HELP,
+    capabilities_for, command_help, host, node_overrides, normalize_target, parse, parse_new_args,
+    prebuilt_wasm, render_message, scaffold, spawn_components, usage, version, wants_help,
+    wants_version, Protocol, ReplInput, DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -113,6 +113,7 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     if !bridges.is_empty() {
         let names: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
         println!("custom bridge(s): {}", names.join(", "));
+        vendor_guest_wit(root, &bridges)?;
     }
     let built = build_components(root)?;
     if built.is_empty() {
@@ -127,6 +128,31 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     if !bridges.is_empty() {
         build_host_crate(root)?;
         println!("built host binary (custom bridges compiled in)");
+    }
+    Ok(())
+}
+
+/// Vendor each granted custom bridge's WIT into the guest components that may import it —
+/// per the manifest's capability whitelist, so a component reaches only the bridges its
+/// profile lists (default-deny). Only wit-based guests (Rust/Go) take vendored WIT; a TS
+/// guest runs on the js-runner. The author still declares the `import` in the component's
+/// own world; this only makes the dependency resolvable for the build.
+fn vendor_guest_wit(root: &Path, bridges: &[rusm_cli::bridges::BridgeSpec]) -> anyhow::Result<()> {
+    let cfg = load_node_config(None, None);
+    let by_name: std::collections::HashMap<&str, &rusm_cli::bridges::BridgeSpec> =
+        bridges.iter().map(|b| (b.name.as_str(), b)).collect();
+    for (name, comp) in &cfg.components {
+        let dir = root.join("components").join(name);
+        let wit_guest = dir.join("Cargo.toml").is_file() || dir.join("go.mod").is_file();
+        if !wit_guest {
+            continue;
+        }
+        let caps = capabilities_for(&comp.capability, &cfg.capabilities);
+        for granted in caps.granted_bridges() {
+            if let Some(bridge) = by_name.get(granted) {
+                rusm_cli::bridges::vendor_into_component(&dir, bridge)?;
+            }
+        }
     }
     Ok(())
 }
