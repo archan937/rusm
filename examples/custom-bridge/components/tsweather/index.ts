@@ -5,9 +5,8 @@
 // `.d.ts` lands).
 //
 // A per-connection WebSocket handler: each text frame is a city; the reply is the forecast.
+/// <reference path="../../bridges.d.ts" />
 import { websocket } from "rusm-ts";
-
-declare const weather: { lookup(city: string): string };
 
 export default websocket({
   message(socket, data) {

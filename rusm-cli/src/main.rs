@@ -152,6 +152,10 @@ fn build_js_runner_if_ts_uses_bridges(
     if !ts_uses_a_bridge {
         return Ok(());
     }
+    // Ambient TS types so the guest calls the bridge typed (`/// <reference>` it).
+    let dts = root.join("bridges.d.ts");
+    std::fs::write(&dts, rusm_cli::bridges::gen_bridge_dts(bridges)?)
+        .with_context(|| format!("writing {}", dts.display()))?;
     println!("building js-runner with custom bridges (TS guest) — first build compiles QuickJS…");
     let wasm = rusm_cli::jsbuild::build_app_js_runner(root, bridges)?;
     let dest = root.join("wasm/js_runner.wasm");
