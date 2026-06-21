@@ -132,13 +132,16 @@ the committed generated files are byte-identical to what `rusm build` emits).
 
 > **Status.** Live: the runtime seam + composable builder, the shared `rusm_cli::host` serve
 > path, the capability whitelist, bridge discovery + host-crate codegen + guest-WIT vendoring,
-> and `rusm build`/`serve` wiring — i.e. the full **host side** plus **Rust/Go guest** WIT
-> vendoring. The runtime mechanism is proven end to end by `rusm-wasm`'s
-> `a_custom_application_bridge_is_callable_from_a_guest` (a guest calls a custom bridge, typed,
-> host returns a pid-stamped reply). Remaining: `rusm new --bridges` scaffolding; weaving a
-> custom `import` into the `#[rusm_rs::handlers]` macro (so an HTTP route handler — not just a
-> plain actor — can call a bridge; the macro currently hardcodes the `process` world); the **TS**
-> guest path (per-bridge typed globals + a js-runner re-wizer); and a genius-rusm native bridge.
+> `rusm build`/`serve` wiring, and a **Rust HTTP handler** calling a bridge via
+> `#[rusm_rs::handlers(bridge = "ns:pkg/iface@ver")]` (it switches to the `rusm build`-generated
+> `wit/` `handler` world; the bridge is re-exported at `crate::<iface>`). Proven **live** on
+> `examples/custom-bridge`: `rusm build && rusm serve` then `curl /forecast/:city` returns the
+> host bridge's value; and at the unit level by `rusm-wasm`'s
+> `a_custom_application_bridge_is_callable_from_a_guest`. Remaining: the **Go** SDK's
+> serving/handler analog of `#[handlers(bridge=…)]` (Go WIT vendoring already works, so a
+> hand-written `generate!` Go guest can call a bridge today); the **TS** guest path (per-bridge
+> typed globals + a js-runner re-wizer); `rusm new --bridges` scaffolding; and a genius-rusm
+> native bridge.
 
 ---
 

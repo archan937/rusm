@@ -33,6 +33,20 @@ workspace, and a drift test keeps them identical to the generator).
 The host impl reaches real process state through `BridgeHost` (here `self.pid()`); it would
 gate itself on `self.caps().allows_bridge("weather")` and call out via `self.runtime()`.
 
+## Run it
+
+```sh
+rusm build              # generates the glue, compiles components/api + the host binary
+rusm serve              # runs the host binary; serves http://127.0.0.1:8080
+curl http://127.0.0.1:8080/forecast/Amsterdam
+# → sunny in Amsterdam (served by pid …)
+```
+
+`components/api` is a `#[rusm_rs::handlers(bridge = "weather:bridge/forecast@0.1.0")]` HTTP
+handler — an ordinary route handler that calls the bridge with `crate::forecast::lookup(city)`,
+no dispatcher. The `bridge = …` attribute is what lets a handler (not just a plain actor)
+import a custom bridge.
+
 ## The platform/application split
 
 The bridge's **host impl is Rust** because the host *is* Rust (`rusm-wasm`/Wasmtime) — there
@@ -41,4 +55,4 @@ native capability; its **guests stay in any language**. A guest calls `weather` 
 typed WIT import — no dispatcher, no marshaling, the same cost as a built-in bridge.
 
 See `bridges/README.md` (repo root) for the full model and the current status of the guest
-ergonomics (HTTP-handler and TS paths).
+ergonomics (the Go SDK handler analog and the TS path are the remaining guest work).
