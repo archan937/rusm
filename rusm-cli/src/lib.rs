@@ -3,6 +3,8 @@
 //! parsing, and live-message formatting.
 
 mod app;
+/// Discovery of an app's custom `bridges/<name>/` directories (the custom-bridge feature).
+pub mod bridges;
 mod cli;
 mod component;
 mod endpoint;
