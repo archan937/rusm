@@ -11,6 +11,23 @@ model and failure vocabulary.
 
 ::: code-group
 
+```ts [TypeScript]
+import { websocket } from "rusm-ts";
+
+// One worker per connection; reply with `socket.send(…)`.
+export default websocket({
+  open(socket) {
+    socket.send("welcome\n");
+  },
+  message(socket, data) {
+    socket.send(data); // echo this connection's frame
+  },
+  close(socket) {
+    // disconnect — clean or dropped (optional)
+  },
+});
+```
+
 ```rust [Rust]
 use rusm_rs::ws::{self, Connection, Handler};
 
@@ -31,23 +48,6 @@ impl Handler for Echo {
 fn run() {
     ws::serve(Echo);
 }
-```
-
-```ts [TypeScript]
-import { websocket } from "rusm-ts";
-
-// One worker per connection; reply with `socket.send(…)`.
-export default websocket({
-  open(socket) {
-    socket.send("welcome\n");
-  },
-  message(socket, data) {
-    socket.send(data); // echo this connection's frame
-  },
-  close(socket) {
-    // disconnect — clean or dropped (optional)
-  },
-});
 ```
 
 ```go [Go]

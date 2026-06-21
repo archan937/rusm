@@ -12,6 +12,13 @@ vocabulary.
 
 ::: code-group
 
+```ts [TypeScript]
+// counter.ts — each exported function is a call; module scope holds the state.
+let count = 0;
+export function bump(by: number): number { count += by; return count; }
+export function total(): number { return count; }
+```
+
 ```rust [Rust]
 #[rusm_rs::service]
 pub mod counter {
@@ -21,13 +28,6 @@ pub mod counter {
     pub fn bump(by: u64) -> u64 { COUNT.fetch_add(by, Ordering::Relaxed) + by }
     pub fn total() -> u64 { COUNT.load(Ordering::Relaxed) }
 }
-```
-
-```ts [TypeScript]
-// counter.ts — each exported function is a call; module scope holds the state.
-let count = 0;
-export function bump(by: number): number { count += by; return count; }
-export function total(): number { return count; }
 ```
 
 ```go [Go]

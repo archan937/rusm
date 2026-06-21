@@ -85,17 +85,6 @@ rusm dev        # same, then watch & reload on edit
 
 ::: code-group
 
-```rust [Rust]
-// A Rust service — functions become a dispatch loop + a typed Client:
-#[rusm_rs::service]
-pub mod calc {
-    pub fn add(a: i64, b: i64) -> i64 { a + b }
-    pub fn count_to(n: i64) -> impl Iterator<Item = i64> { 1..=n }     // streaming
-    pub fn work(progress: rusm_rs::Callback<i64>) -> String { /* … */ } // callback
-}
-// caller:  let calc = calc::Client::spawn("calc")?;  calc.add(2, 3)?;
-```
-
 ```ts [TypeScript]
 // A TS service — exported functions become a dispatch loop; the contract is derived:
 export function add(a: number, b: number): number { return a + b; }
@@ -106,6 +95,17 @@ export function work(progress: (pct: number) => void): string {              // 
 }
 export type Calc = typeof import(".");
 // caller:  const calc = spawn<Calc>("calc");  await calc.add(2, 3);
+```
+
+```rust [Rust]
+// A Rust service — functions become a dispatch loop + a typed Client:
+#[rusm_rs::service]
+pub mod calc {
+    pub fn add(a: i64, b: i64) -> i64 { a + b }
+    pub fn count_to(n: i64) -> impl Iterator<Item = i64> { 1..=n }     // streaming
+    pub fn work(progress: rusm_rs::Callback<i64>) -> String { /* … */ } // callback
+}
+// caller:  let calc = calc::Client::spawn("calc")?;  calc.add(2, 3)?;
 ```
 
 ```go [Go]

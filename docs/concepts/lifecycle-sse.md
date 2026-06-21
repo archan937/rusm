@@ -14,6 +14,22 @@ publisher's broadcast fans out to every open stream (push, not polling). See the
 
 ::: code-group
 
+```ts [TypeScript]
+import { sse, Process } from "rusm-ts";
+
+export default sse({
+  open(stream) {
+    Process.registerTag("todos"); // subscribe to the event source
+  },
+  message(stream, event) {
+    stream.data(event); // a published event → emit it
+  },
+  close(stream) {
+    // disconnect — clean or dropped (optional)
+  },
+});
+```
+
 ```rust [Rust]
 use rusm_rs::sse::{self, Handler, Stream};
 
@@ -34,22 +50,6 @@ impl Handler for Feed {
 fn run() {
     sse::serve(Feed);
 }
-```
-
-```ts [TypeScript]
-import { sse, Process } from "rusm-ts";
-
-export default sse({
-  open(stream) {
-    Process.registerTag("todos"); // subscribe to the event source
-  },
-  message(stream, event) {
-    stream.data(event); // a published event → emit it
-  },
-  close(stream) {
-    // disconnect — clean or dropped (optional)
-  },
-});
 ```
 
 ```go [Go]

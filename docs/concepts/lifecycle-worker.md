@@ -11,16 +11,6 @@ vocabulary.
 
 ::: code-group
 
-```rust [Rust]
-#[rusm_rs::main]
-fn run() {
-    let job: Job = rusm_rs::receive().unwrap(); // the work item (blocks; the fiber parks)
-    let result = do_work(&job);                 // your logic
-    rusm_rs::send(job.reply_to, &result).ok();  // reply to the caller
-    // returning ends the process — it exits Normal
-}
-```
-
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
@@ -29,6 +19,16 @@ export default async function () {
   const job = JSON.parse(await Process.receiveText()); // blocks; the fiber parks
   const result = doWork(job);
   Process.send(job.replyTo, JSON.stringify(result));   // reply to the caller
+}
+```
+
+```rust [Rust]
+#[rusm_rs::main]
+fn run() {
+    let job: Job = rusm_rs::receive().unwrap(); // the work item (blocks; the fiber parks)
+    let result = do_work(&job);                 // your logic
+    rusm_rs::send(job.reply_to, &result).ok();  // reply to the caller
+    // returning ends the process — it exits Normal
 }
 ```
 

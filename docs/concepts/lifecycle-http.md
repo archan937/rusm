@@ -13,6 +13,17 @@ vocabulary this chapter builds on.
 
 ::: code-group
 
+```ts [TypeScript]
+// A wasi:http component — instantiated per request. It dispatches itself, so it
+// needs no `[serve.routes]` table; read path params off the URL.
+export default function handle(request: Request): Response {
+  const id = new URL(request.url).pathname.split("/").pop();
+  return new Response(`user ${id ?? "?"}`, {
+    headers: { "content-type": "text/plain" },
+  });
+}
+```
+
 ```rust [Rust]
 use rusm_rs::http::{Params, Request, Response};
 
@@ -23,17 +34,6 @@ pub mod api {
     pub fn show(_req: Request, p: Params) -> Response {
         Response::text(format!("user {}", p.get("id").unwrap_or("?")))
     }
-}
-```
-
-```ts [TypeScript]
-// A wasi:http component — instantiated per request. It dispatches itself, so it
-// needs no `[serve.routes]` table; read path params off the URL.
-export default function handle(request: Request): Response {
-  const id = new URL(request.url).pathname.split("/").pop();
-  return new Response(`user ${id ?? "?"}`, {
-    headers: { "content-type": "text/plain" },
-  });
 }
 ```
 

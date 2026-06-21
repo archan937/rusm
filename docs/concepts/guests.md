@@ -191,20 +191,20 @@ single source of truth (not a capability) — a record below the threshold is dr
 
 ::: code-group
 
-```rust [Rust]
-// The standard `log` crate facade → the node's log stream (the entry-point macros
-// install the platform logger; no init). The host adds time, component#pid, and level.
-log::info!("handled {} in {}ms", id, elapsed);
-log::warn!("retrying ({attempt})");
-log::error!("gave up");
-```
-
 ```ts [TypeScript]
 // The web-standard console → the node's log stream (the runner routes it; no setup).
 console.log("handled", id, "in", elapsed, "ms");
 console.warn("retrying", attempt);   // → [warn] retrying 2
 console.error("gave up");            // → [error] gave up
 // Pids (bigint) and objects are stringified/JSON'd for you.
+```
+
+```rust [Rust]
+// The standard `log` crate facade → the node's log stream (the entry-point macros
+// install the platform logger; no init). The host adds time, component#pid, and level.
+log::info!("handled {} in {}ms", id, elapsed);
+log::warn!("retrying ({attempt})");
+log::error!("gave up");
 ```
 
 ```go [Go]
