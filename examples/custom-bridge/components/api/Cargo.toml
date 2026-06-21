@@ -1,0 +1,22 @@
+# The app's guest: a per-request HTTP handler that CALLS the custom `weather` bridge. A
+# normal Rust component — `rusm build` vendors the bridge WIT + generates this component's
+# wit/ (because the `forecaster` profile grants `weather`), then compiles it to wasm.
+[workspace]
+
+[package]
+name = "api"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "api"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../crates/rusm-rs" }
+wit-bindgen = "0.46"

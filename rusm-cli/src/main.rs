@@ -148,11 +148,11 @@ fn vendor_guest_wit(root: &Path, bridges: &[rusm_cli::bridges::BridgeSpec]) -> a
             continue;
         }
         let caps = capabilities_for(&comp.capability, &cfg.capabilities);
-        for granted in caps.granted_bridges() {
-            if let Some(bridge) = by_name.get(granted) {
-                rusm_cli::bridges::vendor_into_component(&dir, bridge)?;
-            }
-        }
+        let granted: Vec<rusm_cli::bridges::BridgeSpec> = caps
+            .granted_bridges()
+            .filter_map(|g| by_name.get(g).map(|b| (*b).clone()))
+            .collect();
+        rusm_cli::bridges::generate_guest_wit(&dir, &granted)?;
     }
     Ok(())
 }

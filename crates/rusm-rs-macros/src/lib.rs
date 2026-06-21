@@ -30,29 +30,134 @@ pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// is self-contained when published; a test (`wit_in_sync`) keeps the two byte-equal.
 const RUNTIME_WIT: &str = include_str!("../wit/world.wit");
 
+/// Parse the optional `#[handlers(bridge = "…")]` / `#[main(bridge = "…")]` attribute into
+/// the **custom-bridge** interface refs the component imports (e.g.
+/// `weather:bridge/forecast@0.1.0`, repeatable). Empty for the common case — a component over
+/// pure `rusm:runtime`, which carries no `wit/` dir.
+fn bridge_refs(attr: proc_macro2::TokenStream) -> syn::Result<Vec<String>> {
+    use syn::parse::Parser;
+    if attr.is_empty() {
+        return Ok(Vec::new());
+    }
+    let metas =
+        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated.parse2(attr)?;
+    metas
+        .into_iter()
+        .map(|meta| {
+            let syn::Meta::NameValue(nv) = meta else {
+                return Err(syn::Error::new_spanned(
+                    meta,
+                    "expected `bridge = \"ns:pkg/iface@ver\"`",
+                ));
+            };
+            if !nv.path.is_ident("bridge") {
+                return Err(syn::Error::new_spanned(
+                    &nv.path,
+                    "unknown key; the only key is `bridge`",
+                ));
+            }
+            match nv.value {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) => Ok(s.value()),
+                other => Err(syn::Error::new_spanned(
+                    other,
+                    "`bridge` value must be a string literal",
+                )),
+            }
+        })
+        .collect()
+}
+
+/// The `with:` mapping that reuses the `rusm-rs` SDK's bindings for the `rusm:runtime`
+/// interfaces — so a component shares the SDK's `Pid`/`Request`/… types instead of
+/// regenerating look-alikes.
+fn runtime_mappings() -> proc_macro2::TokenStream {
+    quote! {
+        "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor,
+        "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv,
+        "rusm:runtime/log@0.1.0": ::rusm_rs::rusm::runtime::log,
+        "rusm:runtime/pg@0.1.0": ::rusm_rs::rusm::runtime::pg,
+        "rusm:runtime/streams@0.1.0": ::rusm_rs::rusm::runtime::streams,
+        "rusm:runtime/serve@0.1.0": ::rusm_rs::rusm::runtime::serve
+    }
+}
+
+/// The `generate!` for a component shell. With **no** custom bridges it's the dir-free
+/// `inline:` `process` world (a pure-guest component carries no `wit/`). **With** custom
+/// bridges it binds the `wit/` world `rusm build` generated — `rusm:runtime` mapped to the
+/// SDK, the bridges bound by `generate_all` (the world's extra imports).
+fn component_bindings(has_bridges: bool) -> proc_macro2::TokenStream {
+    let with = runtime_mappings();
+    if has_bridges {
+        quote! {
+            ::wit_bindgen::generate!({
+                path: "wit",
+                world: "handler",
+                generate_all,
+                with: { #with },
+            });
+        }
+    } else {
+        quote! {
+            ::wit_bindgen::generate!({
+                inline: #RUNTIME_WIT,
+                world: "process",
+                with: { #with },
+            });
+        }
+    }
+}
+
+/// `pub use` each custom bridge interface at the crate root, so a handler calls it as
+/// `crate::<iface>::<func>(…)` rather than reaching into the generated `__rusm_component`.
+fn bridge_reexports(refs: &[String]) -> syn::Result<Vec<proc_macro2::TokenStream>> {
+    refs.iter()
+        .map(|r| {
+            let no_ver = r.split('@').next().unwrap_or(r);
+            let bad = || {
+                syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!("bridge `{r}`: expected `ns:pkg/iface[@ver]`"),
+                )
+            };
+            let (pkg, iface) = no_ver.split_once('/').ok_or_else(bad)?;
+            let (ns, name) = pkg.split_once(':').ok_or_else(bad)?;
+            let ns = format_ident!("{}", ns.replace('-', "_"));
+            let name = format_ident!("{}", name.replace('-', "_"));
+            let iface = format_ident!("{}", iface.replace('-', "_"));
+            Ok(quote! { pub use __rusm_component::#ns::#name::#iface; })
+        })
+        .collect()
+}
+
 /// `#[rusm_rs::main]` on a component's entry fn (conventionally `fn main`). Hides the
-/// whole component shell — the `process` world, the `Guest` impl, and `export!` — so
-/// the source is just the developer's handler plus one call to a `serve` fn. The
-/// component needs no `wit/` directory and no visible `wit-bindgen` boilerplate.
+/// whole component shell — the world, the `Guest` impl, and `export!` — so the source is
+/// just the developer's handler plus one call to a `serve` fn. A pure-`rusm:runtime`
+/// component needs no `wit/` directory; add `bridge = "ns:pkg/iface@ver"` to import a custom
+/// application bridge (then `rusm build` generates the component's `wit/`).
 #[proc_macro_attribute]
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = syn::parse_macro_input!(item as ItemFn);
-    if let Some(tok) = proc_macro2::TokenStream::from(attr).into_iter().next() {
-        return syn::Error::new_spanned(tok, "`#[rusm_rs::main]` takes no arguments")
-            .into_compile_error()
-            .into();
-    }
+    let refs = match bridge_refs(attr.into()) {
+        Ok(refs) => refs,
+        Err(e) => return e.into_compile_error().into(),
+    };
+    let reexports = match bridge_reexports(&refs) {
+        Ok(r) => r,
+        Err(e) => return e.into_compile_error().into(),
+    };
+    let bindings = component_bindings(!refs.is_empty());
     let entry = func.sig.ident.clone();
     quote! {
         #func
 
+        #(#reexports)*
+
         #[doc(hidden)]
         mod __rusm_component {
-            ::wit_bindgen::generate!({
-                inline: #RUNTIME_WIT,
-                world: "process",
-                with: { "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": ::rusm_rs::rusm::runtime::log, "rusm:runtime/pg@0.1.0": ::rusm_rs::rusm::runtime::pg, "rusm:runtime/streams@0.1.0": ::rusm_rs::rusm::runtime::streams, "rusm:runtime/serve@0.1.0": ::rusm_rs::rusm::runtime::serve },
-            });
+            #bindings
 
             struct Component;
             impl Guest for Component {
@@ -74,8 +179,17 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// action dispatch — the developer writes only handler functions: no `main`, no router, no
 /// request/reply plumbing.
 #[proc_macro_attribute]
-pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = syn::parse_macro_input!(item as ItemMod);
+    let refs = match bridge_refs(attr.into()) {
+        Ok(refs) => refs,
+        Err(e) => return e.into_compile_error().into(),
+    };
+    let reexports = match bridge_reexports(&refs) {
+        Ok(r) => r,
+        Err(e) => return e.into_compile_error().into(),
+    };
+    let bindings = component_bindings(!refs.is_empty());
     let Some((_, items)) = &module.content else {
         return syn::Error::new_spanned(&module, "#[handlers] needs an inline module body")
             .into_compile_error()
@@ -110,13 +224,11 @@ pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #module
 
+        #(#reexports)*
+
         #[doc(hidden)]
         mod __rusm_component {
-            ::wit_bindgen::generate!({
-                inline: #RUNTIME_WIT,
-                world: "process",
-                with: { "rusm:runtime/actor@0.1.0": ::rusm_rs::rusm::runtime::actor, "rusm:runtime/kv@0.1.0": ::rusm_rs::rusm::runtime::kv, "rusm:runtime/log@0.1.0": ::rusm_rs::rusm::runtime::log, "rusm:runtime/pg@0.1.0": ::rusm_rs::rusm::runtime::pg, "rusm:runtime/streams@0.1.0": ::rusm_rs::rusm::runtime::streams, "rusm:runtime/serve@0.1.0": ::rusm_rs::rusm::runtime::serve },
-            });
+            #bindings
 
             struct Component;
             impl Guest for Component {
@@ -438,6 +550,63 @@ fn client_method(h: &Handler) -> proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn bridge_refs_parses_validates_and_defaults_empty() {
+        assert!(
+            bridge_refs(quote!()).unwrap().is_empty(),
+            "no attr → no bridges"
+        );
+        assert_eq!(
+            bridge_refs(quote!(bridge = "weather:bridge/forecast@0.1.0")).unwrap(),
+            ["weather:bridge/forecast@0.1.0"],
+        );
+        assert_eq!(
+            bridge_refs(quote!(bridge = "a:b/c", bridge = "d:e/f")).unwrap(),
+            ["a:b/c", "d:e/f"],
+        );
+        assert!(
+            bridge_refs(quote!(foo = "x")).is_err(),
+            "unknown key rejected"
+        );
+        assert!(
+            bridge_refs(quote!(bridge = 3)).is_err(),
+            "non-string rejected"
+        );
+    }
+
+    #[test]
+    fn bindings_switch_between_inline_and_the_generated_wit_world() {
+        // No bridges → the dir-free inline `process` world.
+        let inline = component_bindings(false).to_string();
+        assert!(inline.contains("inline") && inline.contains("\"process\""));
+        assert!(!inline.contains("generate_all"));
+        // With bridges → the `rusm build`-generated `wit/` `handler` world, generate_all.
+        let path = component_bindings(true).to_string();
+        assert!(
+            path.contains("\"wit\"")
+                && path.contains("\"handler\"")
+                && path.contains("generate_all")
+        );
+        // Either way the rusm:runtime interfaces are mapped to the SDK.
+        assert!(inline.contains("rusm_rs :: rusm :: runtime :: actor"));
+        assert!(path.contains("rusm_rs :: rusm :: runtime :: serve"));
+    }
+
+    #[test]
+    fn reexports_map_a_versioned_kebab_ref_to_a_crate_path() {
+        let re = bridge_reexports(&["acme:json-codec/encode@0.1.0".into()]).unwrap();
+        assert_eq!(re.len(), 1);
+        assert_eq!(
+            re[0].to_string(),
+            // version stripped; kebab → snake in the module path.
+            "pub use __rusm_component :: acme :: json_codec :: encode ;",
+        );
+        assert!(bridge_reexports(&["malformed".into()]).is_err());
+    }
+
     /// The vendored WIT must stay byte-identical to the canonical copy in `rusm-rs`,
     /// so a `#[rusm_rs::main]` component generates exactly the bindings `rusm-rs` does.
     /// If this fails, re-copy `crates/rusm-rs/wit/world.wit` over the vendored one.
