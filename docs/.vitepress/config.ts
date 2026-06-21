@@ -4,32 +4,34 @@ import { defineConfig } from 'vitepress';
 // top nav (as dropdowns) and the sidebar (as sections), so they never diverge.
 const sections = [
   {
-    // Categorised like every other section — and the sub-headings of the (long)
-    // getting-started page are surfaced as anchor links so the whole arc is
-    // navigable from the sidebar, not just the first three headings.
-    text: 'Get started',
+    // One ordered learning path: quick start first (low-threshold, for adoption), then
+    // hands-on chapters, then the "how it works" deep dives — Guide reads quick start →
+    // use → understand. The (long) getting-started page's sub-headings are surfaced as
+    // anchor links so its whole arc is navigable from the sidebar.
+    text: 'Guide',
     items: [
       {
-        text: 'Setup',
+        text: 'Introduction',
         items: [
-          { text: 'Overview', link: '/getting-started#overview' },
-          { text: 'Install', link: '/getting-started#install' },
-          { text: 'Quick start', link: '/getting-started#quick-start' },
+          { text: 'Why RUSM?', link: '/00-vision' },
+          { text: 'What you get', link: '/features' },
         ],
       },
       {
-        text: 'Ways to use RUSM',
+        text: 'Getting started',
+        items: [
+          { text: 'Quick start', link: '/getting-started#quick-start' },
+          { text: 'Install', link: '/getting-started#install' },
+        ],
+      },
+      {
+        text: 'Using RUSM',
         items: [
           { text: 'The OTP core (no Wasm)', link: '/getting-started#otp-core' },
           { text: 'Embed a .wasm', link: '/getting-started#embed-wasm' },
           { text: 'The app model', link: '/getting-started#app-model' },
-        ],
-      },
-      {
-        text: 'Write a component',
-        items: [
-          { text: 'Rust component', link: '/getting-started#rust-component' },
-          { text: 'TypeScript component', link: '/getting-started#ts-component' },
+          { text: 'Write a Rust component', link: '/getting-started#rust-component' },
+          { text: 'Write a TypeScript component', link: '/getting-started#ts-component' },
           { text: 'Serve over HTTP/WS/SSE', link: '/getting-started#serve' },
         ],
       },
@@ -42,42 +44,9 @@ const sections = [
           { text: 'Observe a node', link: '/getting-started#observe' },
         ],
       },
-    ],
-  },
-  {
-    text: 'About RUSM',
-    items: [
       {
-        text: 'Overview',
-        items: [
-          { text: 'Why RUSM?', link: '/00-vision' },
-          { text: 'Features', link: '/features' },
-        ],
-      },
-      {
-        text: 'Comparisons',
-        items: [
-          { text: 'RUSM vs Lunatic', link: '/lunatic-comparison' },
-          { text: 'How RUSM compares', link: '/comparison' },
-          { text: 'Design analysis', link: '/design-analysis' },
-        ],
-      },
-      {
-        text: 'The project',
-        items: [
-          { text: 'Architecture', link: '/01-architecture' },
-          { text: 'Roadmap', link: '/02-roadmap' },
-          { text: 'Development', link: '/06-development' },
-        ],
-      },
-    ],
-  },
-  {
-    // Grouped into categories (see /features for the value-first map). One level of
-    // nesting renders as grouped sections in both the sidebar and the nav dropdown.
-    text: 'Concepts',
-    items: [
-      {
+        // The deep dives — the same topics as the hands-on chapters above, one level down
+        // (the "explanation" half of the docs).
         text: 'The actor model',
         items: [
           { text: 'The process model', link: '/concepts/wasm-instance-as-process' },
@@ -89,22 +58,17 @@ const sections = [
         ],
       },
       {
-        text: 'Component lifecycles',
+        text: 'Components & guests',
         items: [
-          { text: 'Overview', link: '/concepts/component-lifecycle' },
+          { text: 'Component lifecycles', link: '/concepts/component-lifecycle' },
           { text: 'HTTP component', link: '/concepts/lifecycle-http' },
           { text: 'SSE component', link: '/concepts/lifecycle-sse' },
           { text: 'WebSocket component', link: '/concepts/lifecycle-websocket' },
           { text: 'Worker component (per-call)', link: '/concepts/lifecycle-worker' },
           { text: 'Service component (resident)', link: '/concepts/lifecycle-service' },
-        ],
-      },
-      {
-        text: 'WebAssembly & safety',
-        items: [
           { text: 'Components & the actor world', link: '/concepts/components-and-the-actor-world' },
-          { text: 'Permissions & sandboxing', link: '/concepts/permissions-and-sandboxing' },
           { text: 'Guests: Rust, TypeScript & Go', link: '/concepts/guests' },
+          { text: 'Permissions & sandboxing', link: '/concepts/permissions-and-sandboxing' },
         ],
       },
       {
@@ -125,6 +89,7 @@ const sections = [
     ],
   },
   {
+    // Look it up: exact CLI commands, manifest fields, the host ABI, and the wire models.
     text: 'Reference',
     items: [
       {
@@ -138,15 +103,37 @@ const sections = [
         text: 'APIs & models',
         items: [
           { text: 'Host ABI', link: '/05-host-abi' },
-          { text: 'Distributed model', link: '/04-distributed-model' },
           { text: 'Serving HTTP/WS/SSE', link: '/serving-http-ws-sse' },
+          { text: 'Distributed model', link: '/04-distributed-model' },
         ],
       },
       {
-        text: 'Tools & appendix',
+        text: 'Appendix',
         items: [
           { text: 'Benchmark & dashboard', link: '/03-benchmark-dashboard' },
           { text: 'Glossary', link: '/07-glossary' },
+        ],
+      },
+    ],
+  },
+  {
+    // Background: how RUSM compares, and the project itself.
+    text: 'About',
+    items: [
+      {
+        text: 'Comparisons',
+        items: [
+          { text: 'RUSM vs Lunatic', link: '/lunatic-comparison' },
+          { text: 'How RUSM compares', link: '/comparison' },
+          { text: 'Design analysis', link: '/design-analysis' },
+        ],
+      },
+      {
+        text: 'The project',
+        items: [
+          { text: 'Architecture', link: '/01-architecture' },
+          { text: 'Roadmap', link: '/02-roadmap' },
+          { text: 'Development', link: '/06-development' },
         ],
       },
     ],

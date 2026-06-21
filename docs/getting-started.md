@@ -1,35 +1,13 @@
 # Getting started {#overview}
 
-This page takes you from a clean machine to running real RUSM processes — first
-the pure-Rust actor core, then hosting WebAssembly, then writing your own
-components. Every command and snippet here is real and current; anything not yet
-built is marked **Roadmap**.
+RUSM runs WebAssembly components as isolated, supervised, Erlang-style processes and
+serves them over HTTP/WS/SSE. The fastest way in is to **scaffold an app and serve it** —
+then read on for the actor core, embedding, and writing your own components. Every command
+here is real and current; anything not yet built is marked **Roadmap**.
 
-## Install
+## Quick start {#quick-start}
 
-Install the `rusm` CLI — the app model (scaffold, build, serve):
-
-```sh
-cargo install rusm-cli
-```
-
-Prerequisites:
-
-- **Rust** 1.94+ via [`rustup`](https://rustup.rs). To build guest components, add the
-  Wasm target: `rustup target add wasm32-wasip2` (and `wasm32-wasip1` for core modules).
-- **Bun** 1.3+ ([bun.sh](https://bun.sh)) — to build TypeScript components; never Node.js.
-
-Building *with* RUSM as a library (the OTP-core and embedding examples below)? Add the
-crates to your own project instead:
-
-```sh
-cargo add rusm-otp           # the Wasm-free actor core
-cargo add rusm-wasm          # + the Wasmtime backend, to host components
-```
-
-## Quick start
-
-From nothing to a live server:
+From nothing to a live server in four commands:
 
 ```sh
 rusm new hello && cd hello   # scaffold a TS HTTP component + rusm.toml
@@ -37,6 +15,9 @@ rusm build                   # components/ → wasm/
 rusm serve                   # → http://127.0.0.1:8080
 curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 ```
+
+> Just need the CLI? [**Install `rusm`**](#install) — one `cargo install`; the only
+> prerequisites are Rust and (for TypeScript components) Bun.
 
 ### Scaffold a real app — the TODO board
 
@@ -81,6 +62,28 @@ throughput, latency, and the live observer. Everything is driven by the real run
 | `make docs` / `make docs-build` | Live-preview / build this docs site. |
 
 Run `make` with no target for the full list.
+
+## Install
+
+Install the `rusm` CLI — the app model (scaffold, build, serve):
+
+```sh
+cargo install rusm-cli
+```
+
+Prerequisites:
+
+- **Rust** 1.94+ via [`rustup`](https://rustup.rs). To build guest components, add the
+  Wasm target: `rustup target add wasm32-wasip2` (and `wasm32-wasip1` for core modules).
+- **Bun** 1.3+ ([bun.sh](https://bun.sh)) — to build TypeScript components; never Node.js.
+
+Building *with* RUSM as a library (the OTP-core and embedding examples below)? Add the
+crates to your own project instead:
+
+```sh
+cargo add rusm-otp           # the Wasm-free actor core
+cargo add rusm-wasm          # + the Wasmtime backend, to host components
+```
 
 ## Two ways to use RUSM
 
