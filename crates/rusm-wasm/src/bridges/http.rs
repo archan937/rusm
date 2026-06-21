@@ -82,12 +82,18 @@ impl WasmRuntime {
     /// non-serving nodes pay nothing.
     fn js_http_runner(&self) -> &PreparedHttp {
         self.js_http_runner.get_or_init(|| {
+            // The embedded runner, or a per-app override (`rusm build` rebuilds it with the
+            // app's custom bridges compiled in). A failure here is a build bug.
+            let wasm = self
+                .js_http_runner_wasm
+                .as_deref()
+                .unwrap_or(crate::JS_HTTP_RUNNER_WASM);
             self.prepare_http(
                 &self
-                    .compile_component(crate::JS_HTTP_RUNNER_WASM)
-                    .expect("embedded js-http-runner compiles"),
+                    .compile_component(wasm)
+                    .expect("js-http-runner compiles"),
             )
-            .expect("embedded js-http-runner prepares")
+            .expect("js-http-runner prepares")
         })
     }
 }

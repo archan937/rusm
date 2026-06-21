@@ -203,6 +203,13 @@ pub struct WasmRuntime {
     /// The prebuilt rquickjs **js-http-runner** `wasi:http` component (for
     /// `http_server_js`), compiled + prepared lazily on first use.
     js_http_runner: std::sync::OnceLock<PreparedHttp>,
+    /// Per-app **js-runner override** (the [`WasmRuntimeBuilder::js_runner`] bytes): an app
+    /// with TS guests that call custom bridges builds its own js-runner (the custom bridge
+    /// imports + glue compiled in) and supplies it here; `None` uses the embedded runner.
+    js_runner_wasm: Option<Vec<u8>>,
+    /// Per-app **js-http-runner override** ([`WasmRuntimeBuilder::js_http_runner`]); `None`
+    /// uses the embedded runner.
+    js_http_runner_wasm: Option<Vec<u8>>,
     shared: Arc<Counters>,
     epoch_stop: Arc<AtomicBool>,
     epoch_ticker: Option<JoinHandle<()>>,
@@ -222,6 +229,8 @@ pub struct WasmRuntimeBuilder {
     store: Option<std::path::PathBuf>,
     overflow: bool,
     bridges: Box<BridgeExtension>,
+    js_runner_wasm: Option<Vec<u8>>,
+    js_http_runner_wasm: Option<Vec<u8>>,
 }
 
 impl WasmRuntimeBuilder {
@@ -233,6 +242,8 @@ impl WasmRuntimeBuilder {
             store: None,
             overflow: false,
             bridges: Box::new(|_| Ok(())),
+            js_runner_wasm: None,
+            js_http_runner_wasm: None,
         }
     }
 
@@ -278,6 +289,21 @@ impl WasmRuntimeBuilder {
         self
     }
 
+    /// Use a **per-app js-runner** (TS/JS actor/service guests) instead of the embedded one —
+    /// the runner an app rebuilds with its custom bridges' host imports + glue compiled in
+    /// (`rusm build` produces it). A TS guest that imports no custom bridge needs no override.
+    pub fn js_runner(mut self, wasm: impl Into<Vec<u8>>) -> Self {
+        self.js_runner_wasm = Some(wasm.into());
+        self
+    }
+
+    /// Use a **per-app js-http-runner** (TS `fetch` handlers) instead of the embedded one —
+    /// the HTTP runner twin of [`js_runner`](Self::js_runner).
+    pub fn js_http_runner(mut self, wasm: impl Into<Vec<u8>>) -> Self {
+        self.js_http_runner_wasm = Some(wasm.into());
+        self
+    }
+
     /// Construct the [`WasmRuntime`]. Must run inside a Tokio runtime (it starts the epoch
     /// ticker).
     pub fn build(self) -> Result<WasmRuntime> {
@@ -296,14 +322,18 @@ impl WasmRuntimeBuilder {
             Some(path) => Some(Arc::new(rusm_kv::Store::open(path)?)),
             None => None,
         };
-        WasmRuntime::assemble(
+        let mut runtime = WasmRuntime::assemble(
             self.rt,
             engine,
             overflow,
             self.max_instances,
             store,
             self.bridges.as_ref(),
-        )
+        )?;
+        // Per-app JS-runner overrides (consumed lazily by `js_runner`/`js_http_runner`).
+        runtime.js_runner_wasm = self.js_runner_wasm;
+        runtime.js_http_runner_wasm = self.js_http_runner_wasm;
+        Ok(runtime)
     }
 }
 
@@ -459,6 +489,8 @@ impl WasmRuntime {
             overflow_component_linker,
             js_runner: std::sync::OnceLock::new(),
             js_http_runner: std::sync::OnceLock::new(),
+            js_runner_wasm: None,
+            js_http_runner_wasm: None,
             shared: Arc::new(Counters::default()),
             epoch_stop,
             epoch_ticker: Some(epoch_ticker),
@@ -656,15 +688,14 @@ impl WasmRuntime {
     /// so non-JS nodes pay nothing. Backs `spawn_js` and TS-service registration.
     fn js_runner(&self) -> &PreparedComponent {
         self.js_runner.get_or_init(|| {
-            // The runner is a known-good embedded artifact; a failure here is a
-            // build bug, not a runtime condition.
+            // The embedded runner is a known-good artifact; a per-app override is produced by
+            // `rusm build` (custom bridges compiled in). A failure here is a build bug.
+            let wasm = self.js_runner_wasm.as_deref().unwrap_or(JS_RUNNER_WASM);
             self.prepare_component(
-                &self
-                    .compile_component(JS_RUNNER_WASM)
-                    .expect("embedded js-runner compiles"),
+                &self.compile_component(wasm).expect("js-runner compiles"),
                 "run",
             )
-            .expect("embedded js-runner prepares")
+            .expect("js-runner prepares")
         })
     }
 

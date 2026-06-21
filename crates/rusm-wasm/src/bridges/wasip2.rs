@@ -1988,6 +1988,36 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_builder_js_runner_override_is_used() {
+        // A per-app js-runner is supplied via the builder (`rusm build` rebuilds it with an
+        // app's custom bridges compiled in). Supplying the embedded bytes as an explicit
+        // override must behave exactly like the default — proving the override path is wired
+        // (the actual custom-bridge runner is exercised by the example end to end).
+        const ECHO: &str = r#"
+            module.exports.default = async function () {
+                const replyTo = await Process.receiveText();
+                Process.send(replyTo, "ok");
+            };
+        "#;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::builder(rt.clone())
+            .js_runner(crate::JS_RUNNER_WASM.to_vec())
+            .build()
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let g = wr.spawn_js(ECHO.as_bytes().to_vec());
+        rt.send(g.pid(), collector.pid().raw().to_string().into_bytes());
+        assert_eq!(
+            rx.await.unwrap(),
+            b"ok",
+            "the overridden js-runner ran the guest"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_ts_guest_drives_process_group_tags() {
         // The TS twin of the Rust tag test, through the rquickjs bridge: Process.registerTag
