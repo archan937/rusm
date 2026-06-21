@@ -144,11 +144,15 @@ the committed generated files are byte-identical to what `rusm build` emits).
 >
 > The platform pieces underneath: the runtime seam + composable builder, `rusm_cli::host`, the
 > default-deny whitelist, discovery + host-crate codegen + guest-WIT vendoring + per-app js-runner
-> build, `rusm build`/`serve` wiring, and `rusm new --bridges` scaffolding. **TS type surface:** v1
-> supports `string` params + `string`/no result (the common provider shape); a richer WIT type
-> fails *loudly* at build with the Rust/Go-guest workaround — never a silent half-typed bridge
-> (serde-typed richer types are the documented next extension). Remaining: a genius-rusm native
-> bridge (real-world proof) and the optional richer-TS-types extension.
+> build, `rusm build`/`serve` wiring, and `rusm new --bridges` scaffolding. **TS type surface:** the
+> full WIT value-type set — **records, variants, enums, lists, options, results, tuples,
+> primitives** — mapped to TypeScript (the generated `bridges.d.ts`) and marshaled JS↔Rust via
+> `serde_json` at the QuickJS boundary, so the host call stays the *same typed* `__<bridge>__<func>`
+> WIT binding a string takes (no generic dispatcher; `rusm-cli::witmap` does the lowering). A TS
+> guest is now fully equal to Rust/Go. The few non-value WIT shapes (resources/handles/streams, and
+> a couple of exotic borrow-form params like `option<list>`) fail *loudly* at build with the
+> Rust/Go-guest workaround — never a silent half-typed bridge. Remaining: a genius-rusm native
+> bridge (real-world proof).
 
 ---
 

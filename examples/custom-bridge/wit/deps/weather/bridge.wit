@@ -7,4 +7,27 @@ interface forecast {
     /// Look up a forecast for `city`. Backed by a native host function the app registers;
     /// the result is composed host-side and returned to the guest, typed.
     lookup: func(city: string) -> string;
+
+    /// Temperature units a caller can ask for.
+    enum units { celsius, fahrenheit }
+
+    /// Sky condition the host reports back.
+    enum sky { sunny, cloudy, rainy }
+
+    /// A structured query — the richer-typed companion to `lookup`.
+    record query {
+        city: string,
+        units: units,
+    }
+
+    /// A structured forecast: the typed record the host returns.
+    record report {
+        city: string,
+        sky: sky,
+        temp: s32,
+    }
+
+    /// Structured forecast for `query` — proves a custom bridge carries arbitrary WIT value
+    /// types (records + enums), marshaled identically for Rust, Go, and TS guests.
+    detailed: func(query: query) -> report;
 }

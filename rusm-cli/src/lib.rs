@@ -18,6 +18,8 @@ mod render;
 mod repl;
 mod scaffold;
 mod template;
+/// WIT value-type → Rust/TS mapping for arbitrary-typed TS custom bridges.
+pub mod witmap;
 
 pub use app::{capabilities_for, serve_apps, spawn_components, Hosted, ServedEndpoint};
 pub use cli::{

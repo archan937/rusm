@@ -15,4 +15,20 @@ pub mod api {
         let city = p.get("city").unwrap_or("nowhere");
         Response::text(crate::forecast::lookup(city))
     }
+
+    /// `GET /detailed/:city` → the **rich-typed** bridge call: hand the host a `query` record,
+    /// get a `report` record (with an enum) back — native WIT types, no marshaling.
+    pub fn detailed(_req: Request, p: Params) -> Response {
+        use crate::forecast::{detailed, Query, Sky, Units};
+        let r = detailed(&Query {
+            city: p.get("city").unwrap_or("nowhere").to_string(),
+            units: Units::Celsius,
+        });
+        let sky = match r.sky {
+            Sky::Sunny => "sunny",
+            Sky::Cloudy => "cloudy",
+            Sky::Rainy => "rainy",
+        };
+        Response::text(format!("{sky} in {}, {}°C", r.city, r.temp))
+    }
 }

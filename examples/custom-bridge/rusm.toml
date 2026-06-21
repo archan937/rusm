@@ -20,6 +20,9 @@ listen = "127.0.0.1:8080"
 [serve.routes]
 "GET /forecast/:city" = "api#forecast"
 "GET /go/forecast/:city" = "go-api#forecast"
+# The rich-typed bridge call (record in, record-with-enum out) from each compiled guest.
+"GET /detailed/:city" = "api#detailed"
+"GET /go/detailed/:city" = "go-api#detailed"
 
 # A WebSocket listener whose per-connection handler is the TS guest (`tsweather`): each text
 # frame is a city, the reply is the bridge's forecast — the TS twin of the Rust/Go handlers.

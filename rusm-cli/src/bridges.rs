@@ -133,71 +133,14 @@ pub fn parse_contract(wit: &Path) -> Result<Contract> {
     })
 }
 
-/// One custom bridge function the generated js-runner glue exposes to a TS guest: which
-/// interface + function it is, and its parameter names. (v1 supports `string` params and a
-/// `string`/no result — the example's shape and most provider bridges; richer WIT types are a
-/// documented follow-on that fails loudly, never silently.)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BridgeFn {
-    pub interface: String,
-    pub func: String,
-    pub params: Vec<String>,
-    /// Whether the function returns a `string` (vs no result) — the JS wrapper returns the
-    /// value or `undefined` accordingly.
-    pub returns_string: bool,
-}
-
-/// Parse a bridge's `bridge.wit` into the functions a TS guest can call. Validates that every
-/// param is `string` and each result is `string` or none — the v1 TS type surface; a richer
-/// type fails **loudly** here, naming the function + the Rust/Go-guest workaround, so a TS
-/// guest never silently gets a half-typed bridge.
-pub fn bridge_functions(wit: &Path) -> Result<Vec<BridgeFn>> {
-    let mut resolve = Resolve::new();
-    let (pkg_id, _) = resolve
-        .push_path(wit)
-        .with_context(|| format!("parsing bridge WIT {}", wit.display()))?;
-    let pkg = &resolve.packages[pkg_id];
-    let mut out = Vec::new();
-    for (iface_name, &iface_id) in &pkg.interfaces {
-        for (fn_name, function) in &resolve.interfaces[iface_id].functions {
-            let unsupported = |what: &str| {
-                anyhow::anyhow!(
-                    "custom bridge function `{iface_name}/{fn_name}` {what} — TS guests support \
-                     `string` params and a `string`/no result today; call it from a Rust or Go \
-                     guest for richer types, or keep the bridge's TS-facing functions to strings"
-                )
-            };
-            let mut params = Vec::new();
-            for param in &function.params {
-                if param.ty != wit_parser::Type::String {
-                    return Err(unsupported(&format!(
-                        "has a non-string param `{}`",
-                        param.name
-                    )));
-                }
-                params.push(param.name.clone());
-            }
-            let returns_string = match &function.result {
-                None => false,
-                Some(wit_parser::Type::String) => true,
-                Some(_) => return Err(unsupported("has a non-string result")),
-            };
-            out.push(BridgeFn {
-                interface: iface_name.clone(),
-                func: fn_name.clone(),
-                params,
-                returns_string,
-            });
-        }
-    }
-    Ok(out)
-}
-
 /// Stage a per-app **js-runner** build: copy the runner crate `src` into `dest` (minus
-/// `target/`), overwrite `src/bridges_gen.rs` with the generated glue, and inject each custom
-/// bridge into `wit/world.wit`'s `process` world (the import) + `wit/deps/<name>/` (the
-/// contract). The staged crate then builds (cargo → wizer → wasm-tools) into a runner with the
-/// app's bridges compiled in. Idempotent (the dest is rebuilt).
+/// `target/`), overwrite `src/bridges_gen.rs` with the generated glue, and write a scoped
+/// `wit-bridges/` package — a synthesized `bridge-imports` world importing every custom bridge,
+/// with each contract vendored under `wit-bridges/deps/<name>/`. `bridges_gen`'s own
+/// `generate!` binds that world (serde-deriving, self-contained — no WASI types), keeping the
+/// runner's `process`-world bindings untouched. The staged crate then builds (cargo → wizer →
+/// wasm-tools) into a runner with the app's bridges compiled in. Idempotent (the dest is
+/// rebuilt).
 pub fn stage_js_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Result<()> {
     if dest.exists() {
         std::fs::remove_dir_all(dest).with_context(|| format!("clearing {}", dest.display()))?;
@@ -207,26 +150,31 @@ pub fn stage_js_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Resul
         dest.join("src/bridges_gen.rs"),
         gen_runner_bridges_gen(bridges)?,
     )?;
+    stage_bridge_imports_wit(dest, bridges)
+}
 
-    let world_path = dest.join("wit/world.wit");
-    let world = std::fs::read_to_string(&world_path)
-        .with_context(|| format!("reading {}", world_path.display()))?;
+/// Write the scoped `wit-bridges/` package the runner's `bridges_gen` `generate!` binds: a
+/// `bridge-imports` world importing each custom bridge interface, with every contract vendored
+/// as a dep. Self-contained (only the bridge packages), so serde derives never reach WASI.
+fn stage_bridge_imports_wit(dest: &Path, bridges: &[BridgeSpec]) -> Result<()> {
     let mut imports = String::new();
     for bridge in bridges {
         for iface in parse_contract(&bridge.wit())?.interface_refs() {
             imports.push_str(&format!("    import {iface};\n"));
         }
-        vendor_into_component(dest, bridge)?; // dest/wit/deps/<name>/bridge.wit
+        let dep = dest.join("wit-bridges/deps").join(&bridge.name);
+        std::fs::create_dir_all(&dep).with_context(|| format!("creating {}", dep.display()))?;
+        std::fs::copy(bridge.wit(), dep.join("bridge.wit"))
+            .with_context(|| format!("vendoring bridge `{}`", bridge.name))?;
     }
-    // Insert the custom imports just before the process world's `export run` (the one export
-    // in the canonical rusm:runtime WIT; the `imports` world has none, so `replacen(.., 1)`
-    // targets `process`).
-    let world = world.replacen(
-        "    export run: func();",
-        &format!("{imports}    export run: func();"),
-        1,
+    let world = format!(
+        "// GENERATED by `rusm build` — do not edit. The scoped world `bridges_gen` binds: the\n\
+         // app's custom bridges alone (self-contained), so its serde-deriving `generate!` never\n\
+         // touches WASI types. Regenerated from `bridges/` each build.\n\
+         package rusm:bridges@0.1.0;\n\nworld bridge-imports {{\n{imports}}}\n"
     );
-    std::fs::write(&world_path, world)?;
+    std::fs::write(dest.join("wit-bridges/world.wit"), world)
+        .with_context(|| format!("writing {}/wit-bridges/world.wit", dest.display()))?;
     Ok(())
 }
 
@@ -237,67 +185,57 @@ fn ident(name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// Generate the per-app js-runner's `bridges_gen.rs` (the [`register`] host primitives + the
-/// `BRIDGE_JS` TS API) for every custom bridge. Each function becomes a typed
-/// `__<bridge>__<func>` primitive that calls the *typed* wit-bindgen binding (no dispatcher),
-/// and `globalThis.<bridge>.<func>` wraps it. Mirrors the committed empty `bridges_gen.rs`, so
-/// the per-app runner compiles with the same module shape.
+/// Generate the per-app js-runner's `bridges_gen.rs` (a scoped, serde-deriving `generate!` over
+/// the custom bridges' self-contained WIT + the [`register`] host primitives + the `BRIDGE_JS`
+/// TS API). Each function becomes a typed `__<bridge>__<func>` primitive that JSON-deserializes
+/// its args, calls the *typed* wit-bindgen binding (no dispatcher), and JSON-serializes the
+/// result; `globalThis.<bridge>.<func>` wraps it. Mirrors the committed empty `bridges_gen.rs`'s
+/// `register`/`BRIDGE_JS` shape, so the runner compiles either way.
+///
+/// The `generate!` is **scoped to the bridge package** (`world: "bridge-imports"` over
+/// `wit-bridges/`, no `generate_all`) so serde derives land only on the bridge's own value
+/// types — never WASI types, which can wrap resources serde cannot derive. It sits at this
+/// module's top level, so the binding paths witmap emits (`<ns>::<pkg>::<iface>::…`) resolve
+/// relative to `bridges_gen` without a prefix.
 ///
 /// [`register`]: it's the generated function the runner's `boot_bridge` calls.
 pub fn gen_runner_bridges_gen(bridges: &[BridgeSpec]) -> Result<String> {
     let mut registers = String::new();
     let mut js = String::new();
     for bridge in bridges {
-        let contract = parse_contract(&bridge.wit())?;
-        let (ns, pkg) = (ident(&contract.namespace), ident(&contract.name));
         let object = ident(&bridge.name);
+        let api = crate::witmap::bridge_api(&bridge.wit())?;
         js.push_str(&format!(
             "globalThis.{object} = globalThis.{object} || {{}};\n"
         ));
-        for f in bridge_functions(&bridge.wit())? {
-            let iface = ident(&f.interface);
-            let prim = format!("__{object}__{}", ident(&f.func));
-            let func = ident(&f.func);
-            // Rust glue: a closure taking each string param, calling the typed binding.
-            let closure_params = f
+        for f in &api.functions {
+            registers.push_str(&runner_fn_glue(&object, f));
+            // JS wrapper: JSON-marshal the args to the typed primitive, parse the result.
+            let names = f
                 .params
                 .iter()
-                .map(|p| format!("{}: String", ident(p)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let call_args = f
-                .params
-                .iter()
-                .map(|p| format!("&{}", ident(p)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            registers.push_str(&format!(
-                "    globals\n\
-                 \x20       .set(\n\
-                 \x20           \"{prim}\",\n\
-                 \x20           Function::new(ctx.clone(), |{closure_params}| {{\n\
-                 \x20               crate::{ns}::{pkg}::{iface}::{func}({call_args})\n\
-                 \x20           }})\n\
-                 \x20           .expect(\"{prim}\"),\n\
-                 \x20       )\n\
-                 \x20       .expect(\"{prim}\");\n"
-            ));
-            // JS wrapper: `globalThis.<bridge>.<func> = (params) => __<bridge>__<func>(params)`.
-            let js_params = f
-                .params
-                .iter()
-                .map(|p| ident(p))
+                .map(|p| p.name.clone())
                 .collect::<Vec<_>>()
                 .join(", ");
             js.push_str(&format!(
-                "globalThis.{object}.{func} = ({js_params}) => {prim}({js_params});\n"
+                "globalThis.{object}.{0} = ({names}) => JSON.parse(__{object}__{0}(JSON.stringify([{names}])));\n",
+                f.name
             ));
         }
     }
     Ok(format!(
         "//! GENERATED by `rusm build` — do not edit. Per-app custom-bridge glue for the\n\
-         //! js-runner: each `__<bridge>__<func>` primitive calls the typed wit-bindgen binding,\n\
-         //! and `BRIDGE_JS` exposes `globalThis.<bridge>`. Regenerated from `bridges/` each build.\n\
+         //! js-runner: a serde-deriving `generate!` scoped to the bridge package, then each\n\
+         //! `__<bridge>__<func>` primitive deserializes its JSON args, calls the typed\n\
+         //! wit-bindgen binding (no dispatcher), and returns the JSON result; `BRIDGE_JS`\n\
+         //! exposes `globalThis.<bridge>`. Regenerated from `bridges/` each build.\n\
+         wit_bindgen::generate!({{\n\
+         \x20   world: \"bridge-imports\",\n\
+         \x20   path: \"wit-bridges\",\n\
+         \x20   generate_all,\n\
+         \x20   additional_derives: [serde::Serialize, serde::Deserialize],\n\
+         }});\n\
+         \n\
          use rquickjs::{{Ctx, Function, Object}};\n\
          \n\
          pub fn register<'js>(ctx: &Ctx<'js>, globals: &Object<'js>) {{\n\
@@ -307,30 +245,100 @@ pub fn gen_runner_bridges_gen(bridges: &[BridgeSpec]) -> Result<String> {
     ))
 }
 
-/// Generate the **TypeScript ambient types** for the app's custom bridges, so a TS guest
-/// calls `weather.lookup(city)` fully typed (no hand-written `declare`). Written by `rusm
-/// build` to `<app>/bridges.d.ts`; a TS component references it. Mirrors the v1 type surface
-/// (`string` params, `string`/no result) the codegen + `bridge_functions` enforce.
+/// One function's host-primitive registration: a typed `__<bridge>__<func>` that deserializes
+/// its JSON-array arguments into the owned Rust param tuple, calls the *typed* wit-bindgen
+/// binding (with the borrow that binding expects), and returns the JSON-serialized result.
+/// Bad arguments throw a JS `TypeError` (not a process trap).
+fn runner_fn_glue(object: &str, f: &crate::witmap::Func) -> String {
+    use crate::witmap::Borrow;
+    let prim = format!("__{object}__{}", f.name);
+    // A 0-arg function ignores `ctx`/`__args` (underscore them to avoid unused warnings).
+    let (ctx_name, args_name) = if f.params.is_empty() {
+        ("_ctx", "_args")
+    } else {
+        ("ctx", "__args")
+    };
+    let deser = if f.params.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        let types: Vec<&str> = f.params.iter().map(|p| p.owned_rust.as_str()).collect();
+        // A 1-tuple needs the trailing comma.
+        let (pat, ty) = if f.params.len() == 1 {
+            (format!("({},)", names[0]), format!("({},)", types[0]))
+        } else {
+            (
+                format!("({})", names.join(", ")),
+                format!("({})", types.join(", ")),
+            )
+        };
+        format!(
+            "            let {pat}: {ty} = match ::serde_json::from_str(&__args) {{\n\
+             \x20               ::core::result::Result::Ok(v) => v,\n\
+             \x20               ::core::result::Result::Err(e) => return ::core::result::Result::Err(::rquickjs::Exception::throw_type(&ctx, &(::std::string::String::from(\"bridge {object}.{}: bad arguments: \") + &e.to_string()))),\n\
+             \x20           }};\n",
+            f.name
+        )
+    };
+    let call_args = f
+        .params
+        .iter()
+        .map(|p| match p.borrow {
+            Borrow::Value => p.name.clone(),
+            Borrow::Ref => format!("&{}", p.name),
+            Borrow::AsDeref => format!("{}.as_deref()", p.name),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "    globals\n\
+         \x20       .set(\n\
+         \x20           \"{prim}\",\n\
+         \x20           Function::new(ctx.clone(), |{ctx_name}: Ctx<'_>, {args_name}: ::std::string::String| -> ::rquickjs::Result<::std::string::String> {{\n\
+         {deser}\
+         \x20               let __r = {}({call_args});\n\
+         \x20               ::core::result::Result::Ok(::serde_json::to_string(&__r).expect(\"serialize bridge result\"))\n\
+         \x20           }})\n\
+         \x20           .expect(\"{prim}\"),\n\
+         \x20       )\n\
+         \x20       .expect(\"{prim}\");\n",
+        f.call_path
+    )
+}
+
+/// Generate the **TypeScript ambient types** for the app's custom bridges, so a TS guest calls
+/// them fully typed (no hand-written `declare`) over arbitrary WIT value types. Written by
+/// `rusm build` to `<app>/bridges.d.ts`; a TS component `/// <reference>`s it. Emits each named
+/// type's declaration (interface / union) once, then the `declare const <bridge>` globals.
 pub fn gen_bridge_dts(bridges: &[BridgeSpec]) -> Result<String> {
+    let mut decls = std::collections::BTreeMap::new();
+    let mut globals = String::new();
+    for bridge in bridges {
+        let object = ident(&bridge.name);
+        let api = crate::witmap::bridge_api(&bridge.wit())?;
+        decls.extend(api.ts_decls);
+        globals.push_str(&format!("declare const {object}: {{\n"));
+        for f in &api.functions {
+            let params = f
+                .params
+                .iter()
+                .map(|p| format!("{}: {}", p.name, p.ts))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = f.result_ts.as_deref().unwrap_or("void");
+            globals.push_str(&format!("  {}({params}): {ret};\n", f.name));
+        }
+        globals.push_str("};\n\n");
+    }
     let mut out = String::from(
         "// GENERATED by `rusm build` — do not edit. Ambient types for the app's custom bridges,\n\
          // so a TS guest calls them typed. Regenerated from bridges/ each build.\n\n",
     );
-    for bridge in bridges {
-        let object = ident(&bridge.name);
-        out.push_str(&format!("declare const {object}: {{\n"));
-        for f in bridge_functions(&bridge.wit())? {
-            let params = f
-                .params
-                .iter()
-                .map(|p| format!("{}: string", ident(p)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let ret = if f.returns_string { "string" } else { "void" };
-            out.push_str(&format!("  {}({params}): {ret};\n", ident(&f.func)));
-        }
-        out.push_str("};\n\n");
+    for decl in decls.values() {
+        out.push_str(decl);
+        out.push_str("\n\n");
     }
+    out.push_str(&globals);
     Ok(out)
 }
 
@@ -683,43 +691,25 @@ mod tests {
     }
 
     #[test]
-    fn bridge_functions_extracts_string_signatures_and_rejects_richer_types() {
-        let fns = bridge_functions(&weather_bridge().wit()).unwrap();
-        assert_eq!(
-            fns,
-            [BridgeFn {
-                interface: "forecast".into(),
-                func: "lookup".into(),
-                params: vec!["city".into()],
-                returns_string: true,
-            }]
-        );
-        // A non-string signature fails loudly (not a silent half-typed bridge).
-        let dir = app_dir("richer");
-        std::fs::write(
-            dir.join("b.wit"),
-            "package x:y@0.1.0;\ninterface i { f: func(n: u32) -> string; }\n",
-        )
-        .unwrap();
-        let err = bridge_functions(&dir.join("b.wit"))
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("non-string param") && err.contains("Rust or Go"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn gen_runner_bridges_gen_wires_the_typed_primitive_and_js() {
+    fn gen_runner_bridges_gen_marshals_args_through_the_typed_binding() {
         let gen = gen_runner_bridges_gen(std::slice::from_ref(&weather_bridge())).unwrap();
-        // The typed primitive calls the typed wit-bindgen binding (no dispatcher).
+        // The typed primitive deserializes the JSON arg tuple into owned Rust, calls the typed
+        // wit-bindgen binding (no dispatcher) with the borrow it expects, and serializes back.
         assert!(gen.contains("\"__weather__lookup\""));
-        assert!(gen.contains("|city: String|"));
-        assert!(gen.contains("crate::weather::bridge::forecast::lookup(&city)"));
-        // The JS wrapper exposes globalThis.weather.lookup over the primitive.
+        assert!(gen.contains("let (city,): (String,) = match ::serde_json::from_str(&__args)"));
+        // The binding path is relative to `bridges_gen` (where the scoped `generate!` lives).
+        assert!(gen.contains("weather::bridge::forecast::lookup(&city)"));
+        assert!(gen.contains("::serde_json::to_string(&__r)"));
+        // A scoped, serde-deriving `generate!` over the bridge package heads the module.
+        assert!(gen.contains("wit_bindgen::generate!({"));
+        assert!(gen.contains("world: \"bridge-imports\""));
+        assert!(gen.contains("generate_all"));
+        assert!(gen.contains("additional_derives: [serde::Serialize, serde::Deserialize]"));
+        // The JS wrapper marshals args→JSON to the primitive and parses the result back.
         assert!(gen.contains("pub const BRIDGE_JS: &str ="));
-        assert!(gen.contains("globalThis.weather.lookup = (city) => __weather__lookup(city);"));
+        assert!(gen.contains(
+            "globalThis.weather.lookup = (city) => JSON.parse(__weather__lookup(JSON.stringify([city])));"
+        ));
         // Shape matches the committed empty module (register + BRIDGE_JS).
         assert!(gen.contains("pub fn register<'js>(ctx: &Ctx<'js>, globals: &Object<'js>)"));
     }
@@ -732,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_js_runner_injects_the_glue_and_the_wit_import() {
+    fn stage_js_runner_writes_the_glue_and_the_scoped_bridge_world() {
         // Stage a per-app js-runner from the real runner source; the slow cargo→wizer build
         // itself is exercised by the example e2e — here we check the (fast) staging.
         let dir = app_dir("stage-runner");
@@ -743,16 +733,19 @@ mod tests {
             std::slice::from_ref(&weather_bridge()),
         )
         .unwrap();
-        // bridges_gen overwritten with the generated glue.
+        // bridges_gen overwritten with the generated glue (relative binding path).
         let gen = std::fs::read_to_string(dest.join("src/bridges_gen.rs")).unwrap();
         assert!(gen.contains("__weather__lookup"));
-        assert!(gen.contains("crate::weather::bridge::forecast::lookup(&city)"));
-        // the custom import injected into the process world (before `export run`), and the
-        // contract vendored as a dep.
-        let world = std::fs::read_to_string(dest.join("wit/world.wit")).unwrap();
-        let process = world.split("world process {").nth(1).unwrap();
-        assert!(process.contains("import weather:bridge/forecast@0.1.0;"));
-        assert!(dest.join("wit/deps/weather/bridge.wit").is_file());
+        assert!(gen.contains("weather::bridge::forecast::lookup(&city)"));
+        // the scoped `bridge-imports` world imports the bridge, with the contract vendored as a
+        // dep — separate from the runner's untouched `process` world.
+        let world = std::fs::read_to_string(dest.join("wit-bridges/world.wit")).unwrap();
+        assert!(world.contains("world bridge-imports {"));
+        assert!(world.contains("import weather:bridge/forecast@0.1.0;"));
+        assert!(dest.join("wit-bridges/deps/weather/bridge.wit").is_file());
+        // the runner's own `process` world is left as-is (no bridge import bleeds in).
+        let process = std::fs::read_to_string(dest.join("wit/world.wit")).unwrap();
+        assert!(!process.contains("weather:bridge"));
         // the runner source came along; `target/` did not.
         assert!(dest.join("src/lib.rs").is_file() && dest.join("Cargo.toml").is_file());
         assert!(

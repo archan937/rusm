@@ -10,6 +10,7 @@
 //! which `bindgen!`s the synthesized `wit/` world.
 
 use crate::bindings::weather::bridge::forecast;
+use crate::bindings::weather::bridge::forecast::{Query, Report, Sky, Units};
 use rusm_wasm::wasmtime::component::HasSelf;
 use rusm_wasm::{wasmtime, BridgeHost, BridgeLinker};
 
@@ -23,5 +24,19 @@ impl forecast::Host for BridgeHost {
         // A real bridge would call a weather service; this proves the typed call reaches
         // genuine host state — the calling process's pid.
         format!("sunny in {city} (served by pid {})", self.pid())
+    }
+
+    async fn detailed(&mut self, query: Query) -> Report {
+        // The typed record/enum round-trip: a guest (Rust, Go, or TS) hands over a `query`
+        // record, the host returns a `report` record — same native types in every language.
+        let temp = match query.units {
+            Units::Celsius => 21,
+            Units::Fahrenheit => 70,
+        };
+        Report {
+            city: query.city,
+            sky: Sky::Sunny,
+            temp,
+        }
     }
 }
