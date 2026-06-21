@@ -254,7 +254,6 @@ async fn cmd_attach(mut args: Arguments) {
 /// node's processes. The served runtime + held handles keep everything alive for
 /// the lifetime of the server (which runs until Ctrl-C or a bind error).
 async fn start_node(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
     let cfg = load_node_config(config, listen);
     let rt = Runtime::new();
     // `wasm` + `hosted` stay bound for the whole function: they own the hosted
@@ -283,14 +282,11 @@ fn node_name() -> String {
         .unwrap_or_else(|| "rusm".to_string())
 }
 
-/// Runs the app's components: load `.env` (process env wins), then register each
-/// `[components.<name>]` entry from `./wasm` under its capability profile (booting +
-/// supervising the resident ones), and wait for Ctrl-C. `wasm` + `hosted` keep the
+/// Runs the app's components: register each `[components.<name>]` entry from `./wasm`
+/// under its capability profile (booting + supervising the resident ones), and wait for
+/// Ctrl-C (`.env` is loaded in `host::build_runtime`). `wasm` + `hosted` keep the
 /// processes alive.
 async fn run_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
-    // Environment variables the Rust way: process env first, then ./.env.
-    dotenvy::dotenv().ok();
-
     let cfg = load_node_config(config, listen);
     let rt = Runtime::new();
     let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;
@@ -312,8 +308,6 @@ async fn run_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<(
 /// accept-loop tasks keep the servers up. This is the *server* side of a fair
 /// benchmark: the node only serves; load is driven out-of-process (`rusm-loadtest`).
 async fn serve_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
-    // Env the Rust way: process env first, then ./.env.
-    dotenvy::dotenv().ok();
     let root = Path::new(".");
     // A custom-bridge app serves via its OWN host binary, which has the bridge impls
     // compiled in (the prebuilt `rusm` can't host them). Run it — `rusm build` produced it.
@@ -343,7 +337,6 @@ fn run_host_binary(root: &Path) -> anyhow::Result<()> {
 /// rebuild and reload the components (kill + respawn). Ctrl-C stops. Watching is a
 /// dependency-free mtime poll (a ~400 ms scan, skipping build output).
 async fn dev(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
     let cfg = load_node_config(config, listen);
     let rt = Runtime::new();
     let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;

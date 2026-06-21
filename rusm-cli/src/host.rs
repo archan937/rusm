@@ -28,6 +28,11 @@ pub fn build_runtime(
     cfg: &NodeConfig,
     extend: impl Fn(&mut BridgeLinker) -> wasmtime::Result<()> + 'static,
 ) -> Result<WasmRuntime> {
+    // Environment the Rust way: process env first, then `./.env`. Loaded here — the one
+    // construction path — so an app's own host binary (the custom-bridge model) sees its
+    // `.env` exactly as `rusm serve` does, and a bridge's host impl can read a secret the
+    // manifest never grants to any guest.
+    dotenvy::dotenv().ok();
     let mut builder = WasmRuntime::builder(rt).bridges(extend);
     if let Some(rel) = &cfg.node.store {
         let path = Path::new(".").join(rel);
