@@ -20,15 +20,13 @@ const sections = [
       {
         text: 'Getting started',
         items: [
-          { text: 'Quick start', link: '/getting-started#quick-start' },
           { text: 'Install', link: '/getting-started#install' },
+          { text: 'Quick start', link: '/getting-started#quick-start' },
         ],
       },
       {
-        text: 'Using RUSM',
+        text: 'Build an app',
         items: [
-          { text: 'The OTP core (no Wasm)', link: '/getting-started#otp-core' },
-          { text: 'Embed a .wasm', link: '/getting-started#embed-wasm' },
           { text: 'The app model', link: '/getting-started#app-model' },
           { text: 'Write a Rust component', link: '/getting-started#rust-component' },
           { text: 'Write a TypeScript component', link: '/getting-started#ts-component' },
@@ -39,9 +37,14 @@ const sections = [
         text: 'Inside a component',
         items: [
           { text: 'Process management', link: '/getting-started#process-management' },
-          { text: 'Streaming', link: '/getting-started#streaming' },
           { text: 'Capabilities & sandboxing', link: '/getting-started#capabilities' },
           { text: 'Observe a node', link: '/getting-started#observe' },
+        ],
+      },
+      {
+        text: 'Advanced',
+        items: [
+          { text: 'Embedding RUSM as a library', link: '/getting-started#embedding' },
         ],
       },
       {
@@ -75,6 +78,7 @@ const sections = [
         text: 'Serving & streaming',
         items: [
           { text: 'The serving model', link: '/concepts/serving-model' },
+          { text: 'Serving HTTP, WS & SSE', link: '/serving-http-ws-sse' },
           { text: 'Byte streams', link: '/concepts/byte-streams' },
         ],
       },
@@ -83,13 +87,14 @@ const sections = [
         items: [
           { text: 'The app model', link: '/concepts/app-model' },
           { text: 'Distributed nodes', link: '/concepts/distributed-nodes' },
+          { text: 'The distributed model', link: '/04-distributed-model' },
           { text: 'Live attach', link: '/concepts/live-attach' },
         ],
       },
     ],
   },
   {
-    // Look it up: exact CLI commands, manifest fields, the host ABI, and the wire models.
+    // Pure lookup: exact CLI commands, manifest fields, the host ABI, the term map.
     text: 'Reference',
     items: [
       {
@@ -100,17 +105,9 @@ const sections = [
         ],
       },
       {
-        text: 'APIs & models',
+        text: 'API & glossary',
         items: [
           { text: 'Host ABI', link: '/05-host-abi' },
-          { text: 'Serving HTTP/WS/SSE', link: '/serving-http-ws-sse' },
-          { text: 'Distributed model', link: '/04-distributed-model' },
-        ],
-      },
-      {
-        text: 'Appendix',
-        items: [
-          { text: 'Benchmark & dashboard', link: '/03-benchmark-dashboard' },
           { text: 'Glossary', link: '/07-glossary' },
         ],
       },
@@ -134,6 +131,7 @@ const sections = [
           { text: 'Architecture', link: '/01-architecture' },
           { text: 'Roadmap', link: '/02-roadmap' },
           { text: 'Development', link: '/06-development' },
+          { text: 'Benchmark & dashboard', link: '/03-benchmark-dashboard' },
         ],
       },
     ],

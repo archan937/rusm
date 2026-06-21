@@ -4,6 +4,31 @@ The dashboard (`bench/dashboard`, React on Bun, uPlot charts) is the north-star
 artifact — how we *see* every phase's progress. It has two views fed by one
 WebSocket stream from a node.
 
+## Running it
+
+The dashboard lives in the repo, so clone and run it with `make`:
+
+```sh
+git clone https://github.com/archan937/rusm && cd rusm
+make dashboard      # builds + starts a node, then the dashboard — open the printed URL
+```
+
+Pick a scenario (e.g. **spawn storm**, **stream pipe**), hit **Run**, and watch real
+throughput, latency, and the live observer — everything driven by the real runtime.
+
+| Command | What it does |
+| --- | --- |
+| `make dashboard` | Build + start the benchmark node, then the dashboard (the headline demo). |
+| `make node` | Start the benchmark node on `ws://127.0.0.1:4000` (release). |
+| `make ui` | Start only the dashboard (expects a node already running). |
+| `make run SCENARIO=… SECONDS=…` | Run a benchmark scenario in the terminal. |
+| `make example EX=…` | Run a bundled example (`host_components`, …). |
+| `make test` / `make cov` | All Rust + dashboard tests / coverage. |
+| `make fmt` / `make fmt-check` | Format / check (Rust + dashboard). |
+| `make docs` / `make docs-build` | Live-preview / build this docs site. |
+
+Run `make` with no target for the full list.
+
 ## Benchmark view
 
 A menu of scenarios and a **Run** button. Each tick streams: throughput

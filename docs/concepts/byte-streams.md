@@ -6,6 +6,17 @@ producer keeps emitting and the consumer keeps reading, and neither should have 
 buffer the whole thing in memory. RUSM models that as a **byte stream** between
 processes.
 
+## When you actually use it
+
+A byte stream is a **low-level primitive**. Its heaviest user is RUSM's own **serving
+layer**: an SSE or streaming HTTP/WS body rides a back-pressured byte stream, so a slow
+client throttles the producer instead of forcing the server to buffer a whole response —
+and you get that for free by writing a normal SSE/WS handler, never touching the stream API.
+An **application component** reaches for the raw producer/consumer API directly only to pipe
+a large or open-ended payload from one component to *another* — a proxy forwarding an upload,
+a transcoding stage, an LLM-token relay. For everything else, component-to-component talks in
+messages (`send`/`receive`) and client streaming goes through the serving API.
+
 ## A bounded channel, the actor way
 
 A stream is a **bounded Tokio channel** of byte chunks (`StreamHandle` in the
