@@ -64,7 +64,8 @@ shape, different owner. A custom app bridge is mechanically identical to a platf
 ## Bridge inventory
 
 **files**: which of `bridge.wit`(W) / `host.rs`(H) / `guest.{rs,go,js,d.ts}`(R/G/J/T) the dir
-carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `actor` interface.
+carries. **Status**: ✅ canonical in root `bridges/` (cross-crate) · 🏠 single-source in
+`crates/rusm-wasm/src/bridges/` (host-only — see *Where a bridge's code lives*).
 
 | Bridge | Type | Guest API | Host backing | Gate | Files | Bench gate | Status |
 |---|---|---|---|---|---|---|:--:|
@@ -75,12 +76,29 @@ carries. **Status**: ✅ migrated to `bridges/` · ⬜ still in the monolithic `
 | `kv` | introduced | `kv.bucket(..)` | rusm-kv (redb) | `storage` | W H R G J T | `kv-storm` (ACID ceiling) | ✅ |
 | `log` | polyfill | `console.*` / `log` / `slog` | rusm-logfmt | — (level) | W H R G J | — (not hot) | ✅ |
 | `serve` | polyfill + introduced | `fetch` / WS+SSE handlers | http/ws/sse | — | W H R G J | serving | ✅ |
-| `http` | transport | — (drives handlers) | hyper | — | H | `http-throughput` / loadtest | ⬜ |
-| `ws` | transport | — (process per conn) | tokio-tungstenite | — | H | `ws-echo` | ⬜ |
-| `sse` | transport | — (stream per conn) | `wasi:http` body | — | H | `sse-fanout` | ⬜ |
-| `wasip1/2/3` | polyfill | the language stdlib | wasmtime-wasi | per-op | H | — | ⬜ |
-| `fetch` | polyfill (TS-only) | web `fetch()` | `wasi:http` / hyper | `network` | H J T | — | ⬜ |
-| `crypto` | polyfill (TS-only) | web `crypto.subtle` | RustCrypto | — | H J T | `crypto-ops` | ⬜ |
+| `http` | transport | — (drives handlers) | hyper | — | H | `http-throughput` / loadtest | 🏠 |
+| `ws` | transport | — (process per conn) | tokio-tungstenite | — | H | `ws-echo` | 🏠 |
+| `sse` | transport | — (stream per conn) | `wasi:http` body | — | H | `sse-fanout` | 🏠 |
+| `wasip1/2/3` | polyfill | the language stdlib | wasmtime-wasi | per-op | H | — | 🏠 |
+| `fetch` | polyfill (TS-only) | web `fetch()` | `wasi:http` / hyper | `network` | H J | — | 🏠 |
+| `crypto` | polyfill (TS-only) | web `crypto.subtle` | RustCrypto | — | H J | `crypto-ops` | 🏠 |
+
+### Where a bridge's code lives
+
+The root `bridges/` canonical-copy machinery exists to **eliminate cross-crate duplication**:
+a capability bridge's `guest.{rs,go,js}` are materialized into three *other* published crates
+(rusm-rs / rusm-go / rusm-ts), so a single canonical source per language is the only way to
+stop them drifting. That's why ✅ bridges live in root `bridges/`.
+
+**Host-only bridges (🏠) have no cross-crate spread** — their code lives entirely in
+`crates/rusm-wasm` (transport loops) or the js-runner (the TS `fetch`/`crypto` polyfills). It
+is *already* single-source there, so it stays in `crates/rusm-wasm/src/bridges/` — copying it
+into root `bridges/` would **duplicate it for no benefit** (a DRY violation), so we don't. The
+root dir is for cross-crate bridges; `src/bridges/` is rusm-wasm's host code (the 🏠 bridges +
+the synced ✅ `host.rs` copies). Note `wasip2.rs`/`wasip1.rs` are the **component/core-module
+runtime** (spawn path, linker assembly), not "the wasip bridge" — the WASI wiring is a few
+`add_to_linker` lines within them; and `conn`/`compress`/`tls`/`ws_codec`/`access` are
+**support modules** for the transport bridges, not bridges themselves.
 
 > `actor` is the irreducible Erlang core (it keeps the interface name `actor`, so there is no
 > collision with `world process`). `pg`/`streams`/`log`/`serve` split out of it as siblings;
