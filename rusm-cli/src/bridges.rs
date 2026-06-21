@@ -203,6 +203,47 @@ fn module_ident(name: &str) -> String {
     name.replace('-', "_")
 }
 
+/// Whether `root` is a **custom-bridge app** — it carries a `bridges/` directory. Such an
+/// app serves via its own host binary (which has the bridge impls compiled in); a pure-guest
+/// app (no `bridges/`) is hosted by the prebuilt `rusm` directly.
+pub fn has_bridges(root: &Path) -> bool {
+    root.join("bridges").is_dir()
+}
+
+/// (Re)generate a custom-bridge app's host glue from its `bridges/<name>/` — the files
+/// `rusm build` owns and overwrites every run: `wit/world.wit` (the synthesized bindgen
+/// world), `wit/deps/<name>/bridge.wit` (each contract vendored beside it), `src/bindings.rs`,
+/// and `src/bridges.rs`. The app author owns everything else (`src/main.rs`, `Cargo.toml`,
+/// `bridges/<name>/host.rs`). Returns the discovered bridges (empty → nothing written).
+pub fn generate_host_files(root: &Path) -> Result<Vec<BridgeSpec>> {
+    let bridges = discover(root)?;
+    if bridges.is_empty() {
+        return Ok(bridges);
+    }
+    let contracts = bridges
+        .iter()
+        .map(|b| parse_contract(&b.wit()))
+        .collect::<Result<Vec<_>>>()?;
+    let names: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
+
+    let wit = root.join("wit");
+    std::fs::create_dir_all(wit.join("deps"))
+        .with_context(|| format!("creating {}", wit.join("deps").display()))?;
+    std::fs::write(wit.join("world.wit"), synth_world(&contracts))?;
+    for bridge in &bridges {
+        let dep = wit.join("deps").join(&bridge.name);
+        std::fs::create_dir_all(&dep)?;
+        std::fs::copy(bridge.wit(), dep.join("bridge.wit"))
+            .with_context(|| format!("vendoring {} bridge.wit into wit/deps/", bridge.name))?;
+    }
+
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).with_context(|| format!("creating {}", src.display()))?;
+    std::fs::write(src.join("bindings.rs"), BINDINGS_RS)?;
+    std::fs::write(src.join("bridges.rs"), gen_bridges_module(&names))?;
+    Ok(bridges)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +355,50 @@ mod tests {
         assert!(module.contains("weather::add_to_linker(linker)?;"));
         assert!(module.contains("json_codec::add_to_linker(linker)?;"));
         assert!(module.contains("pub fn extend(linker: &mut rusm_wasm::BridgeLinker)"));
+    }
+
+    #[test]
+    fn generate_host_files_writes_the_glue_and_reproduces_the_example() {
+        // Generating into a fresh app dir produces exactly the codegen output — and an empty
+        // app (no bridges/) writes nothing and reports no bridges.
+        let root = app_dir("generate");
+        assert!(
+            generate_host_files(&root).unwrap().is_empty(),
+            "no bridges/ → nothing"
+        );
+        assert!(
+            !root.join("wit").exists(),
+            "nothing written without bridges/"
+        );
+
+        // Mirror the worked example's bridge so the generated files must match it byte-for-byte.
+        let weather = root.join("bridges/weather");
+        std::fs::create_dir_all(&weather).unwrap();
+        std::fs::copy(
+            "../examples/custom-bridge/bridges/weather/bridge.wit",
+            weather.join("bridge.wit"),
+        )
+        .unwrap();
+        std::fs::write(weather.join("host.rs"), "// host impl\n").unwrap();
+
+        let bridges = generate_host_files(&root).unwrap();
+        assert_eq!(bridges.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(root.join("wit/world.wit")).unwrap(),
+            include_str!("../../examples/custom-bridge/wit/world.wit"),
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("wit/deps/weather/bridge.wit")).unwrap(),
+            include_str!("../../examples/custom-bridge/wit/deps/weather/bridge.wit"),
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/bindings.rs")).unwrap(),
+            include_str!("../../examples/custom-bridge/src/bindings.rs"),
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/bridges.rs")).unwrap(),
+            include_str!("../../examples/custom-bridge/src/bridges.rs"),
+        );
     }
 
     /// The worked example (`examples/custom-bridge/`) commits the *generated* files so it

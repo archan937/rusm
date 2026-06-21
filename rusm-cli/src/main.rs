@@ -96,17 +96,53 @@ fn cmd_new(args: Arguments) {
     println!("  {probe}");
 }
 
-/// `rusm build`: compile every `./components/*` crate to `./wasm`.
+/// `rusm build`: compile every `./components/*` crate to `./wasm`, and — for a
+/// **custom-bridge app** — regenerate the host glue and compile the host binary.
 fn cmd_build() {
-    match build_components(Path::new(".")) {
-        Ok(built) if built.is_empty() => println!("no component crates found under ./components"),
-        Ok(built) => println!(
+    if let Err(error) = build_all(Path::new(".")) {
+        die(format!("build failed: {error}"), 1);
+    }
+}
+
+/// The full `rusm build`: (1) regenerate any custom-bridge host glue from `bridges/<name>/`
+/// (so a guest that imports a bridge and the host crate both build against fresh, in-sync
+/// generated code), (2) compile the components, (3) for a custom-bridge app, compile the
+/// host binary (which has the bridge impls compiled in). A pure-guest app does only (2).
+fn build_all(root: &Path) -> anyhow::Result<()> {
+    let bridges = rusm_cli::bridges::generate_host_files(root)?;
+    if !bridges.is_empty() {
+        let names: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
+        println!("custom bridge(s): {}", names.join(", "));
+    }
+    let built = build_components(root)?;
+    if built.is_empty() {
+        println!("no component crates found under ./components");
+    } else {
+        println!(
             "built {} component(s) -> ./wasm: {}",
             built.len(),
             built.join(", ")
-        ),
-        Err(error) => die(format!("build failed: {error}"), 1),
+        );
     }
+    if !bridges.is_empty() {
+        build_host_crate(root)?;
+        println!("built host binary (custom bridges compiled in)");
+    }
+    Ok(())
+}
+
+/// Compile a custom-bridge app's **host binary** — the app's own crate at `root`, with its
+/// bridge impls compiled in (`cargo build --release` in the app dir).
+fn build_host_crate(root: &Path) -> anyhow::Result<()> {
+    let status = Command::new("cargo")
+        .args(["build", "--release"])
+        .current_dir(root)
+        .status()
+        .with_context(|| "running cargo build for the host binary")?;
+    if !status.success() {
+        return Err(anyhow!("`cargo build --release` failed for the host crate"));
+    }
+    Ok(())
 }
 
 /// `rusm node start`: `start` is the only subcommand. Host the app and expose the
@@ -219,10 +255,29 @@ async fn run_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<(
 async fn serve_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
     // Env the Rust way: process env first, then ./.env.
     dotenvy::dotenv().ok();
+    let root = Path::new(".");
+    // A custom-bridge app serves via its OWN host binary, which has the bridge impls
+    // compiled in (the prebuilt `rusm` can't host them). Run it — `rusm build` produced it.
+    if rusm_cli::bridges::has_bridges(root) {
+        return run_host_binary(root);
+    }
     let cfg = load_node_config(config, listen);
-    // The bare CLI wires no custom bridges; an app that needs them runs its own generated
-    // host crate, which calls `host::serve` with its `add_to_linker` extension instead.
-    host::serve(Path::new("."), &cfg, |_| Ok(())).await
+    host::serve(root, &cfg, |_| Ok(())).await
+}
+
+/// Run a custom-bridge app's host binary — it registers the app's bridges and serves the
+/// manifest via the same `host::serve` loop. `cargo run --release` so a stale binary
+/// rebuilds first; it blocks until the host exits (Ctrl-C propagates to the whole group).
+fn run_host_binary(root: &Path) -> anyhow::Result<()> {
+    let status = Command::new("cargo")
+        .args(["run", "--release"])
+        .current_dir(root)
+        .status()
+        .with_context(|| "running the host binary (did `rusm build` succeed?)")?;
+    if !status.success() {
+        return Err(anyhow!("the host binary exited with an error"));
+    }
+    Ok(())
 }
 
 /// `rusm dev`: build, spawn, and **watch** `./components` — on any source change,
