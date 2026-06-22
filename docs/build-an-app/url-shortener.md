@@ -28,12 +28,29 @@ shortener/
 One folder per component under `components/`, one `[components.<name>]` entry per component
 in the manifest. You write the source; `rusm build` produces `./wasm/api.{wasm,js}`.
 
+## Scaffold the project
+
+Don't create those files by hand — scaffold a working starter and edit two of them. `rusm new`
+generates the whole project (the `components/api/` source, the `rusm.toml`, and the language's
+build files — `package.json` with the `rusm-ts` dep for TS, `Cargo.toml` + the `wit/` bindings
+for Rust, `go.mod` for Go), already serving "hello" over HTTP:
+
+```sh
+rusm new shortener            # add --lang rust or --lang go (default: TypeScript)
+cd shortener
+```
+
+Now we turn that starter into the shortener by changing exactly **two files**: `rusm.toml` and
+the handler. (Everything else the scaffold made — the build files, `.gitignore`, README — stays
+as is.)
+
 ## The manifest
 
-Everything that makes our shortener an app lives in one `rusm.toml`. The only difference
-between languages is how routing is wired: **Rust and Go route declaratively** in a
-`[serve.routes]` table; a **TypeScript** HTTP handler self-routes (one `fetch`), so it just
-names the component.
+Open `rusm.toml` and make it match the block below. (The starter already has the `[[serve]]`
+listener; we're adding durable storage — `[node] store` and the `stateful` capability.) The one
+difference between languages is how routing is wired: **Rust and Go route declaratively** in a
+`[serve.routes]` table; a **TypeScript** HTTP handler self-routes (one `fetch`), so the listener
+just names the component.
 
 ::: code-group
 
@@ -92,9 +109,11 @@ Three ideas, and they're the whole app model:
 
 ## The handler
 
-Now the code — the two actions, `shorten` and `expand`. Each opens the `links` bucket, and
-that's the entire shortener: write a URL under a fresh code, then redirect a code back to its
-URL. (We mint codes with a simple counter; a real shortener would hash or randomize.)
+Now the code. Replace the scaffolded handler — `components/api/index.ts` (TS),
+`components/api/src/lib.rs` (Rust), or `components/api/main.go` (Go) — with the two actions,
+`shorten` and `expand`. Each opens the `links` bucket, and that's the entire shortener: write a
+URL under a fresh code, then redirect a code back to its URL. (We mint codes with a simple
+counter; a real shortener would hash or randomize.)
 
 ::: code-group
 
@@ -207,6 +226,10 @@ func run() {
 
 Notice what *isn't* there: no router (the manifest routes), no socket or wire handling (the
 platform owns it), no database setup (`kv` is built in). You wrote two functions.
+
+> **TypeScript only:** the handler imports `kv` from `rusm-ts`, so add the package once —
+> `bun add rusm-ts` — since the HTTP starter scaffolds without it. (Rust and Go already have
+> their `kv` API from the `rusm-rs` / `rusm-go` dependency the scaffold set up.)
 
 ## Run it
 
