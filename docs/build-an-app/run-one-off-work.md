@@ -36,8 +36,7 @@ fn run() {
 ```go [Go]
 // components/report/main.go
 func run() {
-	var job Job
-	rusm.Receive(&job)                 // blocks; the fiber parks
+	job, _ := rusm.Receive[Job]()      // blocks; the fiber parks (generic; returns the value)
 	result := buildReport(job)
 	rusm.Send(job.ReplyTo, result)     // reply to the caller
 	// run returns → the process exits Normal

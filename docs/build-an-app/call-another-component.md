@@ -89,10 +89,11 @@ func run() {
   profile (see [Grant capabilities](/build-an-app/grant-capabilities)). A node-registered component
   runs under **its own** declared profile, whoever spawns it, so its secrets stay scoped to
   it.
-- **Per-call vs long-lived.** `spawn` gives you a fresh instance to call. If you want a
-  *single long-lived* instance many callers share, make it a
-  [stateful service](/build-an-app/build-a-stateful-service) and find it by name with `whereis`. If
-  you just want a fire-and-forget one-shot, see [Run one-off work](/build-an-app/run-one-off-work).
+- **Per-call vs long-lived.** `spawn` gives you a **fresh** instance each call. For a *single
+  long-lived* instance many callers share, make it a
+  [stateful service](/build-an-app/build-a-stateful-service) (`resident = true`) that registers a
+  name — then reach it by pid (Rust/Go) or share its state through `kv`. For a fire-and-forget
+  one-shot, see [Run one-off work](/build-an-app/run-one-off-work).
 - **It's just messages.** The typed client is sugar over `send`/`receive`
   ([process management](/build-an-app/coordinate-and-supervise)); a Rust client and a TS
   service interoperate over the same JSON wire.
