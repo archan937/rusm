@@ -92,9 +92,10 @@ One CLI from scaffold to live node, plus cross-node clustering and live attach:
   wasm32-wasip2 / Bun, no jco) → `./wasm/`. → [the app model](/deep-dive/the-app-model)
 - **CLI** — `rusm new` (scaffold), `rusm run`, `rusm serve`, `rusm dev` (watch +
   reload), `rusm attach` (a live REPL into a local or remote node).
-- **Dynamic bundle sourcing** — a component's JS can load from a URL or the durable
-  `kv` store (`source = "…"`) instead of a local artifact: deploy JS live, no node
-  rebuild. → [configuration](/deep-dive/configuration#dynamic-bundle-sourcing)
+- **Dynamic JS** — load a guest's JS from a URL or the durable `kv` store (`source = "…"`)
+  to **deploy live with no node rebuild**, or run code chosen *at runtime* — generated,
+  fetched, or user-submitted — inside an operator-defined sandbox (`dynamic = "js"` +
+  `spawn-from`): the guest picks the code, never the capabilities. → [Dynamic JS](/build-an-app/dynamic-js)
 - **Distributed clustering** — `ClusterNode::connect` (the `Node.connect` equivalent),
   cross-node send, a gossiped global registry, remote spawn, all over QUIC + **mutual
   TLS**. → [distributed nodes](/deep-dive/distributed-nodes)

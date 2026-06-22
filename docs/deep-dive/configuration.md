@@ -356,6 +356,9 @@ resident = true
 
 ## Dynamic bundle sourcing
 
+> The guide is **[Dynamic JS](/build-an-app/dynamic-js)** — live deploy and sandboxed runtime
+> code, with examples in all three guest languages. The sections below are the field reference.
+
 A `[components.<name>]` or `[[serve]]` entry can set **`source`** to load its JS bundle
 from somewhere other than the local `./wasm/<name>` artifact — so you deploy new JS
 by updating the source, with **no node rebuild**. A `[components.<name>]` process fetches
