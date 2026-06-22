@@ -328,7 +328,10 @@ mod tests {
         // guest world (a TARGETS entry in bridges/assemble-wit.sh), drift-guarded by the
         // `bridge_sync` `world_wit_in_sync` test, not by `make sync-templates`.
         let pairs = [
-            ("templates/weather/host-main.rs", "examples/custom-bridge/src/main.rs"),
+            (
+                "templates/weather/host-main.rs",
+                "examples/custom-bridge/src/main.rs",
+            ),
             (
                 "templates/weather/bridge.wit",
                 "examples/custom-bridge/bridges/weather/bridge.wit",
@@ -351,8 +354,9 @@ mod tests {
             ),
         ];
         for (vendored, source) in pairs {
-            let v = std::fs::read(manifest.join(vendored))
-                .unwrap_or_else(|_| panic!("missing vendored {vendored} — run `make sync-templates`"));
+            let v = std::fs::read(manifest.join(vendored)).unwrap_or_else(|_| {
+                panic!("missing vendored {vendored} — run `make sync-templates`")
+            });
             let s = std::fs::read(root.join(source))
                 .unwrap_or_else(|_| panic!("missing source {source}"));
             assert_eq!(
