@@ -21,5 +21,5 @@ make dashboard            # the benchmark node + the React dashboard ("the money
 
 The dashboard's **Observer** shows the live process count and per-tick activity;
 each scenario panel also unfolds its real engine source so you can see exactly how
-it's built. See [the benchmark dashboard](/about/benchmark-dashboard) for the full
+it's built. See [the benchmark dashboard](/about/benchmark-dashboard-and-observer) for the full
 walkthrough, and [live attach](/deep-dive/live-attach) for the attach protocol.

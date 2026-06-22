@@ -31,16 +31,16 @@ const sections = [
       {
         text: 'Basics',
         items: [
-          { text: 'A URL shortener', link: '/build-an-app/app-model' },
-          { text: 'The rusm CLI', link: '/build-an-app/cli' },
+          { text: 'A URL shortener', link: '/build-an-app/url-shortener' },
+          { text: 'The rusm CLI', link: '/build-an-app/the-rusm-cli' },
         ],
       },
       {
         text: 'Write a component',
         items: [
-          { text: 'TypeScript', link: '/build-an-app/typescript-component' },
-          { text: 'Rust', link: '/build-an-app/rust-component' },
-          { text: 'Go', link: '/build-an-app/go-component' },
+          { text: 'TypeScript', link: '/build-an-app/write-a-typescript-component' },
+          { text: 'Rust', link: '/build-an-app/write-a-rust-component' },
+          { text: 'Go', link: '/build-an-app/write-a-go-component' },
         ],
       },
       {
@@ -56,18 +56,18 @@ const sections = [
         items: [
           { text: 'Call another component', link: '/build-an-app/call-another-component' },
           { text: 'Run one-off work', link: '/build-an-app/run-one-off-work' },
-          { text: 'Build a stateful service', link: '/build-an-app/stateful-service' },
-          { text: 'Broadcast to many', link: '/build-an-app/broadcast' },
+          { text: 'Build a stateful service', link: '/build-an-app/build-a-stateful-service' },
+          { text: 'Broadcast to many', link: '/build-an-app/broadcast-to-many' },
           { text: 'Coordinate & supervise', link: '/build-an-app/coordinate-and-supervise' },
         ],
       },
       {
         text: 'Secure',
-        items: [{ text: 'Grant capabilities', link: '/build-an-app/capabilities' }],
+        items: [{ text: 'Grant capabilities', link: '/build-an-app/grant-capabilities' }],
       },
       {
         text: 'Extend',
-        items: [{ text: 'Add your own functions', link: '/build-an-app/custom-bridges' }],
+        items: [{ text: 'Add your own functions', link: '/build-an-app/add-your-own-functions' }],
       },
     ],
   },
@@ -78,7 +78,7 @@ const sections = [
       {
         text: 'The actor model',
         items: [
-          { text: 'The process model', link: '/deep-dive/wasm-instance-as-process' },
+          { text: 'The process model', link: '/deep-dive/the-process-model' },
           { text: 'Message passing', link: '/deep-dive/message-passing' },
           { text: 'Links & supervision', link: '/deep-dive/links-and-supervision' },
           { text: 'Fibers & blocking→async', link: '/deep-dive/fibers-and-blocking-to-async' },
@@ -90,7 +90,7 @@ const sections = [
         text: 'Components & guests',
         items: [
           { text: 'Components & the actor world', link: '/deep-dive/components-and-the-actor-world' },
-          { text: 'Component lifecycles', link: '/deep-dive/component-lifecycle' },
+          { text: 'Component lifecycles', link: '/deep-dive/component-lifecycles' },
           { text: 'Guests: Rust, TypeScript & Go', link: '/deep-dive/guests' },
           { text: 'Permissions & sandboxing', link: '/deep-dive/permissions-and-sandboxing' },
         ],
@@ -98,20 +98,20 @@ const sections = [
       {
         text: 'Serving & streaming',
         items: [
-          { text: 'The serving model', link: '/deep-dive/serving-model' },
-          { text: 'Serving HTTP, WS & SSE', link: '/deep-dive/serving-http-ws-sse' },
+          { text: 'The serving model', link: '/deep-dive/the-serving-model' },
+          { text: 'Serving HTTP, WS & SSE', link: '/deep-dive/serving-http-ws-and-sse' },
           { text: 'Byte streams', link: '/deep-dive/byte-streams' },
         ],
       },
       {
         text: 'Apps, clusters & ops',
         items: [
-          { text: 'The app model', link: '/deep-dive/app-model' },
+          { text: 'The app model', link: '/deep-dive/the-app-model' },
           { text: 'Distributed nodes', link: '/deep-dive/distributed-nodes' },
-          { text: 'The distributed model', link: '/deep-dive/distributed-model' },
+          { text: 'The distributed model', link: '/deep-dive/the-distributed-model' },
           { text: 'Live attach', link: '/deep-dive/live-attach' },
-          { text: 'Observe a node', link: '/deep-dive/observe' },
-          { text: 'Embedding RUSM as a library', link: '/deep-dive/embedding' },
+          { text: 'Observe a node', link: '/deep-dive/observe-a-running-node' },
+          { text: 'Embedding RUSM as a library', link: '/deep-dive/embedding-rusm-as-a-library' },
         ],
       },
       {
@@ -119,7 +119,7 @@ const sections = [
         text: 'Reference',
         items: [
           { text: 'Configuration', link: '/deep-dive/configuration' },
-          { text: 'Host ABI', link: '/deep-dive/host-abi' },
+          { text: 'Host ABI', link: '/deep-dive/host-abi-reference' },
           { text: 'Glossary', link: '/deep-dive/glossary' },
         ],
       },
@@ -133,7 +133,7 @@ const sections = [
         text: 'Comparisons',
         items: [
           { text: 'RUSM vs Lunatic', link: '/about/rusm-vs-lunatic' },
-          { text: 'How RUSM compares', link: '/about/comparison' },
+          { text: 'How RUSM compares', link: '/about/how-rusm-compares' },
           { text: 'Design analysis', link: '/about/design-analysis' },
         ],
       },
@@ -142,8 +142,8 @@ const sections = [
         items: [
           { text: 'Architecture', link: '/about/architecture' },
           { text: 'Roadmap', link: '/about/roadmap' },
-          { text: 'Development', link: '/about/development' },
-          { text: 'Benchmark & dashboard', link: '/about/benchmark-dashboard' },
+          { text: 'Development', link: '/about/development-guide' },
+          { text: 'Benchmark & dashboard', link: '/about/benchmark-dashboard-and-observer' },
         ],
       },
     ],

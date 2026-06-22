@@ -37,7 +37,7 @@ capability = "agent"            # this component runs under that profile
 ```
 
 Each line gates a specific power — outbound network, spawning, process control, storage, which
-env vars it sees, which host dirs are mounted, which of [your own functions](/build-an-app/custom-bridges)
+env vars it sees, which host dirs are mounted, which of [your own functions](/build-an-app/add-your-own-functions)
 it may call, and its memory ceiling. Everything not granted is denied.
 
 The crucial property: a node-registered component always runs under **its own** declared
@@ -71,14 +71,14 @@ inherits = "sandboxed"
 allow-process-control = true
 ```
 
-These map straight onto the common patterns: a [stateful service](/build-an-app/stateful-service)
+These map straight onto the common patterns: a [stateful service](/build-an-app/build-a-stateful-service)
 wants `allow-storage`; [calling another component](/build-an-app/call-another-component) wants
-`allow-spawn`; a [broadcast](/build-an-app/broadcast) / SSE / WS handler wants
+`allow-spawn`; a [broadcast](/build-an-app/broadcast-to-many) / SSE / WS handler wants
 `allow-process-control`. Grant only the line each one needs.
 
 ## When embedding
 
-Driving RUSM as a [library](/deep-dive/embedding)? Grant the same powers with the
+Driving RUSM as a [library](/deep-dive/embedding-rusm-as-a-library)? Grant the same powers with the
 `Capabilities` builder, per spawn:
 
 ```rust

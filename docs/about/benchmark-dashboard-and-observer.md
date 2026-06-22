@@ -62,7 +62,7 @@ harness for WS/SSE held connections), with the load generator and server sharing
 node process. Because they share CPU and hide the network behind loopback, the
 **fair, credible headline numbers** for serving are still the ones measured
 **out-of-process** by `rusm-loadtest` against a live `rusm serve` port (see [serving
-HTTP/WS/SSE](/deep-dive/serving-http-ws-sse)). The runtime micro-benchmarks (spawns/sec,
+HTTP/WS/SSE](/deep-dive/serving-http-ws-and-sse)). The runtime micro-benchmarks (spawns/sec,
 msgs/sec, restarts/sec, scheduler fairness) stay **in-process** on purpose — they
 measure the actor core itself where there is no network/server, so in-process is the
 correct way to measure raw runtime capacity. The three **platform-primitive**

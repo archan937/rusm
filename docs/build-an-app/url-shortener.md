@@ -13,7 +13,7 @@ everything in RUSM is built from:
 
 Keep that pair in mind — the whole app model is just how you declare it. (You can also drive
 RUSM from your own Rust binary instead of the CLI — an advanced path covered in
-[Embedding RUSM as a library](/deep-dive/embedding).)
+[Embedding RUSM as a library](/deep-dive/embedding-rusm-as-a-library).)
 
 ## The shape of an app
 
@@ -67,7 +67,7 @@ the single most important idea in the app model:
   [worker](/build-an-app/run-one-off-work) is the same idea without HTTP.)
 - **`links` is resident (`resident = true`).** The node **boot-spawns** it at startup and
   **supervises** it — auto-restarting on crash, bounded by restart-intensity. That's how a
-  long-lived, stateful [service](/build-an-app/stateful-service) stays alive to remember the
+  long-lived, stateful [service](/build-an-app/build-a-stateful-service) stays alive to remember the
   `code → URL` map across every request.
 
 So **where does the shortener keep its data?** Not in `api` — there's a new `api` every
@@ -78,7 +78,7 @@ handler in front, durable service (or `kv`) behind** — that's the pattern you'
 again and again.
 
 Each component also carries a **capability** profile (`sandboxed` here — default-deny, the
-safe starting point). Granting more is its own topic: [Grant capabilities](/build-an-app/capabilities).
+safe starting point). Granting more is its own topic: [Grant capabilities](/build-an-app/grant-capabilities).
 
 ## Serving the routes
 
@@ -115,7 +115,7 @@ rusm dev          # build + run, then watch ./components and reload the changed 
 Don't have a project yet? **`rusm new <name>`** scaffolds a ready-to-serve app — a component,
 a `rusm.toml` with a `[[serve]]` entry, `.gitignore`, and a README — so `rusm new hello && cd
 hello && rusm build && rusm serve` gives you a live server in four commands. The full command
-set is the [rusm CLI](/build-an-app/cli).
+set is the [rusm CLI](/build-an-app/the-rusm-cli).
 
 With `[log] level` at `info`+, `rusm serve` also access-logs each served request
 (`rusm http POST /shorten → 200`, an SSE stream as `sse`, a WS upgrade as `ws … → 101`), in
@@ -126,7 +126,7 @@ the same stream as lifecycle and guest logs.
 You've seen the whole app on paper; the two components are short to write:
 
 - **The `api` handler** — write the `shorten` / `expand` actions: [Serve HTTP](/build-an-app/serve-http).
-- **The `links` service** — write the resident store it talks to: [Build a stateful service](/build-an-app/stateful-service),
+- **The `links` service** — write the resident store it talks to: [Build a stateful service](/build-an-app/build-a-stateful-service),
   and reach it from `api` with [Call another component](/build-an-app/call-another-component).
 
 ## Beyond the basics
@@ -135,9 +135,9 @@ The manifest has more to offer when you need it — none of it required to get s
 
 - **Custom capability profiles** — define your own grants beyond the three built-ins
   (`sandboxed` / `network-client` / `trusted`), like Cargo's `[profile.<name>]`. See
-  [Grant capabilities](/build-an-app/capabilities).
+  [Grant capabilities](/build-an-app/grant-capabilities).
 - **Your own native functions** — call host code (a database client, a signing routine) from
-  any guest via a [bridge](/build-an-app/custom-bridges).
+  any guest via a [bridge](/build-an-app/add-your-own-functions).
 - **A `[node]` table** — set the node's attach port and scheduler profile so you can
-  [observe a running node](/deep-dive/observe) live. Optional; the defaults are fine.
+  [observe a running node](/deep-dive/observe-a-running-node) live. Optional; the defaults are fine.
 - **Every table and field** — the exhaustive [configuration reference](/deep-dive/configuration).

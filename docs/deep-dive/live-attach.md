@@ -17,7 +17,7 @@ that attaches today can:
 `rusm node start` serves this channel; the **`rusm attach <node>`** REPL renders
 it in the terminal. The **benchmark dashboard** is a *separate* node (`rusm-bench
 start`, repo-only) with its own richer channel — the scenario-driving
-observer GUI behind [the dashboard](/about/benchmark-dashboard).
+observer GUI behind [the dashboard](/about/benchmark-dashboard-and-observer).
 
 ## This is new — Rust doesn't give it to us
 

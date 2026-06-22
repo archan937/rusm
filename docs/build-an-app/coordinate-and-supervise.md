@@ -52,7 +52,7 @@ rusm.SetLabel("worker#1")
 :::
 
 `register`/`whereis` is how long-lived components find each other without a central registry;
-`register-tag`/`whereis-tag` is the group form behind [Broadcast to many](/build-an-app/broadcast).
+`register-tag`/`whereis-tag` is the group form behind [Broadcast to many](/build-an-app/broadcast-to-many).
 
 ## Watch for failure — monitors & links
 
@@ -131,13 +131,13 @@ func run() {
 :::
 
 A `resident = true` component is already supervised by the node (see
-[Build a stateful service](/build-an-app/stateful-service)); reach for your own `Supervisor`
+[Build a stateful service](/build-an-app/build-a-stateful-service)); reach for your own `Supervisor`
 when you need a custom tree or strategy inside a component.
 
 ## What you need to know
 
 - **`kill` / `monitor` / `list` are capability-gated** — controlling *other* processes needs
-  the `process-control` capability (see [Grant capabilities](/build-an-app/capabilities)).
+  the `process-control` capability (see [Grant capabilities](/build-an-app/grant-capabilities)).
 - **Failure is a message, not an exception across the wire.** A crash exits the process; links
   and monitors turn that into signals you handle — supervisors restart exactly what broke,
   the rest keeps running.

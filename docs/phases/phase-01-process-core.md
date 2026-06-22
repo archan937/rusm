@@ -39,7 +39,7 @@ count it, kill it without leaks) and the rest is additive.
 ## Concepts introduced
 
 - **A process = a task + a table entry** — see
-  [the process model](/deep-dive/wasm-instance-as-process).
+  [the process model](/deep-dive/the-process-model).
 - **Abort-based lifecycle** — cooperative cancellation via Tokio's `AbortHandle`,
   with Drop-based cleanup so teardown can never leak an entry.
 

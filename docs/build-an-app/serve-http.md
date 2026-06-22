@@ -122,9 +122,9 @@ curl http://127.0.0.1:8080/users/42    # user 42
 Each request gets a **fresh, sandboxed instance** — spawned, it runs the action, replies, and
 is gone. Nothing is shared between requests, so a crash drops *one* request and never the
 server, and there's no head-of-line blocking. Because the instance is ephemeral, **don't keep
-state in it** — for that, reach a resident [stateful service](/build-an-app/stateful-service)
+state in it** — for that, reach a resident [stateful service](/build-an-app/build-a-stateful-service)
 over the actor API, or persist to the node `store` (`kv`). For the execution model in full,
-see [the serving model](/deep-dive/serving-model); for every `[[serve]]`/`[serve.routes]`
+see [the serving model](/deep-dive/the-serving-model); for every `[[serve]]`/`[serve.routes]`
 field, the [configuration reference](/deep-dive/configuration).
 
 Next: [Serve WebSocket](/build-an-app/serve-websocket) · [Serve SSE](/build-an-app/serve-sse).

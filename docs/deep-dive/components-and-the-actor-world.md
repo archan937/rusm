@@ -16,7 +16,7 @@ Erlang `Process` API as typed functions: `own-pid`, `send`, `receive` (async),
 single source of truth — never reimplemented in the guest.
 
 A core module gets the *same* operations as flat `rusm::*` imports that marshal
-through linear memory (pointer + length) — see the [host ABI](/deep-dive/host-abi).
+through linear memory (pointer + length) — see the [host ABI](/deep-dive/host-abi-reference).
 
 ## Composition is message passing, not WIT wiring
 

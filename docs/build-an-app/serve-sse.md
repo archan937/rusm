@@ -87,8 +87,8 @@ func run() {
 :::
 
 The other half is **publishing**: any process broadcasts to the `todos` tag and every open
-stream's `message` fires — see [Broadcast to many](/build-an-app/broadcast). A resident
-[service](/build-an-app/stateful-service) or an HTTP handler is the usual publisher.
+stream's `message` fires — see [Broadcast to many](/build-an-app/broadcast-to-many). A resident
+[service](/build-an-app/build-a-stateful-service) or an HTTP handler is the usual publisher.
 
 ## 3. Build, serve, test
 
@@ -110,4 +110,4 @@ loops, no timers: the feed is exactly as live as its publisher.
 > you want per-entity streams on one listener — but a single `component` is the common case.
 
 Next: [Call another component](/build-an-app/call-another-component). For the execution model,
-see [the serving model](/deep-dive/serving-model) and [byte streams](/deep-dive/byte-streams).
+see [the serving model](/deep-dive/the-serving-model) and [byte streams](/deep-dive/byte-streams).

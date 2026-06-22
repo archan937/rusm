@@ -2,7 +2,7 @@
 
 Sometimes you want to do a single job in its own process — generate a report, call an API,
 crunch a batch — then have it go away. That's a **worker**: a component that is spawned, runs
-once, and exits. (Contrast a [stateful service](/build-an-app/stateful-service), which is
+once, and exits. (Contrast a [stateful service](/build-an-app/build-a-stateful-service), which is
 *one long-lived* instance that stays and holds state. A worker is **ephemeral and one-shot**;
 spawn as many as you like, each isolated.)
 
@@ -60,7 +60,7 @@ isolated processes; if one panics it exits `Crashed` and the others are untouche
 
 ## Worker or service?
 
-| | **Worker** (this page) | **[Stateful service](/build-an-app/stateful-service)** |
+| | **Worker** (this page) | **[Stateful service](/build-an-app/build-a-stateful-service)** |
 | --- | --- | --- |
 | Lifetime | spawned per job, **exits when done** | **long-lived**, boot-spawned + supervised |
 | Count | many, one per job | one shared instance, found by name |

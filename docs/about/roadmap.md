@@ -77,7 +77,7 @@ data to real measurements.
   the server's real ceiling, never flooding or collapsing — and a connection-capacity
   harness for WS/SSE held connections), with load generator and server sharing the node
   process. (The fair out-of-process headline still uses balter's rate sweep.) See
-  [serving HTTP/WS/SSE](/deep-dive/serving-http-ws-sse). **0.3.0** matured the serving surface —
+  [serving HTTP/WS/SSE](/deep-dive/serving-http-ws-and-sse). **0.3.0** matured the serving surface —
   the per-connection request context, full WS framing + permessage-deflate, rich SSE events
   + resumption, per-listener resource/CSWSH controls, compression, and native **TLS**
   (`https`/`wss`); only serve-path admission-control + default-bounded serve mailboxes remain

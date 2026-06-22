@@ -35,7 +35,7 @@ polling, no pid bookkeeping in app code.
 Same surface from all three guests: `register_tag`/`kill_tag`/`whereis_tag` in `rusm-rs`,
 `Process.registerTag`/`killTag`/`whereisTag` in `rusm-ts`, `RegisterTag`/`KillTag`/`WhereisTag`
 in `rusm-go` — backed, like everything here, by the Wasm-free `rusm-otp` core. This group
-form is also RUSM's pub/sub primitive; see [broadcast to many](/build-an-app/broadcast).
+form is also RUSM's pub/sub primitive; see [broadcast to many](/build-an-app/broadcast-to-many).
 
 ## Timers
 

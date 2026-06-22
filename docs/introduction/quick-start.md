@@ -25,8 +25,8 @@ cd board && rusm build && rusm serve   # → open http://127.0.0.1:8080
 scaffolded `rusm.toml` is your app manifest — see the
 [configuration reference](/deep-dive/configuration) for every table and field
 (`[[serve]]`, `[serve.routes]`, `[capabilities.<name>]`, `[components.<name>]`, env), and the
-[`rusm` CLI reference](/build-an-app/cli) for the full command set.
+[`rusm` CLI reference](/build-an-app/the-rusm-cli) for the full command set.
 
-Next: **[Build an app](/build-an-app/app-model)** walks the whole path — writing a component
+Next: **[Build an app](/build-an-app/url-shortener)** walks the whole path — writing a component
 in your language, serving it over HTTP/WS/SSE, and the common patterns (calling another
 component, stateful services, broadcast, supervision).

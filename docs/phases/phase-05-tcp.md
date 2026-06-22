@@ -52,7 +52,7 @@ acceptor.kill();                                     // stop listening
 ## Concepts introduced
 
 - **Process-per-connection** — a connection is just another isolated process; see
-  [the process model](/deep-dive/wasm-instance-as-process).
+  [the process model](/deep-dive/the-process-model).
 
 ## Play with it
 

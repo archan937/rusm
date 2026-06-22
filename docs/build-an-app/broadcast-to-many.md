@@ -57,7 +57,7 @@ for _, pid := range rusm.WhereisTag("room:lobby") {
 :::
 
 That's the whole pattern: a per-connection [SSE](/build-an-app/serve-sse) handler subscribes in
-`open` and emits in `message`; a [stateful service](/build-an-app/stateful-service) or an HTTP
+`open` and emits in `message`; a [stateful service](/build-an-app/build-a-stateful-service) or an HTTP
 handler publishes. Each open stream's `message` fires — push, not polling, exactly as live as
 the publisher.
 

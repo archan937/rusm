@@ -96,9 +96,9 @@ named functions. A handler **action** is reachable via an HTTP route; a service
 
 Serving throughput is measured **out-of-process** by the `rusm-loadtest` binary against
 a real `rusm serve` port, so the load generator never steals the server's CPU and the
-number is the server's — see the [benchmark reference](/about/benchmark-dashboard).
+number is the server's — see the [benchmark reference](/about/benchmark-dashboard-and-observer).
 
-See the full [serving guide](/deep-dive/serving-http-ws-sse) for routing syntax, the
+See the full [serving guide](/deep-dive/serving-http-ws-and-sse) for routing syntax, the
 `#[rusm_rs::handlers]` macro, the `Sse` API, the TypeScript path, and a worked example;
 the `[[serve]]` and `[serve.routes]` schema is in the
 [configuration reference](/deep-dive/configuration).

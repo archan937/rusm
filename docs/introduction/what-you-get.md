@@ -7,7 +7,7 @@ wasmCloud ceremony. The whole design rests on one principle: the actor core
 (`rusm-otp`) is **Wasm-free**; WebAssembly is a pluggable process backend. That's why
 it's both a great native actor runtime *and* a great Wasm host.
 
-This page is the map. Each item links to the [concept](/deep-dive/wasm-instance-as-process)
+This page is the map. Each item links to the [concept](/deep-dive/the-process-model)
 that teaches it — skim for what you need, then follow the arrow.
 
 ## Concurrency & the actor core
@@ -17,7 +17,7 @@ The Erlang core, rebuilt in Rust and Tokio — processes, mailboxes, supervision
 
 - **Massive lightweight concurrency (Tokio-driven)** — hundreds of thousands of
   processes over a few OS threads; spawning is near-free (~2.4M/sec measured). →
-  [the process model](/deep-dive/wasm-instance-as-process)
+  [the process model](/deep-dive/the-process-model)
 - **Isolated, lightweight processes** — one process = one task (and, for Wasm, one
   isolated instance); no shared mutable state.
 - **Superior messaging** — per-process mailboxes, by-value messages, selective
@@ -66,7 +66,7 @@ shared instance:
   **process-per-unit-of-work**: a fresh sandboxed instance per HTTP/SSE request, one
   sandboxed process per WS connection. No head-of-line blocking, crash containment, and
   full isolation by construction; cheap on the pooled spawn path (~440k spawns/sec). →
-  [the serving model](/deep-dive/serving-model)
+  [the serving model](/deep-dive/the-serving-model)
 - **Declarative routing** — a per-listener `rusm.toml` `[serve.routes]` subtable (one
   per `[[serve]]` HTTP/SSE listener, so multiple ports route independently) maps
   `"METHOD /path/:param" = "component#action"` (`:name` path param, trailing `*`
@@ -89,7 +89,7 @@ shared instance:
 One CLI from scaffold to live node, plus cross-node clustering and live attach:
 
 - **App model** — `rusm.toml` describes components and servers; `rusm build` (cargo
-  wasm32-wasip2 / Bun, no jco) → `./wasm/`. → [the app model](/deep-dive/app-model)
+  wasm32-wasip2 / Bun, no jco) → `./wasm/`. → [the app model](/deep-dive/the-app-model)
 - **CLI** — `rusm new` (scaffold), `rusm run`, `rusm serve`, `rusm dev` (watch +
   reload), `rusm attach` (a live REPL into a local or remote node).
 - **Dynamic bundle sourcing** — a component's JS can load from a URL or the durable
@@ -112,7 +112,7 @@ You can see what the runtime is doing, and the numbers are honest:
 - **Live process statistics** — an Erlang-`observer`-style view (process count,
   scheduler load, memory, per-instance table), nearly free.
 - **Live benchmark dashboard** — real scenarios streamed to a React/uPlot UI. →
-  [benchmark & dashboard](/about/benchmark-dashboard)
+  [benchmark & dashboard](/about/benchmark-dashboard-and-observer)
 - **Fair, out-of-process benchmarking** — `rusm-loadtest` drives a real `rusm serve`
   port from a separate process, so the numbers are the server's.
 - **TDD, ~100% coverage; OTP first, WASM second** — the dependency graph enforces the

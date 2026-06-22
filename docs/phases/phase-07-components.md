@@ -78,8 +78,8 @@ only core modules with its own ABI — it has no component-model host at all.
 - [Permissions & sandboxing](/deep-dive/permissions-and-sandboxing) — per-process
   WASI capabilities, default-deny profiles.
 - [Byte streams](/deep-dive/byte-streams) — cross-process, Tokio-backpressured.
-- [The app model](/deep-dive/app-model) — `rusm.toml`, `./wasm/`, `rusm dev`.
-- The full ABI — see the [host ABI](/deep-dive/host-abi).
+- [The app model](/deep-dive/the-app-model) — `rusm.toml`, `./wasm/`, `rusm dev`.
+- The full ABI — see the [host ABI](/deep-dive/host-abi-reference).
 
 ## Play with it
 

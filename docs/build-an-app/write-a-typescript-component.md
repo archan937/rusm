@@ -115,8 +115,8 @@ pub mod calc {
 ```
 
 Same JSON wire as rusm-ts, so a Rust client and a TS service interoperate (the **Go**
-twin, `rusm-go`, mirrors it again). See [Write a Rust component](/build-an-app/rust-component)
-and [Write a Go component](/build-an-app/go-component).
+twin, `rusm-go`, mirrors it again). See [Write a Rust component](/build-an-app/write-a-rust-component)
+and [Write a Go component](/build-an-app/write-a-go-component).
 
 **Logging — zero setup, all three languages.** A guest just uses the native idiom; the
 platform does the rest. The host stamps each line with the time, the calling

@@ -63,7 +63,7 @@ under saturation, latency is queue-dominated, so one number would mislead):
 - [Distributed nodes](/deep-dive/distributed-nodes) — connecting, location
   transparency, the wire shape.
 - [Live attach](/deep-dive/live-attach) — hooking into a running node.
-- [Distributed model](/deep-dive/distributed-model) — the full reference.
+- [Distributed model](/deep-dive/the-distributed-model) — the full reference.
 
 ## Play with it
 

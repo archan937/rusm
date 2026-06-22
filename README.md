@@ -87,7 +87,7 @@ components entirely and use the pure-Rust [`rusm-otp`](crates/rusm-otp) core dir
 **New here?** The [Getting Started guide](docs/introduction/install.md) walks from the
 pure-Rust OTP core to hosting a `.wasm`, the app model, and writing components in
 TypeScript and Rust — then the [Concepts](docs/) and the
-[`rusm` CLI reference](docs/build-an-app/cli.md). `make help` lists every dev command.
+[`rusm` CLI reference](docs/build-an-app/the-rusm-cli.md). `make help` lists every dev command.
 
 ## Why
 
@@ -192,7 +192,7 @@ is resolved the Rust way — process env first, then `.env`. Full reference:
 > The benchmark/dashboard node (`rusm-bench start`, a repo-only tool) has its own,
 > separate `[node]` knobs — `listen`, `profile` (`light`/`balanced`/`max`),
 > `ticks_per_second` — set via `rusm.toml`/`--config`/flags and switchable live
-> from the dashboard ([details](docs/about/benchmark-dashboard.md)).
+> from the dashboard ([details](docs/about/benchmark-dashboard-and-observer.md)).
 
 ## Running tests
 

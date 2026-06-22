@@ -27,7 +27,7 @@ cargo-component, no jco.
 A Rust serving component is a module of `pub fn(Request, Params) -> Response` under
 `#[rusm_rs::handlers]` — **no `main`, no router, no wire plumbing.** The macro generates
 the component shell and the action dispatch; the route is named in that listener's
-[`[serve.routes]`](/deep-dive/serving-http-ws-sse) subtable as `"component#action"`.
+[`[serve.routes]`](/deep-dive/serving-http-ws-and-sse) subtable as `"component#action"`.
 (Server-Sent Events are a per-connection `rusm_rs::sse::serve` handler, not a routed
 action — see below.)
 
@@ -173,7 +173,7 @@ All guests get more than `send`/`receive`, all over the same capability-gated AB
 - **Pub/sub fan-out** — `rusm_rs::pubsub::Topics`: keyed subscriber tracking +
   fan-out + **monitor-based pruning** of dead subscribers (the broker *mechanics* as
   a primitive, so app code carries none of it). Pairs naturally with
-  [SSE serving](/deep-dive/serving-http-ws-sse): a per-request SSE action subscribes to a
+  [SSE serving](/deep-dive/serving-http-ws-and-sse): a per-request SSE action subscribes to a
   topic and live-tails it via `Sse::run`, and the monitor prunes the subscriber when the
   request process exits on disconnect.
 - **Outbound `fetch` + Web Crypto** (TS): a capability-gated streaming `fetch`, and

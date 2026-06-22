@@ -74,7 +74,7 @@ JSON wire.
 - [Permissions & sandboxing](/deep-dive/permissions-and-sandboxing) — `spawn`,
   `monitor`, and custom `[capabilities.<name>]` profiles.
 - The full guest story (TS + Rust, service / client / supervisor) — see
-  [Write a TypeScript component](/build-an-app/typescript-component), the
+  [Write a TypeScript component](/build-an-app/write-a-typescript-component), the
   [`rusm-ts`](https://github.com/archan937/rusm) package, and the `rusm-rs` crate.
 
 ## Play with it

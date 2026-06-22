@@ -1,4 +1,4 @@
-# Reference — the `rusm` CLI
+# The rusm CLI
 
 One binary, `rusm`, drives the whole lifecycle of a RUSM app. The arc:
 
@@ -153,7 +153,7 @@ rusm node start
 ```
 
 > The **benchmark/observer node** behind the live dashboard is a separate,
-> repo-only tool — `rusm-bench start` (see [the dashboard](/about/benchmark-dashboard)
+> repo-only tool — `rusm-bench start` (see [the dashboard](/about/benchmark-dashboard-and-observer)
 > / `make dashboard`), not the installed `rusm`.
 
 ## `rusm attach [target]`

@@ -14,7 +14,7 @@ events (normal, disconnect, connection error, crash, memory/OOM crash, kill):
 - [**SSE component**](/build-an-app/serve-sse) — a per-request streaming feed.
 - [**WebSocket component**](/build-an-app/serve-websocket) — one process per connection.
 - [**Worker component**](/build-an-app/run-one-off-work) — non-serving, spawned per call.
-- [**Service component**](/build-an-app/stateful-service) — non-serving, resident and stateful.
+- [**Service component**](/build-an-app/build-a-stateful-service) — non-serving, resident and stateful.
 
 (A stock [`wasi:cli` command](#other-wasi-cli-command-components) component is covered
 briefly at the end.)
@@ -103,8 +103,8 @@ A stock command component (`WasmRuntime::spawn_command`) has no actor world — 
 / OOM:** **Crashed**, the exit reason carrying the status. Same isolation and reclaim
 as any process; it just has no serving or messaging role.
 
-See also: [the process model](/deep-dive/wasm-instance-as-process),
+See also: [the process model](/deep-dive/the-process-model),
 [links & supervision](/deep-dive/links-and-supervision),
 [fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async),
 [permissions & sandboxing](/deep-dive/permissions-and-sandboxing), and
-[the serving model](/deep-dive/serving-model).
+[the serving model](/deep-dive/the-serving-model).

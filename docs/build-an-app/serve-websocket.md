@@ -108,9 +108,9 @@ other client and the listener are untouched.
 
 **Talking to many clients at once** (a chat room fanning one message to its members) doesn't
 go through shared state — each connection tags itself with a **process-group tag** and a
-publisher broadcasts to the tag. That's its own pattern: [Broadcast to many](/build-an-app/broadcast).
+publisher broadcasts to the tag. That's its own pattern: [Broadcast to many](/build-an-app/broadcast-to-many).
 Cross-connection state (presence counts, history) belongs in a
-[stateful service](/build-an-app/stateful-service) or `kv`, never in the per-connection process.
+[stateful service](/build-an-app/build-a-stateful-service) or `kv`, never in the per-connection process.
 
 Next: [Serve SSE](/build-an-app/serve-sse). For the execution model + failure modes, see
-[the serving model](/deep-dive/serving-model).
+[the serving model](/deep-dive/the-serving-model).

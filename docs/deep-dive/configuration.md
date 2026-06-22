@@ -120,7 +120,7 @@ Each entry is a **pure listener** on its own TCP port — just a `protocol` and 
 `listen` address. Used by `rusm serve`. Serving is **always ephemeral**: HTTP and SSE
 run **a fresh sandboxed instance per request**, WS **one sandboxed process per
 connection** — a trap fails only that one request/connection, never the listener. See
-[the serving model](/deep-dive/serving-model).
+[the serving model](/deep-dive/the-serving-model).
 
 A listener carries no handler logic of its own. The **handler components live in
 `[components.<name>]`** (each with its own capability), and the listener reaches them
@@ -144,9 +144,9 @@ one of two ways:
 | `compression` | bool | `false` | Compress eligible replies the client accepts: **gzip** for routed HTTP handler responses + the SSE event stream, **permessage-deflate** for WebSocket. The handler-less `wasi:http` path sets its own encoding. |
 | `tls` | table | none | Serve this listener over **TLS** (`https`/`wss`) — a [`[serve.tls]`](#servetls-listener-tls) subtable with `cert`/`key` PEM paths. Omitted = plain TCP. |
 
-See [Resource & security controls](/deep-dive/serving-http-ws-sse#resource-security-controls) for the
-WebSocket cap/size/origin details, [Compression](/deep-dive/serving-http-ws-sse#compression) for what
-`compression` covers, and [TLS](/deep-dive/serving-http-ws-sse#tls) for `https`/`wss`.
+See [Resource & security controls](/deep-dive/serving-http-ws-and-sse#resource-security-controls) for the
+WebSocket cap/size/origin details, [Compression](/deep-dive/serving-http-ws-and-sse#compression) for what
+`compression` covers, and [TLS](/deep-dive/serving-http-ws-and-sse#tls) for `https`/`wss`.
 
 ## `[serve.tls]` — listener TLS {#servetls-listener-tls}
 
@@ -291,7 +291,7 @@ Keyed by the component **name** (the table key, like `[capabilities.<name>]` —
 no `name` field). Each entry loads `./wasm/<name>.{qjsbc,js,wasm}` (TS bytecode → TS
 bundle → Rust component, in that preference) and **registers** it under its capability
 profile so a route or a sibling can `spawn` it by name. Used by `rusm run`, `rusm dev`,
-and as the handlers a `[[serve]]` listener names. See [the app model](/deep-dive/app-model).
+and as the handlers a `[[serve]]` listener names. See [the app model](/deep-dive/the-app-model).
 
 Every entry is **spawnable by name**. The `resident` flag decides whether the node also
 boots an instance:
@@ -443,4 +443,4 @@ variable only if its capability profile **grants the key** (via `env = [...]`).
 > standard `wasi:cli/environment`. (Internally the host passes `RUSM_JS_BUNDLE` /
 > `RUSM_SERVE_ROLE` to the js-runner — these are not user configuration.)
 
-See also: **[the `rusm` CLI](/build-an-app/cli)** for the commands that consume this file.
+See also: **[the `rusm` CLI](/build-an-app/the-rusm-cli)** for the commands that consume this file.
