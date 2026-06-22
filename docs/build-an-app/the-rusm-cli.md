@@ -14,7 +14,7 @@ rusm attach        # live REPL into a running node
 Config comes from `rusm.toml` (see **[configuration](/deep-dive/configuration)**);
 the commands that start a node also accept the flags in the last section.
 
-## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board]`
+## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board] [--bridges]`
 
 Scaffold a new app in `./<name>` — a component, a `rusm.toml` with a `[[serve]]`
 entry, `.gitignore`, and a README. From nothing to a live server in three commands.
@@ -33,6 +33,7 @@ code* (no `wit-bindgen`/`export!`, no `Process` frame plumbing):
 | `--rust` / `--lang <ts\|rust\|go\|generic>` | TypeScript | `ts`, `rust`, `go`, `generic` |
 | `--protocol <p>` / `-p <p>` | `http` | `http`, `sse`, `ws` |
 | `--template <name>` | _(none)_ | `todo-board` — see below |
+| `--bridges` | _(off)_ | scaffold a **custom-bridge** app — see below |
 
 ```sh
 rusm new chat --protocol ws            # a TypeScript WebSocket echo
@@ -84,6 +85,20 @@ not apply (the board brings its own listeners); choose the language with `--lang
 ```sh
 rusm new board --template todo-board --lang go   # the whole app, in Go
 cd board && rusm build && rusm serve              # open http://127.0.0.1:8080
+```
+
+### `--bridges`
+
+Scaffold a **custom-bridge** app: a small host crate that registers the app's native
+bridges (then serves), an example `weather` bridge, and a guest component that calls it as
+a typed import. This is how a guest reaches host code the platform doesn't provide — see
+[Add your own functions](/build-an-app/add-your-own-functions). The host impl is always
+Rust (the host *is* Rust), so `--lang` chooses the **guest** language — Rust or Go (a TS
+guest can't call a custom bridge yet), defaulting to Rust. It can't be combined with
+`--template`.
+
+```sh
+rusm new weatherapp --bridges --lang go   # a Go guest calling a native `weather` bridge
 ```
 
 ## `rusm build`
@@ -177,7 +192,7 @@ Applied by the node-starting commands (layered over `rusm.toml`):
 | Flag | Commands | Meaning |
 | --- | --- | --- |
 | `--config <file>` | `node start`, `run`, `serve`, `dev` | Use a specific manifest instead of `./rusm.toml`. |
-| `--listen <addr>` | `node start` | Override the node's attach (WebSocket) address. |
+| `--listen <addr>` | `node start`, `run`, `serve`, `dev` | Override the node's `[node] listen` attach (WebSocket) address — most useful with `node start`, which exposes it. |
 
 > `rusm new` takes the app name; `rusm attach` takes the target as a positional
 > argument; `rusm build` takes no flags.
