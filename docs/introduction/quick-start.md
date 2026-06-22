@@ -20,6 +20,10 @@ rusm new board --template todo-board   # add --lang rust or --lang go (default: 
 cd board && rusm build && rusm serve   # → open http://127.0.0.1:8080
 ```
 
+Or scaffold the **weather** template — a native host function (a "custom bridge") called from
+your guest, in any language — `rusm new forecast --template weather --lang ts`; see
+[Add your own functions](/build-an-app/add-your-own-functions).
+
 `--lang rust` (or `--lang go`) scaffolds a single Rust or Go component instead of TypeScript;
 `--protocol ws` (or `sse`) scaffolds a WebSocket or SSE handler instead of HTTP. The
 scaffolded `rusm.toml` is your app manifest — see the

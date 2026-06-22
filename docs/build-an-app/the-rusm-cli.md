@@ -14,7 +14,7 @@ rusm attach        # live REPL into a running node
 Config comes from `rusm.toml` (see **[configuration](/deep-dive/configuration)**);
 the commands that start a node also accept the flags in the last section.
 
-## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board] [--bridges]`
+## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board|weather] [--bridges]`
 
 Scaffold a new app in `./<name>` — a component, a `rusm.toml` with a `[[serve]]`
 entry, `.gitignore`, and a README. From nothing to a live server in three commands.
@@ -32,7 +32,7 @@ code* (no `wit-bindgen`/`export!`, no `Process` frame plumbing):
 | --- | --- | --- |
 | `--rust` / `--lang <ts\|rust\|go\|generic>` | TypeScript | `ts`, `rust`, `go`, `generic` |
 | `--protocol <p>` / `-p <p>` | `http` | `http`, `sse`, `ws` |
-| `--template <name>` | _(none)_ | `todo-board` — see below |
+| `--template <name>` | _(none)_ | `todo-board`, `weather` — see below |
 | `--bridges` | _(off)_ | scaffold a **custom-bridge** app — see below |
 
 ```sh
@@ -87,15 +87,27 @@ rusm new board --template todo-board --lang go   # the whole app, in Go
 cd board && rusm build && rusm serve              # open http://127.0.0.1:8080
 ```
 
+### `--template weather`
+
+Scaffold the **custom-bridge example** — a small host crate that registers the app's native
+bridges (then serves), the example `weather` bridge (`bridges/weather/{bridge.wit,host.rs}`),
+and a guest component that calls it as a typed import. It's the named, discoverable form of
+the custom-bridge app, and how a guest reaches host code the platform doesn't provide — see
+[Add your own functions](/build-an-app/add-your-own-functions). The host impl is always Rust
+(the host *is* Rust); `--lang` chooses the **guest** language — **TypeScript, Rust, or Go**
+(a TS guest calls the bridge too; the per-app js-runner is rebuilt with it compiled in).
+
+```sh
+rusm new forecast --template weather --lang ts    # a TS guest calling a native `weather` bridge
+rusm new forecast --template weather --lang go    # …or Go, or Rust (the default)
+cd forecast && rusm build && rusm serve
+```
+
 ### `--bridges`
 
-Scaffold a **custom-bridge** app: a small host crate that registers the app's native
-bridges (then serves), an example `weather` bridge, and a guest component that calls it as
-a typed import. This is how a guest reaches host code the platform doesn't provide — see
-[Add your own functions](/build-an-app/add-your-own-functions). The host impl is always
-Rust (the host *is* Rust), so `--lang` chooses the **guest** language — Rust or Go (a TS
-guest can't call a custom bridge yet), defaulting to Rust. It can't be combined with
-`--template`.
+The same custom-bridge app as `--template weather`, as a flag — for *starting* a new app with
+a bridge already wired in (defaults the guest to Rust). The two are interchangeable; pick
+whichever reads better. `--bridges` can't be combined with `--template`.
 
 ```sh
 rusm new weatherapp --bridges --lang go   # a Go guest calling a native `weather` bridge

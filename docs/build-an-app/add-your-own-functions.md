@@ -131,10 +131,18 @@ typed WIT call*, never a generic dispatcher.
 `rusm build` discovers `bridges/`, generates the host glue + the per-guest bindings, vendors
 the contract into each granted component, and compiles the components **plus a small host
 binary** that registers the bridges. `rusm serve` runs that host binary — the same serve loop
-as a pure-guest app, with your bridges wired in. **`rusm new <name> --bridges`** scaffolds the
-whole thing. See the runnable
+as a pure-guest app, with your bridges wired in.
+
+**Scaffold a working one in seconds** — `rusm new <name> --template weather --lang ts|rust|go`
+(or the equivalent `--bridges` flag) generates the whole thing: the host crate, the example
+`weather` bridge, and a guest that calls it in your language. It's the runnable
 [`custom-bridge`](https://github.com/archan937/rusm/tree/main/examples/custom-bridge) example
-(the `weather` bridge, called from Rust, Go, and TypeScript guests).
+(the `weather` bridge, called from Rust, Go, **and** TypeScript guests):
+
+```sh
+rusm new forecast --template weather --lang ts
+cd forecast && rusm build && rusm serve
+```
 
 ## The platform / application split
 
