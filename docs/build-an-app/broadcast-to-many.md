@@ -44,13 +44,13 @@ for (const pid of Process.whereisTag("room:lobby")) {
 
 ```rust [Rust]
 for pid in rusm_rs::whereis_tag("room:lobby") {
-    rusm_rs::send(pid, &payload).ok();
+    rusm_rs::send_bytes(pid, &payload);
 }
 ```
 
 ```go [Go]
 for _, pid := range rusm.WhereisTag("room:lobby") {
-	rusm.Send(pid, payload)
+	rusm.SendBytes(pid, payload)
 }
 ```
 

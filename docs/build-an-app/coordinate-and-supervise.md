@@ -13,7 +13,7 @@ A component imports `rusm:runtime/actor` and calls the same operations the host 
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
-const me = Process.self;                  // self()
+const me = Process.self();                // self()
 Process.register("worker");               // name yourself in the registry
 const who = Process.whereis("worker");    // look a name up → bigint | null
 const all = Process.list();               // every live pid
@@ -24,16 +24,14 @@ Process.setLabel("worker#1");             // a label for the observer
 ```
 
 ```rust [Rust]
-use rusm::runtime::actor;
-
-let me = actor::own_pid();
-actor::register("worker");
-let who = actor::whereis("worker");       // Option<pid>
-let all = actor::list_processes();
-actor::send(some_pid, &bytes);
-let msg = actor::receive();               // blocks (the fiber parks)
-actor::kill(some_pid);
-actor::set_label("worker#1");
+let me = rusm_rs::me();                    // self()
+rusm_rs::register("worker");               // name yourself in the registry
+let who = rusm_rs::whereis("worker");      // Option<Pid>
+let all = rusm_rs::list();
+rusm_rs::send_bytes(some_pid, &bytes);
+let msg = rusm_rs::receive_bytes();        // blocks (the fiber parks)
+rusm_rs::kill(some_pid);
+rusm_rs::set_label("worker#1");
 ```
 
 ```go [Go]

@@ -95,8 +95,12 @@ stream's `message` fires — see [Broadcast to many](/build-an-app/broadcast-to-
 ```sh
 rusm build
 rusm serve                                   # feed → http://127.0.0.1:8081
-curl -N http://127.0.0.1:8081/               # streams data: lines as they're published
+curl -N http://127.0.0.1:8081/               # holds the stream open, printing each data: line
 ```
+
+`curl -N` connects and waits — with nothing publishing yet you'll see only the periodic
+keep-alive, and a `data:` line the moment someone broadcasts to the `todos` tag. Wire up a
+publisher next ([Broadcast to many](/build-an-app/broadcast-to-many)) to watch events arrive.
 
 ## How it runs
 

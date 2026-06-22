@@ -72,8 +72,29 @@ allow-storage = true               # + the kv store
 capability = "stateful"            # the handler runs under that profile
 ```
 
-```toml [Rust / Go]
+```toml [Rust]
 # rusm.toml
+[node]
+store = "links.redb"               # durable kv — the code → URL map lives here
+
+[[serve]]                          # a listener on a real TCP port
+protocol = "http"
+listen   = "127.0.0.1:8080"
+
+[serve.routes]                     # map each request to a handler action
+"POST /shorten" = "api#shorten"    # save a URL, return a short code
+"GET  /:code"   = "api#expand"     # look the code up, redirect to the URL
+
+[capabilities.stateful]            # a profile that may touch durable storage
+inherits      = "sandboxed"        # default-deny base
+allow-storage = true               # + the kv store
+
+[components.api]
+capability = "stateful"            # the handler runs under that profile
+```
+
+```toml [Go]
+# rusm.toml — identical to Rust: Go HTTP handlers are routed too
 [node]
 store = "links.redb"               # durable kv — the code → URL map lives here
 
@@ -258,10 +279,10 @@ Every RUSM app is this same handful of pieces, and the shortener has exercised t
   isolated instance is spawned for each request, runs one action, replies, and is gone. Nothing
   is shared or parked between requests — so a slow or crashing request can't hurt another.
 - **State lives outside the handler.** Because the instance is ephemeral, durable state goes in
-  **`kv`** (as here) — or, when it's in-memory or computed rather than a simple key→value map,
-  in a long-lived **resident service** the handler reaches over the actor API. That's the
-  [Build a stateful service](/build-an-app/build-a-stateful-service) pattern; a `resident = true`
-  component is boot-spawned and supervised by the node.
+  **`kv`** (as here, the simplest fit for a key→value map). When state is held in a live process
+  instead — in memory, computed, coordinated — it lives in a long-lived **resident service**
+  (`resident = true`, boot-spawned and supervised) reached by a worker or another service. See
+  [Build a stateful service](/build-an-app/build-a-stateful-service).
 - **Default-deny capabilities.** The handler got `allow-storage` and nothing more. Grant only
   what a component needs — [Grant capabilities](/build-an-app/grant-capabilities).
 - **The CLI runs it.** `rusm build` compiles `components/*` to `./wasm/`; `rusm serve` binds the
@@ -282,5 +303,8 @@ model:
   [WebSocket](/build-an-app/serve-websocket), one process per connection.
 - **Split work across components** — [call another component](/build-an-app/call-another-component),
   run [one-off work](/build-an-app/run-one-off-work), or [broadcast to many](/build-an-app/broadcast-to-many).
+- **Call your own native code** — give every guest a typed function backed by host Rust (a DB
+  client, a signing routine) with [Add your own functions](/build-an-app/add-your-own-functions).
+- **Lock it down** — grant each component only what it needs with [Grant capabilities](/build-an-app/grant-capabilities).
 - **The exact routing rules** (`:param`, `*` wildcard, specificity, 404/405) — [Serve HTTP](/build-an-app/serve-http).
 - **Every manifest table and field** — the [configuration reference](/deep-dive/configuration).
