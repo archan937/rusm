@@ -1,8 +1,9 @@
-# Concept — the serving model (process-per-unit-of-work)
+# The serving model
 
 A RUSM component can be a high-throughput **HTTP / WebSocket / SSE** server. The host
 owns the socket and the protocol; the guest just produces responses — in Rust,
-[TypeScript](/deep-dive/guests), or Go. `rusm-otp` stays Wasm-free; all the
+[TypeScript](/deep-dive/guests), or Go. One decision shapes everything that follows:
+serving is **always process-per-unit-of-work**. `rusm-otp` stays Wasm-free; all the
 serving machinery (hyper, tungstenite, `wasi:http`) lives only in `rusm-wasm`.
 
 ## One shape, by design
@@ -46,7 +47,7 @@ handler code — and applies to **every protocol**: it matches by method + path.
 listener dispatches each request to a `component#action`; an `sse`/`ws` listener routes the
 **connection** to a **bare handler component** (no `#action` — the component is the
 per-connection handler), capturing path params into its connection context. A listener with
-no `[serve.routes]` binds a single handler by `name`. Each `[[serve]]` listener has its own
+no `[serve.routes]` binds a single handler by `component`. Each `[[serve]]` listener has its own
 `[serve.routes]`, so multiple listeners (e.g. a public API and an admin port) route
 independently. A key is `"METHOD /path/pattern"`; the value is `"component#action"` (HTTP)
 or `"component"` (ws/sse):

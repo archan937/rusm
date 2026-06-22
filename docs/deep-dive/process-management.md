@@ -1,14 +1,15 @@
-# Concept — process management (registry, timers, introspection)
+# Process management
 
-Beyond spawn / send / receive, a RUSM process has the full Erlang **management**
-toolkit — all backed by the Wasm-free `rusm-otp` core, so it's there whether a
-process body is native Rust or a sandboxed Wasm instance.
+Spawn, send, and receive are the basics. Beyond them, every RUSM process gets the full
+Erlang **management toolkit** — a named registry, process groups, timers, introspection, and
+orderly shutdown. All of it is backed by the Wasm-free `rusm-otp` core, so it works
+identically whether a process body is native Rust or a sandboxed Wasm instance.
 
 ## Named registry
 
-Register a process under a name so others reach it without holding its pid:
-`register(name)` / `whereis(name)`. The registry is a sharded `DashMap` (no global
-lock), so lookups scale with cores. For names that resolve across machines, see
+Register a process under a name so others can reach it without holding its pid:
+`register(name)` / `whereis(name)`. The registry is a sharded `DashMap` (no global lock), so
+lookups scale with cores. For names that resolve *across machines*, see
 [distributed nodes](/deep-dive/distributed-nodes).
 
 ## Process groups (tags)
@@ -33,27 +34,27 @@ polling, no pid bookkeeping in app code.
 
 Same surface from all three guests: `register_tag`/`kill_tag`/`whereis_tag` in `rusm-rs`,
 `Process.registerTag`/`killTag`/`whereisTag` in `rusm-ts`, `RegisterTag`/`KillTag`/`WhereisTag`
-in `rusm-go` — backed, like everything here, by the Wasm-free `rusm-otp` core.
+in `rusm-go` — backed, like everything here, by the Wasm-free `rusm-otp` core. This group
+form is also RUSM's pub/sub primitive; see [broadcast to many](/build-an-app/broadcast).
 
 ## Timers
 
-`send_after(ms, msg)` schedules a message to land in a mailbox later; `cancel`
-aborts a pending one. It's built on Tokio's timer wheel, so millions of outstanding
-timers cost almost nothing.
+`send_after(ms, msg)` schedules a message to land in a mailbox later; `cancel` aborts a
+pending one. It's built on Tokio's timer wheel, so millions of outstanding timers cost
+almost nothing.
 
 ## Introspection
 
-`list()` enumerates live pids; `info(pid)` returns a process's links, monitors,
-names, label, mailbox depth and status; `set_label(..)` tags a process for the
-observer. This is exactly what the [live-attach](/deep-dive/live-attach) REPL and the
-dashboard observer read — nothing is hidden from you.
+`list()` enumerates live pids; `info(pid)` returns a process's links, monitors, names,
+label, mailbox depth, and status; `set_label(..)` tags a process for the observer. This is
+exactly what the [live-attach](/deep-dive/live-attach) REPL and the dashboard observer read —
+nothing is hidden from you.
 
 ## Lifecycle: graceful shutdown vs kill
 
-`shutdown` drains and stops a process in order; `kill` aborts it immediately via a
-`futures` abort handle (no second signal channel — kill rides that handle, exit
-signals ride the mailbox). Crashes and exits flow through
-[links & supervision](/deep-dive/links-and-supervision).
+`shutdown` drains and stops a process in order; `kill` aborts it immediately via a `futures`
+abort handle (no second signal channel — kill rides that handle, exit signals ride the
+mailbox). Crashes and exits flow through [links & supervision](/deep-dive/links-and-supervision).
 
-> Registry, timers and graceful shutdown shipped in Phase 4; introspection +
-> labels + mailbox depth surface in the observer snapshot.
+> Registry, timers, and graceful shutdown shipped in Phase 4; introspection, labels, and
+> mailbox depth surface in the observer snapshot.

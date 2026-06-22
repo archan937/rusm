@@ -22,8 +22,9 @@ the hard boundary holds; distribution is an actor-core concern, not a Wasm one).
    (quinn, rustls + ring). A cluster shares one self-signed `Identity` — a
    **pre-shared cluster certificate**: a node only completes a handshake with a peer
    presenting the same cert, and the client pins it as its sole trust root. A wrong
-   certificate is rejected at the handshake. (Per-node certs under a cluster CA are
-   a later refinement; the transport seam doesn't change.)
+   certificate is rejected at the handshake. (Per-node certs under a cluster CA
+   arrived later, in [Phase 10](./phase-10-scale-hardening.md) — mutual TLS, foreign-CA
+   peers rejected; the transport seam didn't change.)
 2. **Per-peer streams.** The handshake's **bidirectional stream stays open as a
    control channel** (node-name exchange, then registry gossip and a control-plane
    RPC); every **message rides its own uni-stream**, so cross-node messages never
@@ -96,6 +97,6 @@ out-of-process by `rusm-loadtest` against a live `rusm serve` port.
 
 ## Next
 
-[Phase 10](/about/roadmap): **scale & hardening** — an on-demand instance tier
-above the pooled ceiling, opt-in bounded mailboxes, and supervisor
+[Phase 10](./phase-10-scale-hardening.md): **scale & hardening** — an on-demand
+instance tier above the pooled ceiling, opt-in bounded mailboxes, and supervisor
 restart-intensity.

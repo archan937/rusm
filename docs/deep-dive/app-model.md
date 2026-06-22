@@ -1,7 +1,9 @@
-# Concept — the RUSM app model
+# The app model
 
-A RUSM **app** is a project that declares some components and lets the runtime
-build, load, supervise, and run them — so you write *source*, not glue.
+A RUSM **app** is a project that *declares* its components and lets the runtime build,
+load, supervise, and run them. You describe **what** exists — components, their
+capabilities, the ports they serve — in one `rusm.toml`; the runtime owns **how** they
+start, restart, and wire together. The payoff: you write *source*, never glue.
 
 ## Layout
 
@@ -18,6 +20,8 @@ The manifest refers to components **by name**; `./wasm/` is the enforced
 load directory.
 
 ## Commands
+
+One CLI drives the whole lifecycle — scaffold, build, run, watch, serve:
 
 - **`rusm new <name>`** — scaffolds a new app: a zero-dependency TypeScript HTTP
   component (`components/api/index.ts`, a default `Request`→`Response` handler), a
@@ -37,7 +41,7 @@ load directory.
   `http` | `sse` | `ws`, `listen`, and — for HTTP/SSE — a `[serve.routes]` table) on
   real TCP ports. Each listener is pure: a routed HTTP/SSE listener names its handlers
   in `[serve.routes]` (each a `[components.<name>]` entry with its own capability); a WS or
-  routes-less HTTP listener names its single handler with an optional `name`. Handlers
+  routes-less HTTP listener names its single handler with `component`. Handlers
   load from `wasm/<name>.{wasm,js}` (HTTP and SSE via the `http_server` path, WS via
   `ws_server`). The node only serves; it never generates load.
 

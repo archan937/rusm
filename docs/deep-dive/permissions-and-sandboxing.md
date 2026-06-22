@@ -1,8 +1,10 @@
-# Concept — per-process permissions & sandboxing
+# Permissions & sandboxing
 
-Because every process is an isolated Wasm instance, RUSM can grant each one a
-**precise, individual** set of capabilities — finer-grained than Go or Erlang,
-where any goroutine/process can touch the whole machine.
+Every process is an isolated Wasm instance, so RUSM can grant each one a **precise,
+individual** set of capabilities — and deny everything else. That's finer-grained than Go
+or Erlang, where any goroutine or process can touch the whole machine. The payoff: you can
+run risky or untrusted code knowing a crash or exploit is confined to that one process and
+the resources it was explicitly handed.
 
 ## What can be scoped per process
 

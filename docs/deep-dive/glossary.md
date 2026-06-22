@@ -1,5 +1,8 @@
 # Glossary — Erlang/Elixir ↔ RUSM
 
+Coming from the BEAM? RUSM's model is deliberately familiar. This table maps the
+Erlang/Elixir concepts you already know onto their RUSM equivalents.
+
 | Erlang/Elixir | RUSM | Notes |
 | --- | --- | --- |
 | process | a Wasm instance running as a Tokio task | own stack, heap, syscalls, permissions |
@@ -17,11 +20,11 @@
 | `:observer` | the dashboard's observer view | live processes, schedulers, memory |
 | BEAM | the RUSM runtime (Rust + Tokio + Wasmtime) | the host that runs everything |
 
-Terms specific to Phase 0:
+Dashboard & benchmark terms — the wire between a node and the observer/REPL:
 
 | Term | Meaning |
 | --- | --- |
 | frame | one sampled tick (throughput, latency, observer snapshot) sent to clients |
-| scenario | a named benchmark (e.g. `connection-storm`); synthetic in Phase 0 |
-| synthetic source | deterministic generator producing scenario-shaped data per tick |
+| scenario | a named benchmark (e.g. `connection-storm`) the node runs and streams; all scenarios now run on real engines |
+| synthetic source | a deterministic generator producing scenario-shaped data per tick — the Phase-0 bootstrap, before the engines were real |
 | detail toggle | switch for the costly per-instance observer table |

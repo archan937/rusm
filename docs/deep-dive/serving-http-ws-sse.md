@@ -1,4 +1,4 @@
-# Serving HTTP, WS & SSE from a component (Phase 11)
+# Serving HTTP, WS & SSE
 
 > **Status: HTTP, WS, and SSE all work — from both Rust and TypeScript components,
 > served on real ports by `rusm serve`.** Serving is **always

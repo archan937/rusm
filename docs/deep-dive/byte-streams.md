@@ -1,10 +1,10 @@
-# Concept — cross-process byte streams
+# Byte streams
 
-Messages are whole values: you `send` a chunk, the receiver gets that chunk. But
-some work is a *flow* — an HTTP body, an SSE feed, a file being piped — where the
-producer keeps emitting and the consumer keeps reading, and neither should have to
-buffer the whole thing in memory. RUSM models that as a **byte stream** between
-processes.
+Messages are whole values: you `send` a chunk, the receiver gets that chunk. But some
+work is a *flow* — an HTTP body, an SSE feed, a file being piped — where the producer
+keeps emitting and the consumer keeps reading, and neither should buffer the whole thing
+in memory. RUSM models that as a **byte stream** between processes: a bounded,
+back-pressured channel whose read end is handed off like any other message.
 
 ## When you actually use it
 

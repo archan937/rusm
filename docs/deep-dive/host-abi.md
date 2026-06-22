@@ -137,14 +137,14 @@ RUSM is just a fast, sandboxed WASI runtime. So there is no RUSM-specific
 convention to adopt, and nothing to make code non-portable.
 
 `wstd` itself is a *guest* library, not a host contract — "wstd compatibility"
-simply means hosting the standard WASI interfaces a wstd guest imports. Two items
-are on the roadmap (Phase 11) to make any standard component fully drop-in:
+simply means hosting the standard WASI interfaces a wstd guest imports. Both pieces
+that make any standard component fully drop-in **shipped in Phase 11**:
 
-- **Entrypoint:** RUSM currently invokes a bare exported `run` func; standard
-  *command* components export the `wasi:cli/run` interface. Supporting that export
-  as an entrypoint lets stock command components run as-is.
-- **`wasi:http`:** wstd's HTTP layer imports `wasi:http`, which RUSM will host
-  alongside the HTTP-serving work — then wstd HTTP guests just work.
+- **Entrypoint:** alongside RUSM's bare exported `run` func, stock **command**
+  components that export `wasi:cli/run` run unchanged (`WasmRuntime::spawn_command`,
+  which shares the same store-build path as the actor entrypoint).
+- **`wasi:http`:** RUSM hosts `wasi:http` (p2 + p3) — inbound for HTTP/SSE serving and
+  a capability-gated, streaming **outbound `fetch`** — so a wstd HTTP guest just works.
 
 ## Wire protocol (node ↔ dashboard / REPL)
 

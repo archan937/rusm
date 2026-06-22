@@ -104,10 +104,12 @@ raw `rusm::*` ABI) and **components** (the `rusm:runtime` WIT world:
 `StreamHandle`.
 
 **Deferred follow-ons:** a native p3-typed `stream<u8>` WIT signature (instead of
-the handle-based ops), and `rusm dev` filesystem watch/reload.
+the handle-based ops) — *still* deferred as a standards-surface refinement, since the
+handle ABI is load-bearing; and `rusm dev` filesystem watch/reload — **delivered in
+[Phase 8](./phase-08-guest-ergonomics.md)**.
 
 ## Next
 
-[Phase 8](/about/roadmap): the **`rusm-rs` guest crate** — ergonomic
+[Phase 8](./phase-08-guest-ergonomics.md): the **`rusm-rs` guest crate** — ergonomic
 spawn/Mailbox/AbstractProcess/Supervisor over the raw ABI, so guests write idiomatic
 code instead of hand-rolled bindings.

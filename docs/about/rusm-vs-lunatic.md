@@ -10,16 +10,17 @@
 
 ## How to read this
 
-This is not apples-to-apples. RUSM has **Phases 1–10 complete**: the OTP core spawns, messages, supervises,
-manages, and connects real processes over TCP, and the `rusm-wasm` backend runs
-them as real **Wasm instances** behind three bridges (wasip1 core modules, wasip2
-components, wasip3 `@0.3.0`), with default-deny capabilities, instance-per-process,
-pooling + CoW + epoch. All **nineteen** dashboard scenarios run on real data — including
-**fairness**, where Wasm spinners saturate every core yet bystanders keep
-progressing, and **distributed-fanout**, real cross-node messaging over QUIC+TLS. The **guest crate** (Phase 8: `rusm-rs` + `rusm-ts`) and **distributed
-clusters** (Phase 9: `rusm-cluster`, QUIC+TLS) are now built too; remaining phases
-are scale/hardening and the standard-WASI surface. The value is in the
-**efficiency playbook** below.
+This is not apples-to-apples. RUSM has **Phases 0–11 functionally complete** (Phase 12,
+hardening, is planned), while Lunatic is a complete but **dormant** runtime. In RUSM
+today: the OTP core spawns, messages, supervises, manages, and connects real processes;
+the `rusm-wasm` backend runs them as real **Wasm instances** behind three bridges (wasip1
+core modules, wasip2 components, wasip3 `@0.3.0`) with default-deny capabilities,
+instance-per-process, and pooling + CoW + epoch; the guest crates (`rusm-rs` / `rusm-ts` /
+`rusm-go`), the QUIC+TLS cluster, and HTTP/WS/SSE serving are all built. All **nineteen**
+dashboard scenarios run on real data — including **fairness** (Wasm spinners saturate
+every core, yet bystanders keep progressing) and **distributed-fanout** (real cross-node
+messaging over QUIC+TLS). The lasting value of this page is the **efficiency playbook**
+below.
 
 > ### Does RUSM handle lightweight processes as efficiently as Lunatic — today?
 >
@@ -51,7 +52,7 @@ are scale/hardening and the standard-WASI surface. The value is in the
 
 | | RUSM (today) | Lunatic |
 | --- | --- | --- |
-| Status | Active, Phases 1-10 complete | Dormant since 2023 (v0.13.0) |
+| Status | Active, Phases 0–11 complete (12 planned) | Dormant since 2023 (v0.13.0) |
 | Rust LOC | ~5,350 (6 crates) + ~790 TS | ~15,150 (20 crates) |
 | Tests | ~164 Rust + 21 TS, ~99% cov | ~26 test annotations |
 | Wasmtime | v45 (instance-per-process) | v8 (2023) |

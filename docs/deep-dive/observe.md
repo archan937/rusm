@@ -1,5 +1,9 @@
 # Observe a running node
 
+Watch a live node from the outside — its process count and per-process table, streaming
+as it runs. Two front-ends sit on the same [attach protocol](/deep-dive/live-attach): the
+`rusm attach` terminal REPL for any app, and the React benchmark dashboard for the repo.
+
 **Your app** — start it as an attachable node, then attach a REPL to watch its
 live processes:
 

@@ -1,9 +1,11 @@
-# Concept — distributed nodes
+# Distributed nodes
 
-A single RUSM node is a host process running many processes. A **cluster** is
-several nodes — on different machines — connected so processes can spawn and
-message across them, exactly like distributed Erlang. This ships in the Wasm-free
-[`rusm-cluster`](https://github.com/archan937/rusm) crate over `rusm-otp`.
+A single RUSM node is a host process running many lightweight processes. A **cluster**
+is several nodes — typically on different machines — connected so those processes can
+spawn and message across the boundary as if they were local. That's distributed Erlang's
+model: a process doesn't know (or care) which node a peer lives on. It ships in the
+Wasm-free [`rusm-cluster`](https://github.com/archan937/rusm) crate, layered over
+`rusm-otp` — so distribution never drags WebAssembly into the core.
 
 ## Connecting
 

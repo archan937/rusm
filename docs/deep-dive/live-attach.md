@@ -1,4 +1,4 @@
-# Concept — hooking into a running node
+# Live attach
 
 One of the BEAM's best tricks: connect to an *already-running* node and inspect or
 poke it live — `iex --remsh`, or `:observer` attached to production. RUSM brings

@@ -1,9 +1,9 @@
 # Phase 8 — guest ergonomics
 
-**Goal:** make writing a RUSM guest *pleasant* — in **TypeScript** or **Rust** —
-so a component is just exported functions, and calling another component reads like
-a local function call. The actor ABI from Phase 7 is powerful but raw; Phase 8 is
-the ergonomic layer on top, in both languages, over one shared wire.
+**Goal:** make writing a RUSM guest *pleasant* — in **TypeScript**, **Rust**, or
+**Go** — so a component is just exported functions, and calling another component
+reads like a local function call. The actor ABI from Phase 7 is powerful but raw;
+Phase 8 is the ergonomic layer on top, in all three languages, over one shared wire.
 
 ## Why this matters
 
@@ -12,7 +12,8 @@ still hand-rolled bindings and hand-parsed bytes. Phase 8 delivers the developer
 experience: **services** (exported functions), a **concealed typed client**
 (`spawn` + send + receive, hidden behind `await svc.method(...)`), **streaming**
 and **callbacks**, an in-guest **`Supervisor`**, and `rusm dev` watch + reload —
-the same story for Rust and TS, interoperable because they share one JSON wire.
+the same story for TypeScript, Rust, and Go, interoperable because they share one
+JSON wire.
 
 ## What we built (TDD throughout)
 
@@ -39,6 +40,10 @@ the same story for Rust and TS, interoperable because they share one JSON wire.
    of free functions (mirroring TS's `export function`s — no `impl`, no `self`)
    generates a `serve()` dispatch loop **and** a typed `Client` with
    call/cast/streaming/callbacks. A Rust client and a TS service interoperate.
+   **rusm-go** is the third peer (TinyGo → `wasm32-wasip2`): idiomatic
+   `Pid`/`Send`/`Receive`/`Spawn`, a `Service` of typed handlers, and a generic
+   `Call[R]` client over the *same* JSON wire (shown below) — so Rust, TS, and Go
+   guests all interoperate.
 4. **Spawn-from-guest + monitor** (actor ABI) — `spawn` instantiates a registered
    component by name → a new pid; `monitor` makes a dead process arrive as a
    `__down` message (`receive` translates the runtime `Down` — no watcher process,
@@ -149,5 +154,6 @@ standards-surface refinement; the byte streams already work over a handle ABI.
 
 ## Next
 
-[Phase 9](/about/roadmap): **distributed clusters + live attach** — QUIC + TLS,
-remote spawn, and a global registry, so processes spawn and message across nodes.
+[Phase 9](./phase-09-distributed-clusters.md): **distributed clusters + live attach**
+— QUIC + TLS, remote spawn, and a global registry, so processes spawn and message
+across nodes.

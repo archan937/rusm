@@ -33,22 +33,26 @@ as lackings are closed.
 
 ## Opportunities
 
-1. **HTTP(S)/WS(S)/SSE serving via `wasi:http`** — pairs with the GB/s streaming;
-   also unlocks `fetch` in TS guests (Tokio HTTP client + fiber suspension).
-2. **Distributed cluster (Phase 9, QUIC+TLS)** — single-node → horizontal.
-3. **A true head-to-head benchmark vs Lunatic.**
-4. **On-demand instance tier** above the pool (see #1).
+Most of what this section once tracked has since shipped:
 
-(Phase 8 — the `rusm-rs`/`rusm-ts` guest crates, service macros, typed clients, and
-in-guest `Supervisor` strategies — is shipped.)
+- **HTTP(S)/WS(S)/SSE serving via `wasi:http`** — Phase 11 (it also unlocked `fetch`
+  in TS guests: a Tokio HTTP client + fiber suspension).
+- **Distributed cluster** — Phase 9 (`rusm-cluster`, QUIC+TLS): single-node → horizontal.
+- **On-demand instance tier above the pool** — Phase 10.
+- **Guest crates** (`rusm-rs`/`rusm-ts`/`rusm-go`, service macros, typed clients, in-guest
+  `Supervisor` strategies) — Phase 8.
+
+The one genuinely open opportunity is **a true head-to-head benchmark vs Lunatic**: the
+architectural case is made (pooling + CoW + epoch vs on-demand + fuel); what's missing is
+numbers from both runtimes on the same box.
 
 ## Lackings — status
 
 | # | Lacking | Status |
 | --- | --- | --- |
-| 1 | Wasm-instance concurrency ceiling | **Mitigated** — configurable via `WasmRuntime::with_limits`; default raised 256→1024 (lazy virtual reservation). A true "millions" tier needs an on-demand fallback above the pool — **roadmap (Phase 10)**. |
+| 1 | Wasm-instance concurrency ceiling | **Solved (Phase 10)** — configurable via `WasmRuntime::with_limits` (default raised 256→1024, lazy virtual reservation), plus an **on-demand overflow tier** (`WasmRuntime::with_overflow`) above the pool: past the pooled cap, spawns come from an on-demand engine, so the live Wasm-process count is bounded by **available memory**, not a compile-time size. |
 | 2 | Actor ABI not capability-scoped (untrusted code could kill/enumerate any process) | **Solved** — default-deny `allow_process_control`; a sandboxed guest manages only itself. Enforced on both bridges, gate-tested. |
-| 3 | Unbounded mailboxes (a fast producer can grow a slow consumer's mailbox) | **Roadmap** — opt-in bounded mailbox (load-shed/back-pressure), reusing the opt-in depth counter. Erlang has the same default. |
+| 3 | Unbounded mailboxes (a fast producer can grow a slow consumer's mailbox) | **Solved (Phase 10, opt-in)** — `Runtime::with_mailbox_capacity` sheds *user* messages past capacity (system/exit signals are never dropped), reusing the opt-in depth counter. Unbounded stays the Erlang-compatible default; bounding the *serve* path by default is the remaining Phase 12 item. |
 | 4 | Shallow supervision (links/monitors/restart-bool, not OTP strategies) | **Solved (in-guest)** — Phase 8 ships an in-guest `Supervisor` (`one_for_one`/`one_for_all`/`rest_for_one` + `max_restarts`) over a `monitor` ABI, in both `rusm-rs` and `rusm-ts`. |
 | 5 | DX/toolchain friction | **Largely a non-issue** — a TS dev needs only Bun (the `rusm-ts` npm package + `rusm dev` watch/reload); wasi-sdk is a one-time *maintainer* build dep (the runner is prebuilt). `rusm new <name>` scaffolds a ready-to-serve app in one command. |
 | 6 | TS guests lacked Web APIs | **Solved** — full Web API polyfills (`bridge/webapi.js`: TextEncoder/URL/Headers/ReadableStream/…), transparent to the dev. `fetch` awaits `wasi:http` (the one genuinely network-bound API). |
@@ -58,7 +62,9 @@ in-guest `Supervisor` strategies — is shipped.)
 ## Verdict
 
 The core architecture — the Wasm-free OTP boundary, the component-model host with
-message-passing composition, the no-time-cap lifetime model, and now a
-**capability-scoped** actor ABI — is differentiated and sound. The two highest-
-priority remaining items are the **on-demand instance tier** (#1) and **bounded
-mailboxes** (#3); neither is an architectural dead-end.
+message-passing composition, the no-time-cap lifetime model, and a **capability-scoped**
+actor ABI — is differentiated and sound. The two items once flagged highest-priority (the
+**on-demand instance tier** #1 and **bounded mailboxes** #3) have since shipped in Phase
+10. What remains is operational edge-hardening (**Phase 12**): HTTP request-body/timeout
+admission control, default-bounded *serve-path* mailboxes, and authenticated cluster
+gossip — network-edge and peer-trust gaps, not architectural ones.

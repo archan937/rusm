@@ -53,8 +53,8 @@ bunx prettier --check src
    and asserts the host-observable effect.
 2. Define the function on the Wasmtime `Linker`, reading/writing guest memory via
    `Caller` and the per-process `ProcessState` in the `Store`.
-3. Make it green; document the function in [`05-host-abi.md`](/deep-dive/host-abi).
-4. Update the relevant `phases/` and `concepts/` doc.
+3. Make it green; document the function in the [host ABI reference](/deep-dive/host-abi).
+4. Update the relevant `phases/` and `deep-dive/` doc.
 
 ## Coverage notes
 

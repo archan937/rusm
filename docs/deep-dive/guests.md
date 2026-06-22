@@ -1,10 +1,11 @@
-# Concept — guests: Rust, TypeScript & Go
+# Guests: Rust, TypeScript & Go
 
-A RUSM process body can be written in **Rust** (`rusm-rs`), **TypeScript** (`rusm-ts`),
-or **Go** (`rusm-go`). All compile/bundle to a sandboxed Wasm process with the same
-actor API and the same JSON wire — so a Rust client, a TypeScript service, and a Go
-worker interoperate transparently. Each SDK speaks its language's *own* idioms — the
-concepts are shared, the surface is native.
+Write your process body in the language you already reach for. A RUSM process can be
+**Rust** (`rusm-rs`), **TypeScript** (`rusm-ts`), or **Go** (`rusm-go`) — each compiles or
+bundles to a sandboxed Wasm process speaking the same actor API over the same JSON wire,
+so a Rust client, a TypeScript service, and a Go worker interoperate transparently. The
+concepts are shared; the surface is native to each language — every SDK speaks its own
+idioms rather than a lowest-common-denominator API.
 
 > **Runnable examples.** The same five-component app (HTTP + SSE + WS + a service + a
 > worker) is written idiomatically in each language — read or run

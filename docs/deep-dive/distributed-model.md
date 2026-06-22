@@ -1,9 +1,13 @@
-# Distributed model & live attach (Phase 9)
+# The distributed model
 
 RUSM chases the two BEAM superpowers that matter most: nodes that connect into a
 cluster, and the ability to hook into a running node live. Both ship in the
 Wasm-free [`rusm-cluster`](https://github.com/archan937/rusm) crate, layered over
-`rusm-otp` — the actor model, with the wire in between.
+`rusm-otp` — the actor core, plus the network wire that carries messages between nodes.
+
+> **Two pages, two altitudes.** [Distributed nodes](/deep-dive/distributed-nodes) is the
+> conceptual tour; this page is the mechanism — the wire, the APIs, the security model,
+> and the measured numbers.
 
 ## Nodes connecting to nodes
 

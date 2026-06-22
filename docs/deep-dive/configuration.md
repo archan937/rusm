@@ -1,4 +1,4 @@
-# Reference — configuration (`rusm.toml` & env)
+# Configuration
 
 Everything the `rusm` CLI reads at startup. Two inputs, layered:
 
@@ -73,7 +73,7 @@ any key) is optional; omitted keys take the defaults below.
 
 It can also be changed live from the dashboard. (CLI override: `--profile`.)
 
-## `[log]` — platform & guest logging
+## `[log]` — platform & guest logging {#log--platform-lifecycle-logging}
 
 Opt-in, **off by default**, declared explicitly (no env magic). One level gates **all
 three** of: the runtime's own lifecycle lines (each component process as it spawns and
@@ -184,7 +184,7 @@ never silently falling back to plaintext.
 > state in [`kv`](#dynamic-bundle-sourcing) or process memory, so serving instances
 > stay stateless and ephemeral.
 
-## `[serve.routes]` — per-listener HTTP/SSE route table
+## `[serve.routes]` — per-listener HTTP/SSE route table {#serveroutes-per-listener-httpsse-route-table}
 
 Each HTTP/SSE `[[serve]]` listener carries its **own** `[serve.routes]` subtable
 mapping each route to a handler **action**. Routing is **declarative config** — you
@@ -234,7 +234,7 @@ declaration order. Resolution semantics:
 | A path matches but the method does not | **HTTP 405** (Method Not Allowed) |
 | No route matches the path | **HTTP 404** (Not Found) |
 
-## `[serve.headers]` — per-listener response headers
+## `[serve.headers]` — per-listener response headers {#serve-headers-per-listener-response-headers}
 
 An optional subtable on an HTTP/SSE `[[serve]]` listener (like `[serve.routes]`, it
 attaches to the most recent `[[serve]]`): response headers the host merges into **every**

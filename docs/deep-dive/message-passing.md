@@ -1,29 +1,35 @@
-# Concept — message passing across isolated memories
+# Message passing
 
-Processes share nothing, so they communicate by **copying** bytes through the
-host. Each process has a mailbox (an async channel). Sending is fire-and-forget;
-receiving suspends the process until a message arrives.
+Processes in RUSM **share nothing** — separate memories, separate permissions. So they
+communicate the only safe way: by **copying** bytes through the host. Each process owns a
+mailbox (an async channel); sending is fire-and-forget, and receiving suspends the receiver
+until a message arrives. It's Erlang's model, made airtight by Wasm's memory boundary.
 
-## The flow
+## The flow of a message
 
-1. Sender builds a message in its own linear memory and calls
+1. The sender builds a message in its own linear memory and calls
    `rusm::message::send(pid)`.
-2. The host **copies** the message bytes out of the sender's memory and pushes
-   them onto the target's mailbox (a Tokio channel). No memory is shared.
-3. The target calls `rusm::message::receive()`, which awaits the mailbox; the
-   host copies the bytes **into** the target's memory.
+2. The host **copies** those bytes out of the sender's memory and pushes them onto the
+   target's mailbox (a Tokio channel). No memory is ever shared.
+3. The target calls `rusm::message::receive()`, which awaits the mailbox; the host copies
+   the bytes **into** the target's memory.
 
 ## Why copy, not share
 
-Sharing memory between instances would break isolation — the whole point of the
-model. Copying keeps each crash and each permission boundary local. Messages are
-ordinary serialized data (the `rusm-rs` and `rusm-ts` guest crates send serde
-JSON — one wire shared across Rust and TS guests).
+Sharing memory between instances would break isolation — the whole point of the model. A
+shared buffer means one process's bug, or one permission boundary, can reach into another's
+memory. Copying keeps every crash and every capability boundary strictly local.
 
-## Receive suspends, it doesn't spin
+The messages themselves are ordinary serialized data: the `rusm-rs`, `rusm-ts`, and
+`rusm-go` guest SDKs all send serde JSON over **one shared wire**, so a Rust, a TypeScript,
+and a Go guest can message each other transparently.
 
-`receive()` is an async host call: an empty mailbox parks the Tokio task (see
-[fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async)), so a million
-waiting processes cost almost nothing.
+## Receiving suspends — it never spins
 
-> Shipped in Phase 2 (opt-in mailbox depth surfaces in the observer snapshot).
+`receive()` is an async host call. An empty mailbox **parks** the Tokio task (see
+[fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async)) rather than
+busy-waiting, so a million processes all blocked on `receive` cost almost nothing — they're
+just idle tasks. That's exactly what makes "a process per request, per connection, per unit
+of work" affordable.
+
+> Shipped in Phase 2. (Opt-in mailbox depth surfaces in the observer snapshot.)

@@ -41,8 +41,8 @@ even an infinite-loop guest to yield. See
 | reduction counting | Wasmtime epoch interruption |
 | mailbox / `send` | host-copied message + async channel |
 | link / monitor / supervisor | trap propagation + link table |
-| `:global` registry | distributed registry (later phase) |
-| `Node.connect` / epmd | QUIC + TLS node transport (later phase) |
+| `:global` registry | gossiped distributed registry (`rusm-cluster`) |
+| `Node.connect` / epmd | QUIC + mutual-TLS node transport (`rusm-cluster`) |
 | `iex --remsh` / observer | `rusm attach` + dashboard observer |
 
 ## Architectural invariant — a Wasm-free core

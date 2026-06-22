@@ -1,4 +1,4 @@
-# Features
+# What you get
 
 **RUSM is Erlang/OTP's concurrency and fault-tolerance model, rebuilt in Rust, where
 every process can be a sandboxed WebAssembly component** — "let it crash" meets "run
@@ -7,10 +7,13 @@ wasmCloud ceremony. The whole design rests on one principle: the actor core
 (`rusm-otp`) is **Wasm-free**; WebAssembly is a pluggable process backend. That's why
 it's both a great native actor runtime *and* a great Wasm host.
 
-This page is the map; each item links to the [concept](/deep-dive/wasm-instance-as-process)
-that teaches it.
+This page is the map. Each item links to the [concept](/deep-dive/wasm-instance-as-process)
+that teaches it — skim for what you need, then follow the arrow.
 
 ## Concurrency & the actor core
+
+The Erlang core, rebuilt in Rust and Tokio — processes, mailboxes, supervision, fairness:
+
 
 - **Massive lightweight concurrency (Tokio-driven)** — hundreds of thousands of
   processes over a few OS threads; spawning is near-free (~2.4M/sec measured). →
@@ -33,6 +36,9 @@ that teaches it.
 
 ## WebAssembly & safety
 
+What makes a process a *sandboxed* process — the component model, default-deny capabilities,
+and trap isolation:
+
 - **WASM components (WASI p2 + p3)** — the modern component model, not just core
   modules (the headline difference from Lunatic). → [components & the actor
   world](/deep-dive/components-and-the-actor-world)
@@ -52,6 +58,9 @@ that teaches it.
   and wire. → [guests: Rust, TypeScript & Go](/deep-dive/guests)
 
 ## Serving & streaming
+
+Run a component as a real web server — one process per request or per connection, never a
+shared instance:
 
 - **HTTP / WebSocket / SSE serving** — from a Rust, TypeScript, or Go component, always
   **process-per-unit-of-work**: a fresh sandboxed instance per HTTP/SSE request, one
@@ -77,6 +86,8 @@ that teaches it.
 
 ## Apps, clusters & DX
 
+One CLI from scaffold to live node, plus cross-node clustering and live attach:
+
 - **App model** — `rusm.toml` describes components and servers; `rusm build` (cargo
   wasm32-wasip2 / Bun, no jco) → `./wasm/`. → [the app model](/deep-dive/app-model)
 - **CLI** — `rusm new` (scaffold), `rusm run`, `rusm serve`, `rusm dev` (watch +
@@ -95,6 +106,8 @@ that teaches it.
   lattice/provider ceremony.
 
 ## Observability & quality
+
+You can see what the runtime is doing, and the numbers are honest:
 
 - **Live process statistics** — an Erlang-`observer`-style view (process count,
   scheduler load, memory, per-instance table), nearly free.
