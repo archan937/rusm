@@ -7,6 +7,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Low-overhead live observer snapshots for a running RUSM node."
+# Repo-internal: surfaced only through the bench dashboard (`bench/rusm-bench`, itself
+# `publish = false`); no published crate (CLI, guest SDKs, embeddable runtime/cluster)
+# depends on it.
+publish = false
 
 [dependencies]
 serde = { workspace = true }

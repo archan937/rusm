@@ -19,17 +19,22 @@ use std::path::PathBuf;
 
 use crate::scaffold::{package_json, Lang, SDK_VERSION};
 
-/// The template to scaffold. One today (the todo board); the enum leaves room for more.
+/// The template to scaffold. `TodoBoard` is the full multi-protocol app; `Weather` is the
+/// custom-bridge example (a native `weather` host function called from the guest). The
+/// `Weather` files come from the bridge scaffolder (`crate::scaffold::bridge_files`), not
+/// this module, so it isn't listed in `files()` below.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
     TodoBoard,
+    Weather,
 }
 
 /// Parse the `--template` value.
 pub fn parse_template(value: &str) -> Result<Template> {
     match value {
         "todo-board" | "todo" | "board" => Ok(Template::TodoBoard),
-        other => bail!("unknown template `{other}` — the only template is `todo-board`"),
+        "weather" | "bridge" | "custom-bridge" => Ok(Template::Weather),
+        other => bail!("unknown template `{other}` — templates are `todo-board` and `weather`"),
     }
 }
 

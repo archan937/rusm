@@ -29,8 +29,10 @@ whole workspace + the `rusm-ts` package move to **0.4.0** in lock-step; `rusm-go
   rebuilt with the bridge compiled in + a generated `bridges.d.ts`). TS records/enums marshal
   JS↔Rust via `serde_json` inside the QuickJS runner; the host call itself stays a typed WIT
   call.
-- **`rusm new --bridges`** scaffolds a complete custom-bridge app — a `weather` bridge plus a
-  guest that calls it.
+- **Scaffold a custom-bridge app** — `rusm new <name> --template weather` (the discoverable
+  named template, alongside `--template todo-board`) or `rusm new <name> --bridges` scaffolds a
+  complete `weather` bridge app, in **any guest language** — TypeScript, Rust, or Go (the TS
+  guest path is now supported; the per-app js-runner is rebuilt with the bridge compiled in).
 - **Docs & examples** — a task-oriented *Build an app* guide rebuilt around a runnable
   **URL-shortener** example (TypeScript/Rust/Go), an *Add your own functions* custom-bridges
   page, and the `examples/custom-bridge` weather app.

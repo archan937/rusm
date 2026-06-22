@@ -62,7 +62,7 @@ pub struct NewApp {
     /// `--bridges`: scaffold a **custom-bridge** app — a host crate (which registers the
     /// app's native bridges, then serves) plus an example `weather` bridge and a guest that
     /// calls it. The host impl is always Rust (the host *is* Rust); `lang` is the **guest**
-    /// language (Rust or Go — TS guests can't call a custom bridge yet).
+    /// language — TypeScript, Rust, or Go. (The `weather` template is the same app.)
     pub bridges: bool,
 }
 
@@ -86,7 +86,7 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     let name: String = args.free_from_str().map_err(|_| {
         anyhow!(
             "usage: rusm new <name> [--rust] [--lang ts|rust|go|generic] \
-             [--protocol http|sse|ws] [--template todo-board] [--bridges]"
+             [--protocol http|sse|ws] [--template todo-board|weather] [--bridges]"
         )
     })?;
     validate_name(&name)?;
@@ -103,8 +103,8 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     let lang = match lang {
         Some(value) => parse_lang(&value)?,
         None if rust => Lang::Rust,
-        // A custom-bridge guest defaults to Rust (its host is Rust anyway, and a TS guest
-        // can't call a bridge yet); a plain app defaults to TypeScript.
+        // A custom-bridge guest defaults to Rust (its host is Rust anyway, the simplest
+        // end-to-end); any guest language works. A plain app defaults to TypeScript.
         None if bridges => Lang::Rust,
         None => Lang::TypeScript,
     };
@@ -132,19 +132,23 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
         None => None,
     };
 
-    if bridges {
-        if template.is_some() {
-            bail!("`--bridges` can't be combined with `--template` (a template is a full app)");
-        }
-        match lang {
-            Lang::TypeScript => bail!(
-                "`--bridges`: a TS guest can't call a custom bridge yet — use `--lang rust` or `--lang go`"
-            ),
-            Lang::Generic => bail!(
-                "`--bridges` needs a guest language to call the bridge — use `--lang rust` or `--lang go`"
-            ),
-            Lang::Rust | Lang::Go => {}
-        }
+    // A custom-bridge app comes two ways: the `--bridges` flag, or the `weather` template
+    // (which IS the bridge example). Both scaffold a host crate + the `weather` bridge + a
+    // guest that calls it, in any guest language (TS/Rust/Go — not `generic`, which has no
+    // guest source). TS guests can call custom bridges (the per-app js-runner is rebuilt with
+    // the bridge compiled in), so all three languages are accepted.
+    if bridges && template.is_some() {
+        bail!(
+            "`--bridges` can't be combined with `--template` — use `--template weather` for the \
+             weather bridge example, or `--bridges` to start a new bridge app"
+        );
+    }
+    let bridge_app = bridges || matches!(template, Some(Template::Weather));
+    if bridge_app && matches!(lang, Lang::Generic) {
+        bail!(
+            "a custom-bridge app needs a guest language to call the bridge — \
+             use `--lang ts`, `rust`, or `go`"
+        );
     }
 
     Ok(NewApp {
@@ -205,11 +209,15 @@ pub fn scaffold(root: &Path, app: &NewApp) -> Result<Vec<PathBuf>> {
 /// The full set of (relative path, contents) for an app — the single place that maps
 /// a (language, protocol) to its files.
 fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
-    // A template scaffolds a full example app (its files are the real `examples/<lang>`).
+    // The `weather` template IS the custom-bridge example (host crate + bridge + a guest).
+    if app.template == Some(Template::Weather) {
+        return bridge_files(app);
+    }
+    // The todo-board template scaffolds the full multi-protocol app (the real `examples/<lang>`).
     if app.template.is_some() {
         return template::files(app.lang, &app.name);
     }
-    // A custom-bridge app is a host crate + an example bridge + a guest that calls it.
+    // `--bridges` adds a custom bridge to a new app — the same scaffold as `--template weather`.
     if app.bridges {
         return bridge_files(app);
     }
@@ -281,6 +289,11 @@ const BRIDGE_WIT: &str = include_str!("../../examples/custom-bridge/bridges/weat
 const BRIDGE_HOST_IMPL: &str = include_str!("../../examples/custom-bridge/bridges/weather/host.rs");
 const BRIDGE_RUST_GUEST: &str =
     include_str!("../../examples/custom-bridge/components/api/src/lib.rs");
+// The TypeScript guest — a per-connection WebSocket handler calling the `weather` bridge.
+// Verbatim from the live example; its `/// <reference path="../../bridges.d.ts" />` resolves
+// the same from `components/api/` (the scaffold) as from `components/tsweather/` (the example).
+const BRIDGE_TS_GUEST: &str =
+    include_str!("../../examples/custom-bridge/components/tsweather/index.ts");
 
 /// `.gitignore` for a custom-bridge app: build output plus the `rusm build`-generated bridge
 /// glue (the host crate's `wit/` + `src/{bindings,bridges}.rs`, and each guest's `wit/` +
@@ -292,6 +305,8 @@ const BRIDGE_GITIGNORE: &str = "\
 /wit/
 /src/bindings.rs
 /src/bridges.rs
+/bridges.d.ts
+/node_modules/
 /components/*/wit/
 /components/*/internal/
 ";
@@ -313,16 +328,26 @@ fn bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
             PathBuf::from("bridges/weather/host.rs"),
             BRIDGE_HOST_IMPL.to_string(),
         ),
-        (PathBuf::from("rusm.toml"), bridge_rusm_toml()),
+        (PathBuf::from("rusm.toml"), bridge_rusm_toml(app.lang)),
         (PathBuf::from(".gitignore"), BRIDGE_GITIGNORE.to_string()),
         (PathBuf::from("README.md"), bridge_readme(app)),
     ];
     match app.lang {
+        Lang::TypeScript => {
+            // The TS guest is a per-connection WebSocket handler; `rusm build` rebuilds the
+            // js-runner with the bridge compiled in and generates the typed `bridges.d.ts`.
+            out.push((
+                PathBuf::from("components/api/index.ts"),
+                BRIDGE_TS_GUEST.to_string(),
+            ));
+            out.push((PathBuf::from("package.json"), package_json(&app.name)));
+            out.push((PathBuf::from("tsconfig.json"), TSCONFIG.to_string()));
+        }
         Lang::Go => {
             out.push((PathBuf::from("components/api/go.mod"), go_mod()));
             out.push((PathBuf::from("components/api/main.go"), go_bridge_guest()));
         }
-        // Rust is the default; TypeScript/Generic are rejected in `parse_new_args`.
+        // Rust is the default; `Generic` is rejected in `parse_new_args`.
         _ => {
             out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
             out.push((
@@ -364,23 +389,36 @@ fn host_cargo_toml(name: &str) -> String {
 /// The `rusm.toml` for a custom-bridge app: one HTTP listener routing to an `api` handler
 /// under the `forecaster` profile, which grants the `weather` bridge (default-deny, by name).
 /// Identical for a Rust or Go guest — the component is `api` either way.
-fn bridge_rusm_toml() -> String {
+fn bridge_rusm_toml(lang: Lang) -> String {
+    // The `weather` bridge grant is the same for every guest (default-deny, by name). Only the
+    // listener shape differs: a Rust/Go guest is a routed HTTP handler; the TS guest is a
+    // per-connection WebSocket handler (`websocket({ message })`).
+    let grant =
+        "# The handler may import the custom `weather` bridge — default-deny, granted by name.\n\
+                 [capabilities.forecaster]\n\
+                 inherits = \"sandboxed\"\n\
+                 bridges = [\"weather\"]\n";
+    let listener = if matches!(lang, Lang::TypeScript) {
+        "[[serve]]\n\
+         component = \"api\"\n\
+         protocol = \"ws\"\n\
+         listen = \"127.0.0.1:8080\"\n"
+    } else {
+        "[[serve]]\n\
+         protocol = \"http\"\n\
+         listen = \"127.0.0.1:8080\"\n\
+         \n\
+         [serve.routes]\n\
+         \"GET /forecast/:city\" = \"api#forecast\"\n"
+    };
     format!(
         "{TOML_HEADER}\
          [node]\n\
          listen = \"127.0.0.1:8080\"\n\
          \n\
-         # The handler may import the custom `weather` bridge — default-deny, granted by name.\n\
-         [capabilities.forecaster]\n\
-         inherits = \"sandboxed\"\n\
-         bridges = [\"weather\"]\n\
+         {grant}\
          \n\
-         [[serve]]\n\
-         protocol = \"http\"\n\
-         listen = \"127.0.0.1:8080\"\n\
-         \n\
-         [serve.routes]\n\
-         \"GET /forecast/:city\" = \"api#forecast\"\n\
+         {listener}\
          \n\
          [components.api]\n\
          capability = \"forecaster\"\n"
@@ -789,14 +827,32 @@ fn readme(app: &NewApp) -> String {
 /// capability), the host crate, and the build/serve flow, with the guest-specific call site.
 fn bridge_readme(app: &NewApp) -> String {
     let name = &app.name;
-    let (guest, call) = match app.lang {
+    // HTTP-handler guests (Rust/Go) are curl'd; the TS guest is a per-connection WebSocket
+    // handler, so its "Run it" sends a frame over a WebSocket instead.
+    let http_run =
+        "rusm build      # generates the bridge glue, compiles the guest + host binary\n\
+         rusm serve      # runs the host binary; serves http://127.0.0.1:8080\n\
+         curl http://127.0.0.1:8080/forecast/Amsterdam\n\
+         # -> sunny in Amsterdam (served by pid ...)";
+    let (guest, call, run) = match app.lang {
+        Lang::TypeScript => (
+            "components/api/index.ts (TypeScript)",
+            "`weather.lookup(city)` / `weather.detailed(...)` (typed by the generated `bridges.d.ts`)",
+            "rusm build      # rebuilds the js-runner with the bridge + generates bridges.d.ts\n\
+             rusm serve      # runs the host binary; serves ws://127.0.0.1:8080\n\
+             # send a city over a WebSocket, get its forecast back:\n\
+             bun -e 'const w=new WebSocket(\"ws://127.0.0.1:8080\");w.onopen=()=>w.send(\"Amsterdam\");w.onmessage=e=>{console.log(\"\"+e.data);process.exit(0)}'\n\
+             # -> sunny in Amsterdam (served by pid ...) — sunny @ 21°C",
+        ),
         Lang::Go => (
             "components/api/main.go (Go)",
             "`forecast.Lookup(city)` (the wit-bindgen-go binding)",
+            http_run,
         ),
         _ => (
             "components/api/src/lib.rs (Rust)",
             "`crate::forecast::lookup(city)` (re-exported by `#[handlers(bridge=…)]`)",
+            http_run,
         ),
     };
     format!(
@@ -806,10 +862,7 @@ fn bridge_readme(app: &NewApp) -> String {
          (the host *is* Rust); the guest calls it as an ordinary typed import, in any language.\n\n\
          ## Run it\n\n\
          ```sh\n\
-         rusm build      # generates the bridge glue, compiles the guest + host binary\n\
-         rusm serve      # runs the host binary; serves http://127.0.0.1:8080\n\
-         curl http://127.0.0.1:8080/forecast/Amsterdam\n\
-         # -> sunny in Amsterdam (served by pid ...)\n\
+         {run}\n\
          ```\n\n\
          ## Layout\n\n\
          - `bridges/weather/bridge.wit` — the bridge contract (the app's own WIT package).\n\
@@ -1145,23 +1198,27 @@ mod tests {
     }
 
     #[test]
-    fn bridges_flag_parses_defaults_to_rust_and_rejects_unsupported_guests() {
-        // `--bridges` defaults the *guest* to Rust (its host is Rust; a TS guest can't yet).
+    fn bridges_flag_parses_and_accepts_every_guest_language() {
+        // `--bridges` defaults the *guest* to Rust (its host is Rust); ts and go are accepted
+        // too — a TS guest can call custom bridges (the per-app js-runner is rebuilt with it).
         let rust = parse(&["app", "--bridges"]).unwrap();
         assert!(rust.bridges && rust.lang == Lang::Rust);
-        assert!(parse(&["app", "--bridges", "--lang", "go"]).unwrap().lang == Lang::Go);
-        // TS / generic guests and `--template` are rejected with a clear message.
-        assert!(
-            parse(&["app", "--bridges", "--lang", "ts"]).is_err(),
-            "TS guest"
+        assert_eq!(
+            parse(&["app", "--bridges", "--lang", "go"]).unwrap().lang,
+            Lang::Go
         );
+        assert_eq!(
+            parse(&["app", "--bridges", "--lang", "ts"]).unwrap().lang,
+            Lang::TypeScript
+        );
+        // `generic` (no guest source) and combining with `--template` are rejected.
         assert!(
             parse(&["app", "--bridges", "--lang", "generic"]).is_err(),
             "generic guest"
         );
         assert!(
             parse(&["app", "--bridges", "--template", "todo-board"]).is_err(),
-            "template"
+            "template combo"
         );
         // A plain app is unaffected.
         assert!(!parse(&["app"]).unwrap().bridges);
@@ -1175,6 +1232,7 @@ mod tests {
         for (lang, guest_src) in [
             (Lang::Rust, "components/api/src/lib.rs"),
             (Lang::Go, "components/api/main.go"),
+            (Lang::TypeScript, "components/api/index.ts"),
         ] {
             let dir = tempfile::tempdir().unwrap();
             let app = NewApp {
@@ -1229,6 +1287,48 @@ mod tests {
             // Generated glue is git-ignored (it's `rusm build` output, not scaffolded).
             let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
             assert!(ignore.contains("/src/bindings.rs") && ignore.contains("/components/*/wit/"));
+        }
+    }
+
+    /// `--template weather` is the discoverable name for the custom-bridge example: it parses
+    /// to the `Weather` template and scaffolds the same host + bridge + guest app (the bridge
+    /// path, not `template::files`), in any guest language.
+    #[test]
+    fn weather_template_scaffolds_the_custom_bridge_app() {
+        assert_eq!(
+            parse(&["app", "--template", "weather"]).unwrap().template,
+            Some(Template::Weather)
+        );
+        for (lang, guest_src) in [
+            (Lang::TypeScript, "components/api/index.ts"),
+            (Lang::Rust, "components/api/src/lib.rs"),
+            (Lang::Go, "components/api/main.go"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let app = NewApp {
+                name: "forecast".into(),
+                lang,
+                protocol: Protocol::Http,
+                template: Some(Template::Weather),
+                bridges: false,
+            };
+            scaffold(dir.path(), &app).unwrap();
+            let root = dir.path().join("forecast");
+            // The bridge, the host binary, and the chosen guest are all present.
+            for rel in [
+                "bridges/weather/host.rs",
+                "src/main.rs",
+                "rusm.toml",
+                guest_src,
+            ] {
+                assert!(root.join(rel).is_file(), "{lang:?}: missing {rel}");
+            }
+            // The manifest grants the `weather` bridge to the `api` component, every guest.
+            let cfg =
+                NodeConfig::from_toml(&std::fs::read_to_string(root.join("rusm.toml")).unwrap())
+                    .expect("weather rusm.toml parses");
+            assert_eq!(cfg.capabilities["forecaster"].bridges, ["weather"]);
+            assert!(cfg.components.contains_key("api"));
         }
     }
 

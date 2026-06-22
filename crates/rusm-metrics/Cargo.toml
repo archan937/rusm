@@ -7,6 +7,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Latency histograms, counters, and time-series for RUSM observability."
+# Repo-internal: the live-observability surface is consumed only by the bench dashboard
+# (`bench/rusm-bench`, itself `publish = false`); nothing published — the CLI, the guest
+# SDKs, or the embeddable runtime/cluster crates — depends on it.
+publish = false
 
 [dependencies]
 serde = { workspace = true }
