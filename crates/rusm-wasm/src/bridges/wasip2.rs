@@ -117,6 +117,19 @@ impl WasmRuntime {
         prepare_component_with(&self.component_linker, overflow, component, entry)
     }
 
+    /// Prepare a component from a **dynamic source** through the content-addressed compile
+    /// cache — the embedding-facing twin of a guest's `spawn-from`. The first call for a
+    /// given bundle fetches + compiles + prepares it (cold); every later call for the same
+    /// bytes returns the cached [`PreparedComponent`] (hot), single-flighted across
+    /// concurrent callers. Pair with [`spawn_component`](Self::spawn_component). `source` is
+    /// `inline:<bytes>`, `kv:<bucket>/<key>` (needs a store), or `url:`/`http(s)://…` (needs
+    /// a resolver set via [`set_bundle_resolver`](Self::set_bundle_resolver)). Capability
+    /// gating is the host's concern here — there is no guest profile to enforce, exactly as
+    /// for [`spawn_component`](Self::spawn_component).
+    pub async fn prepare_dynamic(&self, source: &str) -> Result<Arc<PreparedComponent>, String> {
+        self.spawner.dynamic_wasm(source).await
+    }
+
     /// Spawns a prepared component as an isolated process under the **default-deny
     /// `Sandboxed`** profile (no fs/net/env, a bounded heap). Use
     /// [`spawn_component_with`](WasmRuntime::spawn_component_with) to grant more.
@@ -2646,6 +2659,53 @@ mod tests {
             "ran from kv",
             "the dynamic JS, sourced from kv at runtime, ran on the template"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_from_compiles_caches_and_runs_a_dynamic_wasm_component() {
+        // The dynamic-WASM twin of the JS template: a node declares a *WASM* runner
+        // template (a profile, no fixed bundle); a guest spawns an instance from a
+        // runtime-chosen `.wasm` source. The bundle is a real component — compiled on the
+        // first spawn (cold) and served from the content-addressed cache thereafter (hot).
+        // It runs under the template's profile and answers, proving the whole path. A
+        // second spawn of the same source reuses the compile (the cache is exercised, not
+        // just the first compile).
+        use crate::bindings::rusm::runtime::actor::Host;
+        const RS_GUEST: &[u8] = include_bytes!("../../tests/fixtures/rs_guest.wasm");
+        let rt = Runtime::new();
+        let path = kv_test_path("spawn-from-wasm");
+        let wr = WasmRuntime::with_store(rt.clone(), &path).unwrap();
+        wr.register_wasm_template("runner", CapabilityProfile::Trusted.capabilities());
+
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        host.kv_bucket("bundles")
+            .unwrap()
+            .set("app", RS_GUEST)
+            .unwrap();
+
+        // Spawn the dynamic component twice from the same source; each instance answers a
+        // collector, so both the cold-compile and the hot-cache-hit paths are proven to run.
+        for label in ["cold", "hot"] {
+            let pid = host
+                .spawn_from("runner".into(), "kv:bundles/app".into())
+                .await
+                .unwrap_or_else(|e| panic!("{label} spawn-from failed: {e}"));
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let collector = rt.spawn(move |mut ctx| async move {
+                let _ = tx.send(ctx.recv().await.message().unwrap());
+            });
+            // rs_guest learns its reply-to from the first message, then answers.
+            rt.send(
+                rusm_otp::Pid::from_raw(pid),
+                collector.pid().raw().to_string().into_bytes(),
+            );
+            assert_eq!(
+                String::from_utf8(rx.await.unwrap()).unwrap(),
+                format!("hello from {pid}"),
+                "the {label} dynamic-WASM instance ran under the template and answered"
+            );
+        }
         let _ = std::fs::remove_file(&path);
     }
 

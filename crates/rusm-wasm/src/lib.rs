@@ -327,6 +327,7 @@ pub struct WasmRuntimeBuilder {
     bridges: Box<BridgeExtension>,
     js_runner_wasm: Option<Vec<u8>>,
     js_http_runner_wasm: Option<Vec<u8>>,
+    dynamic_ttl: Duration,
 }
 
 impl WasmRuntimeBuilder {
@@ -340,7 +341,18 @@ impl WasmRuntimeBuilder {
             bridges: Box::new(|_| Ok(())),
             js_runner_wasm: None,
             js_http_runner_wasm: None,
+            dynamic_ttl: DEFAULT_DYNAMIC_TTL,
         }
+    }
+
+    /// The freshness/idle window for the **dynamic-WASM** compile cache (`spawn-from` a `.wasm`
+    /// source): how long a fetched bundle is reused for a source before the source is
+    /// re-checked, and how long a compiled artifact survives without use. Default
+    /// [`DEFAULT_DYNAMIC_TTL`]. Longer = fewer re-fetches/recompiles; shorter = faster
+    /// live-redeploy pickup.
+    pub fn dynamic_ttl(mut self, ttl: Duration) -> Self {
+        self.dynamic_ttl = ttl;
+        self
     }
 
     /// Pooled instance slots — the most Wasm processes live at once (default
@@ -425,6 +437,7 @@ impl WasmRuntimeBuilder {
             self.max_instances,
             store,
             self.bridges.as_ref(),
+            self.dynamic_ttl,
         )?;
         // Per-app JS-runner overrides (consumed lazily by `js_runner`/`js_http_runner`).
         runtime.js_runner_wasm = self.js_runner_wasm;
@@ -534,6 +547,7 @@ impl WasmRuntime {
         max_instances: u32,
         store: Option<Arc<rusm_kv::Store>>,
         extend: &BridgeExtension,
+        dynamic_ttl: Duration,
     ) -> Result<Self> {
         let linker = bridges::wasip1::build_linker(&engine)?;
         // The component linker carries the built-in bridges; `extend` then wires any
@@ -606,7 +620,7 @@ impl WasmRuntime {
                 store,
                 bundle_resolver: OnceLock::new(),
                 wasm_preparer: wasm_preparer_cell,
-                wasm_cache: bundle_cache::BundleCache::new(DEFAULT_DYNAMIC_TTL),
+                wasm_cache: bundle_cache::BundleCache::new(dynamic_ttl),
             }),
             linker,
             component_linker,

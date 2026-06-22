@@ -34,6 +34,9 @@ pub fn build_runtime(
     // manifest never grants to any guest.
     dotenvy::dotenv().ok();
     let mut builder = WasmRuntime::builder(rt).bridges(extend);
+    if let Some(secs) = cfg.node.dynamic_wasm_ttl_secs {
+        builder = builder.dynamic_ttl(std::time::Duration::from_secs(secs));
+    }
     if let Some(rel) = &cfg.node.store {
         let path = Path::new(".").join(rel);
         if let Some(parent) = path.parent() {

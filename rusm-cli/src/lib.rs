@@ -14,6 +14,7 @@ mod endpoint;
 pub mod host;
 /// Building a per-app js-runner with custom bridges compiled in (the TS guest path).
 pub mod jsbuild;
+mod kv;
 mod render;
 mod repl;
 mod scaffold;
@@ -27,6 +28,7 @@ pub use cli::{
 };
 pub use component::prebuilt_wasm;
 pub use endpoint::{normalize_target, DEFAULT_HOST};
+pub use kv::{exec_kv, parse_kv, KvCommand, KvOutput};
 pub use render::render_message;
 pub use repl::{parse, ReplInput, HELP};
 pub use scaffold::{parse_new_args, scaffold, Lang, NewApp, Protocol};

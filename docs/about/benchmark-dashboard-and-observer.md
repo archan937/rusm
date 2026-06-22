@@ -52,8 +52,10 @@ A menu of scenarios and a **Run** button. Each tick streams: throughput
 | KV storm | durable read-modify-writes/sec (ACID commits, redb) | phase 11 |
 | Pub/sub fan-out | subscriber deliveries/sec (1 publish → N) | phase 11 |
 | Crypto ops (TS) | `crypto.subtle` SHA-256 digests/sec | phase 11 |
+| Custom bridge | native custom-bridge calls/sec (guest → host round-trip) | phase 11 |
+| Dynamic WASM | dynamic component spawns/sec (compiled once, then cached hot) | phase 11 |
 
-All **nineteen** scenarios above run **real** engines — none are synthetic
+All **twenty-one** scenarios above run **real** engines — none are synthetic
 (`Runner::start_synthetic` keeps a runtime-free deterministic preview only for UI
 development). The **six serving scenarios are co-resident live demos**: each spins up
 the same real in-process WASM server and drives it through the same load path as the

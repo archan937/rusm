@@ -62,6 +62,7 @@ any key) is optional; omitted keys take the defaults below.
 | `profile` | enum | `balanced` | The benchmark node's throughput dial — see below. |
 | `ticks_per_second` | int (10–60) | `20` | How often the node samples + broadcasts a snapshot. |
 | `store` | string? | none | Path (relative to the app dir) to the node's embedded durable key-value store — one file the node owns, no daemon. Required for components granted `allow-storage` (the `kv` ABI) or a `kv:` bundle `source`. Omitted → no store. |
+| `dynamic_wasm_ttl_secs` | int? | `300` | Freshness/idle window (seconds) for the **dynamic-WASM compile cache**: how long a fetched `.wasm` bundle is reused for a `spawn-from` source before the source is re-checked for new bytes, and how long a compiled artifact survives unused. Lower it for faster live-redeploy pickup; raise it to cut re-fetches/recompiles. See [dynamic WASM](/build-an-app/dynamic-wasm). |
 
 **`profile`** is the spawn-throughput dial, relative to your CPU count:
 
@@ -308,8 +309,8 @@ boots an instance:
 | _(table key)_ | string | — (required) | The component **name** (`[components.<name>]`) → `./wasm/<name>.*`; registered so a route or sibling can `spawn` it by name. |
 | `capability` | string | `"sandboxed"` | A built-in profile or a `[capabilities.<name>]` id. |
 | `resident` | bool | `false` | `true` = boot-spawned at startup and supervised (auto-restarted on crash). Default = registered for spawn-by-name only, not boot-spawned. |
-| `source` | string? | none | Load the (JS) bundle from a `url:`/`http(s)://` URL or `kv:<bucket>/<key>` instead of the local `./wasm/<name>` artifact — deploy JS live, no node rebuild (re-fetched on each spawn / `rusm dev` reload). See [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
-| `dynamic` | string? | none | `"js"` marks a **dynamic JS runner template**: a capability profile with no fixed bundle. A guest can't `spawn` it; it runs only via `spawn-from(name, source)`, which loads a runtime-chosen JS bundle and runs it under this profile. Mutually exclusive with `source`; can't be `resident`. See [dynamic JS at runtime](#dynamic-js-at-runtime-spawn-from). |
+| `source` | string? | none | Load the bundle from a `url:`/`http(s)://` URL or `kv:<bucket>/<key>` instead of the local `./wasm/<name>` artifact — deploy a JS bundle **or a compiled `.wasm` component** (told apart by the WASM magic) live, no node rebuild (re-fetched on each spawn / `rusm dev` reload). See [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
+| `dynamic` | string? | none | Marks a **dynamic runner template** — a capability profile with no fixed bundle: `"js"` runs a runtime-chosen JS bundle, `"wasm"` a runtime-chosen (compile-cached) WASM component. A guest can't `spawn` it; it runs only via `spawn-from(name, source)`, which loads the chosen bundle and runs it under this profile. Mutually exclusive with `source`; can't be `resident`. See [dynamic JS](/build-an-app/dynamic-js) / [dynamic WASM](/build-an-app/dynamic-wasm). |
 
 ## A complete manifest
 
@@ -356,11 +357,12 @@ resident = true
 
 ## Dynamic bundle sourcing
 
-> The guide is **[Dynamic JS](/build-an-app/dynamic-js)** — live deploy and sandboxed runtime
-> code, with examples in all three guest languages. The sections below are the field reference.
+> The guides are **[Dynamic JS](/build-an-app/dynamic-js)** and
+> **[Dynamic WASM](/build-an-app/dynamic-wasm)** — live deploy and sandboxed runtime code,
+> with examples in all three guest languages. The sections below are the field reference.
 
-A `[components.<name>]` or `[[serve]]` entry can set **`source`** to load its JS bundle
-from somewhere other than the local `./wasm/<name>` artifact — so you deploy new JS
+A `[components.<name>]` or `[[serve]]` entry can set **`source`** to load its bundle
+from somewhere other than the local `./wasm/<name>` artifact — so you deploy new code
 by updating the source, with **no node rebuild**. A `[components.<name>]` process fetches
 its bundle **once** at spawn (and again on each `rusm dev` reload); a `[[serve]]`
 endpoint fetches at bind time, then each ephemeral serving instance runs from that
@@ -387,8 +389,10 @@ source = "https://cdn.example/api.js"   # deploy by replacing this bundle
 source = "kv:bundles/worker"            # publish to kv, then re-spawn
 ```
 
-A remote source is always a **JS** bundle (UTF-8). When `source` is omitted the
-loader behaves exactly as before, resolving `./wasm/<name>.{qjsbc,js,wasm}`.
+A remote source is either a **JS** bundle or a compiled **WASM** component — the loader
+tells them apart by the WASM magic number (`\0asm`), so one `source` mechanism deploys
+either. When `source` is omitted the loader behaves exactly as before, resolving
+`./wasm/<name>.{qjsbc,js,wasm}`.
 
 ## Dynamic JS at runtime (`spawn-from`)
 
@@ -432,9 +436,11 @@ The loaded JS always runs under the template's **declared** profile — so untru
 generated code is boxed by the operator, never by the caller. Capability-gated: the
 spawner needs `spawn`, plus its own `storage` for a `kv:` source or `network` for a `url:`
 (an `inline:` bundle needs no extra I/O). The fetch for `url:` is a host action (the node
-owns egress), so `rusm-wasm` stays HTTP-free. `dynamic = "js"` is the only kind today; the
-string anticipates other **interpreted** runners (Python, Ruby) — compiled `.wasm`
-components ship via `rusm build`, not this path.
+owns egress), so `rusm-wasm` stays HTTP-free. Two template kinds exist: `dynamic = "js"`
+(a runtime-chosen **JS** bundle, the focus here) and `dynamic = "wasm"` (a runtime-chosen
+**compiled WASM component**, compiled once then cached for hot re-spawns — see
+[dynamic WASM](/build-an-app/dynamic-wasm)). A compiled `.wasm` can also still ship the
+ordinary way, via `rusm build` into `./wasm/`.
 
 ## Environment variables
 

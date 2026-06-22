@@ -93,13 +93,15 @@ data to real measurements.
 
 **Across all phases:**
 
-- **Nineteen live dashboard benchmarks** — *every* scenario now runs on real data: the
+- **Twenty-one live dashboard benchmarks** — *every* scenario now runs on real data: the
   ten core engines (spawn-storm, ping-pong, fault-recovery, connection-storm,
   connection-scale, fairness, module-storm, component-storm, stream-pipe,
   distributed-fanout), six co-resident serving demos (`http-throughput`, `ws-echo`,
-  `sse-fanout` and their `*-ts` twins), and three platform-primitive scenarios
+  `sse-fanout` and their `*-ts` twins), three platform-primitive scenarios
   (`kv-storm` durable read-modify-writes over redb, `pubsub-fanout` 1→N broadcast,
-  `crypto-ops` `crypto.subtle` from a TS guest) + the standalone `cluster_fanout`
+  `crypto-ops` `crypto.subtle` from a TS guest), and two extension-primitive scenarios
+  (`custom-bridge` a guest calling an app's native bridge, `dynamic-wasm` a runtime-loaded
+  compiled component through the compile cache) + the standalone `cluster_fanout`
   benchmark. The fair, credible serving headline numbers are still measured by
   `rusm-loadtest` (out-of-process, vs a live `rusm serve` port).
 - TDD throughout; coverage ≥98% (mostly 100%); `cargo fmt` + Prettier clean.

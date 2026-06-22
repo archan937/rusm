@@ -163,11 +163,14 @@ against a live `rusm serve` port (loopback): HTTP **~46k req/s** (0% errors) · 
 sandboxed-process-per-connection WS establishments/sec. The six serving dashboard
 tiles are co-resident live demos (in-process server + load generator on one node).
 
-Three **platform-primitive** tiles round out the nineteen: `kv-storm` (durable
+Three **platform-primitive** tiles continue the set: `kv-storm` (durable
 read-modify-writes over the embedded redb store — the only disk-touching scenario, so
 its number is the ACID-commit ceiling), `pubsub-fanout` (one publisher broadcasting
 1→N to subscriber processes), and `crypto-ops` (`crypto.subtle` SHA-256 from a
-sandboxed TypeScript guest).
+sandboxed TypeScript guest). Two **extension-primitive** tiles round out the twenty-one:
+`custom-bridge` (a sandboxed guest calling an app-registered native bridge in a loop —
+the custom-bridge call cost) and `dynamic-wasm` (a runtime-loaded compiled component
+spawned through the content-addressed compile cache — compiled once cold, then hot).
 
 ## Configuration
 
@@ -229,7 +232,7 @@ by construction** — Wasm lives only in the `rusm-wasm` backend.
 | `rusm-observer` | lib | Low-overhead live-observer snapshots — aggregate counters plus a sampled per-instance table, with a detail on/off toggle. |
 | `rusm-logfmt` | lib | **The shared log format** — the single source for the log palette, column widths, timestamp, and tty-gated colour. Formats both `rusm-otp`'s lifecycle lines and every **guest** log line (the host's `log` op stamps a guest's `console.*` / `log::*` through `line()`), so platform and app logs read as one aligned stream. Pure (std only); compiles for the host and `wasm32-wasip2`. **No `wasmtime` dependency.** |
 | `rusm-node` | lib | **The node layer** — the `rusm.toml` app manifest, resource-tier profiles, and the live **attach** protocol + node (streams `rusm-otp` process introspection to `rusm attach`). What the `rusm` CLI builds on; **no `wasmtime` dependency**. |
-| `rusm-bench` | lib + bin | *(repo-only, unpublished)* Scenarios, the deterministic preview source, nineteen real engines — the ten core engines (spawn-storm, ping-pong, fault-recovery, connection-storm, connection-scale, fairness, module-storm, component-storm, stream-pipe, distributed-fanout), the six co-resident serving demos (`http-throughput`, `ws-echo`, `sse-fanout` and their `*-ts` twins, each a real in-process WASM server driven through the same load path as `rusm-loadtest`), and three platform-primitive scenarios (`kv-storm` durable read-modify-writes over redb, `pubsub-fanout` 1→N broadcast, `crypto-ops` `crypto.subtle` from a TS guest) — the run aggregator, the wire protocol, and the WebSocket node behind the dashboard. Binary: `rusm-bench start` / `run`. |
+| `rusm-bench` | lib + bin | *(repo-only, unpublished)* Scenarios, the deterministic preview source, twenty-one real engines — the ten core engines (spawn-storm, ping-pong, fault-recovery, connection-storm, connection-scale, fairness, module-storm, component-storm, stream-pipe, distributed-fanout), the six co-resident serving demos (`http-throughput`, `ws-echo`, `sse-fanout` and their `*-ts` twins, each a real in-process WASM server driven through the same load path as `rusm-loadtest`), three platform-primitive scenarios (`kv-storm` durable read-modify-writes over redb, `pubsub-fanout` 1→N broadcast, `crypto-ops` `crypto.subtle` from a TS guest), and two extension-primitive scenarios (`custom-bridge` a guest calling an app's native bridge, `dynamic-wasm` a runtime-loaded compiled component through the compile cache) — the run aggregator, the wire protocol, and the WebSocket node behind the dashboard. Binary: `rusm-bench start` / `run`. |
 | `rusm-loadtest` | bin | *(repo-only, unpublished)* **Out-of-process serving load test** — drives a live `rusm serve` port across a real socket in four modes: `http` (balter fixed-rate sweep), `ws` / `sse` (a tokio-native connection-capacity harness), and `conn` (a connection-establishment storm — sandboxed-process-per-connection WS establishments). Reports achieved throughput, tail latency, and error rate. |
 | `rusm-cli` | bin (`rusm`) | The `rusm` command: `new <name>` (scaffold an app), the app model — `build` / `run` / `serve` / `dev` over `rusm.toml` — plus `node start` (host the app as an attachable node) and `attach <url>` (observe a running node's processes). |
 | `rusm-rs` | lib (guest) | **The Rust guest crate** — write a component/service in Rust over the actor world: `Pid`/`send`/`receive` (serde, + `receive_timeout`)/`spawn`/registry/`Stream`, the `#[rusm_rs::service]` macro (dispatch loop + typed `Client`), plus modules for serving (`http`/`ws`, incl. offloaded SSE fan-out), durable storage (`kv`), pub/sub (`pubsub::Topics`), and a `log`-crate sink (`log::info!`/etc → the platform logger, installed by the entry macros). Wasm-only (built for `wasm32-wasip2`), excluded from the host workspace. |

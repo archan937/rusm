@@ -46,6 +46,22 @@ Give every guest a typed function backed by host Rust. A `weather` bridge
 an ordinary import — RUSM's answer to a capability provider, compiled-in and typed. Scaffold
 your own with `rusm new <name> --bridges`.
 
+### Runtime-chosen code — [dynamic WASM plugins](./dynamic-wasm/)
+
+Run **compiled WASM components chosen at runtime**, each in a sandbox the operator fixes. A
+`plugin-runner` template (`dynamic = "wasm"`) has no fixed bundle; an HTTP request picks which
+`.wasm` to load (`kv:plugins/<name>`), and it's compiled once (cold) then served from a
+content-addressed cache (hot — **~17 ms → ~0.5 ms** here). The request chooses *which* code
+runs; it can never widen *what it may do*. Publish a plugin with `rusm kv`, no node rebuild:
+
+```sh
+cd examples/dynamic-wasm
+rusm build
+rusm kv set plugins/greeter wasm/greeter.wasm
+rusm serve
+curl 127.0.0.1:8080/run/greeter/World      # → Hello, World!
+```
+
 ## [Embedding](./embedding/) — use RUSM as a Rust library
 
 Drive the host crates directly, the way the CLI does: host WASM components as supervised

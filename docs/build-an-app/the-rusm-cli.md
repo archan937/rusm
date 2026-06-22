@@ -183,6 +183,25 @@ rusm node start
 > repo-only tool — `rusm-bench start` (see [the dashboard](/about/benchmark-dashboard-and-observer)
 > / `make dashboard`), not the installed `rusm`.
 
+## `rusm kv`
+
+`rusm kv <set|get|list|rm> …` — read and write the node's durable store (the `[node] store`
+file) from the shell — chiefly
+to **publish a dynamic bundle** that a `source = "kv:<bucket>/<key>"` (or a guest's
+`spawn-from`) then loads: a compiled `.wasm` component or a JS bundle. The node must be
+**stopped** (the store is single-writer, and a running node holds the lock).
+
+```sh
+rusm kv set plugins/greeter wasm/greeter.wasm   # publish a bundle (file → key)
+rusm kv list plugins                            # greeter
+rusm kv get plugins/greeter ./out.wasm          # read a key back to a file
+rusm kv rm  plugins/greeter                      # delete a key
+```
+
+The `<bucket>/<key>` ref splits on the **first** `/`, so a key may contain slashes
+(`plugins/v2/greeter` → bucket `plugins`, key `v2/greeter`). See
+[dynamic WASM](/build-an-app/dynamic-wasm) for the publish → spawn flow.
+
 ## `rusm attach [target]`
 
 Open a live REPL into a running node (defaults to `127.0.0.1:4000`; accepts

@@ -86,6 +86,22 @@ const COMMANDS: &[CommandSpec] = &[
         examples: &["rusm node start", "rusm node start --listen 0.0.0.0:4000"],
     },
     CommandSpec {
+        name: "kv",
+        usage: "rusm kv <set|get|list|rm> …",
+        summary: "read/write the node's durable store (publish kv: bundles)",
+        details: "Reads and writes the node's durable key-value store (the `[node] store` \
+                  file) from the shell — chiefly to **publish a dynamic bundle** a \
+                  `source = \"kv:<bucket>/<key>\"` (or a guest's `spawn-from`) then loads: \
+                  `set` a compiled `.wasm` component or a JS bundle, `get`/`list` to inspect, \
+                  `rm` to remove. The node must be stopped (the store is single-writer).",
+        examples: &[
+            "rusm kv set plugins/greeter wasm/greeter.wasm",
+            "rusm kv list plugins",
+            "rusm kv get plugins/greeter ./greeter.wasm",
+            "rusm kv rm plugins/greeter",
+        ],
+    },
+    CommandSpec {
         name: "attach",
         usage: "rusm attach [<host | host:port | ws-url>]",
         summary: "observe a running node (defaults to 127.0.0.1:4000)",
@@ -203,7 +219,9 @@ mod tests {
         assert!(u.contains("Commands:"));
         assert!(u.contains("-V, --version"), "documents the version flag");
         assert!(u.contains(DOCS_URL));
-        for name in ["new", "node", "build", "run", "dev", "serve", "attach"] {
+        for name in [
+            "new", "node", "build", "run", "dev", "serve", "kv", "attach",
+        ] {
             assert!(u.contains(name), "usage missing `{name}`");
         }
         assert!(u.contains("scaffold a new RUSM app"));

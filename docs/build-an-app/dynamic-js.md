@@ -99,9 +99,11 @@ runs; it can never widen *what it's allowed to do*.
   never gets network unless you grant it.
 - **The runner is shared.** Every dynamic-JS instance rides the same ~920 KB js-runner — you
   ship the engine once, not per bundle (see [guests](/deep-dive/guests)).
-- **JS today; compiled WASM ships via `rusm build`.** `dynamic = "js"` is the only kind today;
-  the `"js"` string anticipates other **interpreted** runners (e.g. Python, Ruby). Compiled
-  `.wasm` components are a build-time artifact (`rusm build` → `./wasm/`), not a runtime-loaded
-  bundle — see [the serving model](/deep-dive/the-serving-model).
+- **JS or compiled WASM.** This page is the **JS** kind (`dynamic = "js"`). Its twin,
+  [dynamic WASM](/build-an-app/dynamic-wasm) (`dynamic = "wasm"`), loads a **compiled WASM
+  component** chosen at runtime — compiled once, then cached for hot re-spawns. The `"js"`
+  string also anticipates other **interpreted** runners (e.g. Python, Ruby). A compiled
+  `.wasm` can still ship the ordinary way too, as a build-time artifact (`rusm build` →
+  `./wasm/`) — see [the serving model](/deep-dive/the-serving-model).
 - **Full field reference:** every `source` / `dynamic` rule is in the
   [configuration reference](/deep-dive/configuration#dynamic-bundle-sourcing).

@@ -16,7 +16,7 @@ today: the OTP core spawns, messages, supervises, manages, and connects real pro
 the `rusm-wasm` backend runs them as real **Wasm instances** behind three bridges (wasip1
 core modules, wasip2 components, wasip3 `@0.3.0`) with default-deny capabilities,
 instance-per-process, and pooling + CoW + epoch; the guest crates (`rusm-rs` / `rusm-ts` /
-`rusm-go`), the QUIC+TLS cluster, and HTTP/WS/SSE serving are all built. All **nineteen**
+`rusm-go`), the QUIC+TLS cluster, and HTTP/WS/SSE serving are all built. All **twenty-one**
 dashboard scenarios run on real data — including **fairness** (Wasm spinners saturate
 every core, yet bystanders keep progressing) and **distributed-fanout** (real cross-node
 messaging over QUIC+TLS). The lasting value of this page is the **efficiency playbook**

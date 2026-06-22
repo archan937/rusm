@@ -5,9 +5,10 @@ use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
-    capabilities_for, command_help, host, node_overrides, normalize_target, parse, parse_new_args,
-    prebuilt_wasm, render_message, scaffold, spawn_components, usage, version, wants_help,
-    wants_version, Protocol, ReplInput, DEFAULT_HOST, HELP,
+    capabilities_for, command_help, exec_kv, host, node_overrides, normalize_target, parse,
+    parse_kv, parse_new_args, prebuilt_wasm, render_message, scaffold, spawn_components, usage,
+    version, wants_help, wants_version, KvCommand, KvOutput, Protocol, ReplInput, DEFAULT_HOST,
+    HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -45,6 +46,7 @@ async fn main() {
         Some("run") => cmd_run(args).await,
         Some("serve") => cmd_serve(args).await,
         Some("dev") => cmd_dev(args).await,
+        Some("kv") => cmd_kv(args),
         Some("attach") => cmd_attach(args).await,
         Some(other) => unknown_command(other),
     }
@@ -238,6 +240,52 @@ async fn cmd_dev(mut args: Arguments) {
     if let Err(error) = dev(ov.config.as_deref(), ov.listen.as_deref()).await {
         die(format!("dev failed: {error}"), 1);
     }
+}
+
+/// `rusm kv <action> …`: read/write the node's durable store from the shell — chiefly to
+/// publish a dynamic `kv:` bundle. Parses the action + operands, then runs it against the
+/// configured store.
+fn cmd_kv(mut args: Arguments) {
+    let action = match args.subcommand() {
+        Ok(Some(action)) => action,
+        _ => die(command_help("kv").expect("kv is a command"), 2),
+    };
+    let operands: Vec<String> = args
+        .finish()
+        .into_iter()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
+    let command =
+        parse_kv(&action, &operands).unwrap_or_else(|error| die(format!("error: {error}"), 2));
+    if let Err(error) = run_kv(command) {
+        die(format!("kv failed: {error}"), 1);
+    }
+}
+
+/// Open the configured `[node] store` and run a parsed kv command, emitting its output.
+/// Opens the store file directly, so the node must be stopped (redb is single-writer).
+fn run_kv(command: KvCommand) -> anyhow::Result<()> {
+    let cfg = load_node_config(None, None);
+    let rel = cfg.node.store.ok_or_else(|| {
+        anyhow!("no durable store configured — set `store` in the [node] table of rusm.toml")
+    })?;
+    let path = Path::new(".").join(&rel);
+    let store = rusm_kv::Store::open(&path).with_context(|| {
+        format!(
+            "opening the store at {} (is a node still running? it holds the lock)",
+            path.display()
+        )
+    })?;
+    match exec_kv(&store, command)? {
+        KvOutput::Message(message) => println!("{message}"),
+        KvOutput::Bytes(bytes) => {
+            use std::io::Write as _;
+            std::io::stdout()
+                .write_all(&bytes)
+                .context("writing bytes to stdout")?;
+        }
+    }
+    Ok(())
 }
 
 /// `rusm attach [target]`: connect the REPL/observer to a node (default: local).

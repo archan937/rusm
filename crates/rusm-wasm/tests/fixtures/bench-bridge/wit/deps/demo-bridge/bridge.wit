@@ -1,0 +1,12 @@
+/// A *custom application bridge* package — the kind an app defines in its own repo
+/// (`bridges/greet/bridge.wit`), not part of `rusm:runtime`. The host impl is wired in
+/// at startup via `WasmRuntime::with_bridges`; here it is just a typed import the guest
+/// calls. This fixture exercises the public bridge-registration seam end to end.
+package demo:bridge@0.1.0;
+
+interface greet {
+    /// Greet `name`. Backed by a native host function the application registers — the
+    /// reply is composed host-side (and stamped with the calling pid) to prove the call
+    /// reaches real process state, then returned to the guest typed.
+    greet: func(name: string) -> string;
+}

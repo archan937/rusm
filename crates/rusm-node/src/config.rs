@@ -24,6 +24,12 @@ pub struct NodeSettings {
     /// granted `storage` then gets an error if it uses `kv`. Set it to give resident
     /// state somewhere to survive a restart.
     pub store: Option<String>,
+    /// Freshness/idle window, in **seconds**, for the dynamic-WASM compile cache — how
+    /// long a fetched `.wasm` bundle (a `spawn-from` `url:`/`kv:` source) is reused before
+    /// the source is re-checked for new bytes, and how long a compiled artifact survives
+    /// without use. Omitted → the runtime default (5 minutes). Lower it for faster
+    /// live-redeploy pickup; raise it to cut re-fetches/recompiles.
+    pub dynamic_wasm_ttl_secs: Option<u64>,
 }
 
 impl Default for NodeSettings {
@@ -33,6 +39,7 @@ impl Default for NodeSettings {
             profile: ResourceProfile::default(),
             ticks_per_second: 20,
             store: None,
+            dynamic_wasm_ttl_secs: None,
         }
     }
 }
@@ -162,10 +169,12 @@ pub struct ComponentSpec {
     /// change the bundle at the source and re-`spawn`/reload, no node rebuild.
     #[serde(default)]
     pub source: Option<String>,
-    /// Marks this as a **dynamic JS runner template** (`dynamic = "js"`): a capability
-    /// profile with no fixed bundle. A guest can't `spawn` it; it runs only via
-    /// `spawn-from(name, source)`, which loads a runtime-chosen JS bundle and runs it
-    /// under this profile (operator policy — the guest picks the code, never the caps).
+    /// Marks this as a **dynamic runner template**: a capability profile with no fixed
+    /// bundle. `dynamic = "js"` runs a runtime-chosen **JS** bundle; `dynamic = "wasm"`
+    /// runs a runtime-chosen **WASM component** (compiled once, then cached for hot
+    /// re-spawns — see the dynamic-WASM compile cache). A guest can't `spawn` a template;
+    /// it runs only via `spawn-from(name, source)`, which loads the chosen bundle and runs
+    /// it under this profile (operator policy — the guest picks the code, never the caps).
     /// Mutually exclusive with `source` (a template has no fixed bundle).
     #[serde(default)]
     pub dynamic: Option<String>,
@@ -424,12 +433,21 @@ mod tests {
             listen = "0.0.0.0:9000"
             profile = "max"
             ticks_per_second = 60
+            dynamic_wasm_ttl_secs = 900
             "#,
         )
         .unwrap();
         assert_eq!(cfg.node.listen, "0.0.0.0:9000");
         assert_eq!(cfg.node.profile, ResourceProfile::Max);
         assert_eq!(cfg.node.ticks_per_second, 60);
+        assert_eq!(cfg.node.dynamic_wasm_ttl_secs, Some(900));
+    }
+
+    #[test]
+    fn dynamic_wasm_ttl_defaults_to_unset() {
+        // Omitted → None, so the runtime applies its own default freshness window.
+        let cfg = NodeConfig::from_toml("[node]\nprofile = \"light\"").unwrap();
+        assert_eq!(cfg.node.dynamic_wasm_ttl_secs, None);
     }
 
     #[test]

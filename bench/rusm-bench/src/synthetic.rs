@@ -234,6 +234,20 @@ impl SyntheticSource {
                 latency_ns: (50_000, 2_000_000),
                 processes: (2, 32),
             },
+            // Extension primitives are live (real) engines; these are only the
+            // runtime-free preview shapes. A custom-bridge call is an in-process typed
+            // call + actor round-trip (high rate, sub-ms); dynamic WASM is shaped like
+            // the component storm (hot spawns), with the occasional cold-compile outlier.
+            Scenario::CustomBridge => Ranges {
+                ops: (100_000, 600_000),
+                latency_ns: (2_000, 200_000),
+                processes: (2, 32),
+            },
+            Scenario::DynamicWasm => Ranges {
+                ops: (200_000, 400_000),
+                latency_ns: (1_000, 50_000),
+                processes: (50, 100),
+            },
         }
     }
 }

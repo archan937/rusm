@@ -5,7 +5,9 @@ use crate::componentstorm::ComponentStormEngine;
 use crate::connectionscale::ConnectionScaleEngine;
 use crate::connectionstorm::ConnectionStormEngine;
 use crate::cryptoops::CryptoOpsEngine;
+use crate::custombridge::CustomBridgeEngine;
 use crate::distributedfanout::DistributedFanoutEngine;
+use crate::dynamicwasm::DynamicWasmEngine;
 use crate::fairness::FairnessEngine;
 use crate::faultrecovery::FaultRecoveryEngine;
 use crate::kvstorm::KvStormEngine;
@@ -107,6 +109,9 @@ enum Engine {
     KvStorm(KvStormEngine),
     PubSubFanout(PubSubFanoutEngine),
     CryptoOps(CryptoOpsEngine),
+    // Extension primitives.
+    CustomBridge(CustomBridgeEngine),
+    DynamicWasm(DynamicWasmEngine),
 }
 
 impl Engine {
@@ -188,6 +193,14 @@ impl Engine {
                 config.spawn_workers,
                 config.scheduler_count,
             )),
+            Scenario::CustomBridge => Engine::CustomBridge(CustomBridgeEngine::new(
+                config.spawn_workers,
+                config.scheduler_count,
+            )),
+            Scenario::DynamicWasm => Engine::DynamicWasm(DynamicWasmEngine::new(
+                config.spawn_workers,
+                config.scheduler_count,
+            )),
         }
     }
 
@@ -214,6 +227,8 @@ impl Engine {
             Engine::KvStorm(engine) => engine.tick(),
             Engine::PubSubFanout(engine) => engine.tick(),
             Engine::CryptoOps(engine) => engine.tick(),
+            Engine::CustomBridge(engine) => engine.tick(),
+            Engine::DynamicWasm(engine) => engine.tick(),
         }
     }
 }

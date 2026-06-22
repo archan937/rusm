@@ -12,6 +12,9 @@ crates/rusm-rs/target/
 crates/rusm-rs-macros/target/
 # Example apps build their components into a local wasm/ dir (checked-in source only).
 examples/*/wasm/
+# …and may generate a durable store and per-component lockfiles when built/run.
+examples/**/*.redb
+examples/**/components/*/Cargo.lock
 **/*.rs.bk
 *.profraw
 

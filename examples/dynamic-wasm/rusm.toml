@@ -1,0 +1,33 @@
+# Dynamic WASM — run compiled WASM plugins chosen at runtime, inside a sandbox the operator
+# fixes. `rusm build` compiles components/* with cargo (wasm32-wasip2); you publish the
+# plugins to the store with `rusm kv set …`; `rusm serve` hosts the dispatcher.
+# The companion to the docs guide "Dynamic WASM" (docs/build-an-app/dynamic-wasm).
+
+[node]
+store = "plugins.redb"                 # the durable store the plugin bundles live in
+dynamic_wasm_ttl_secs = 300            # compile-cache freshness window (default; shown for clarity)
+
+[[serve]]
+protocol = "http"
+listen   = "127.0.0.1:8080"
+
+[serve.routes]
+"GET /run/:plugin/:input" = "api#run"  # run a runtime-chosen plugin against the input
+
+# The dispatcher: may spawn the runner template (`allow-spawn`) and read the bundle from
+# the store (`allow-storage` gates the `kv:` source fetch). It never gets to run plugin code
+# itself — it only chooses which plugin to spawn.
+[capabilities.dispatcher]
+inherits      = "sandboxed"
+allow-spawn   = true
+allow-storage = true
+
+[components.api]
+capability = "dispatcher"
+
+# The sandbox the plugins run in — a capability profile with NO fixed bundle. The request
+# picks which compiled `.wasm` to load (`kv:plugins/<name>`); it always runs under THIS
+# profile, never the caller's. Tighten or widen the box here, in one place.
+[components.plugin-runner]
+capability = "sandboxed"
+dynamic    = "wasm"

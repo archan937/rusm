@@ -310,11 +310,6 @@ impl WasiHost {
         Ok(store.bucket(bucket))
     }
 
-    /// Resolve a `spawn-from` source that needs no network fetch — `inline:<js>` (the
-    /// bundle verbatim) or `kv:<bucket>/<key>` (the node store, enforcing `storage` via
-    /// `kv_bucket`). `Ok(None)` signals a `url:`/`http(s)://` source, which `spawn-from`
-    /// fetches via the node-injected resolver (enforcing `network`); `Err` is an
-    /// unrecognised source.
     /// Gate a dynamic-WASM `source` by its scheme **without fetching** — so the capability is
     /// enforced on every spawn (cold *and* hot), and a cached `url:`/`kv:` bundle can never be
     /// reached by a guest lacking `network`/`storage`. `inline:` needs no extra capability.
@@ -332,6 +327,11 @@ impl WasiHost {
         Ok(())
     }
 
+    /// Resolve a `spawn-from` source that needs no network fetch — `inline:<js>` (the
+    /// bundle verbatim) or `kv:<bucket>/<key>` (the node store, enforcing `storage` via
+    /// `kv_bucket`). `Ok(None)` signals a `url:`/`http(s)://` source, which `spawn-from`
+    /// fetches via the node-injected resolver (enforcing `network`); `Err` is an
+    /// unrecognised source.
     fn resolve_local(&self, source: &str) -> Result<Option<Vec<u8>>, String> {
         let source = source.trim();
         if let Some(js) = source.strip_prefix("inline:") {

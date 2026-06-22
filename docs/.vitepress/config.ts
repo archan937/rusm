@@ -70,6 +70,7 @@ const sections = [
         items: [
           { text: 'Add your own functions', link: '/build-an-app/add-your-own-functions' },
           { text: 'Dynamic JS', link: '/build-an-app/dynamic-js' },
+          { text: 'Dynamic WASM', link: '/build-an-app/dynamic-wasm' },
         ],
       },
     ],

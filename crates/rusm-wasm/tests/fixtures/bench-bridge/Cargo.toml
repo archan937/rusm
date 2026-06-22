@@ -1,0 +1,25 @@
+# A guest fixture for the `custom-bridge` dashboard benchmark: it calls a CUSTOM
+# application bridge (`demo:bridge/greet`) in a **loop** (one call per request), so the
+# bench measures sustained native-bridge round-trips, not one-shot spawn cost. Built for
+# wasm32-wasip2, checked in as bench_bridge.wasm. Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/bench_bridge.wasm ../bench_bridge.wasm
+[workspace]
+
+[package]
+name = "bench-bridge"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "bench_bridge"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"

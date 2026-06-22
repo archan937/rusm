@@ -85,12 +85,19 @@ pub fn capabilities_for(id: &str, profiles: &HashMap<String, CapabilitySpec>) ->
         .capabilities()
 }
 
-/// Resolve a component's optional `source` to JS bundle bytes — the dynamic-deploy
-/// path: fetch from a URL (e.g. a presigned blob / artifact API) or read from the
-/// node's durable `kv` store, instead of the local `./wasm/<name>` artifact. `None`
-/// when no `source` is set (the caller falls back to the local file). A remote source
-/// is always a **JS** bundle. Re-run on each `spawn`/reload, so updating the source
-/// deploys new JS with no node rebuild.
+/// The WASM magic number every module/component starts with (`\0asm`) — lets the loader
+/// tell a compiled WASM bundle from a JS one without trusting a file extension.
+fn is_wasm(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\0asm")
+}
+
+/// Resolve a component's optional `source` to bundle bytes — the dynamic-deploy path:
+/// fetch from a URL (e.g. a presigned blob / artifact API) or read from the node's
+/// durable `kv` store, instead of the local `./wasm/<name>` artifact. `None` when no
+/// `source` is set (the caller falls back to the local file). The bytes are either a
+/// **JS** bundle or a compiled **WASM** component — the caller sniffs ([`is_wasm`]) to
+/// tell which. Re-run on each `spawn`/reload, so updating the source deploys live with
+/// no node rebuild.
 async fn remote_bundle(source: Option<&str>, wasm: &WasmRuntime) -> Result<Option<Vec<u8>>> {
     let Some(spec) = source else {
         return Ok(None);
@@ -193,26 +200,41 @@ async fn register_component(
     source: Option<&str>,
     dynamic: Option<&str>,
 ) -> Result<Registration> {
-    // A dynamic JS runner template (`dynamic = "js"`): a capability profile with no fixed
-    // bundle. A guest reaches it via spawn-from(name, runtime-source); nothing loads here.
+    // A dynamic runner template: a capability profile with no fixed bundle. A guest
+    // reaches it via spawn-from(name, runtime-source); nothing loads here. `"js"` runs a
+    // runtime-chosen JS bundle, `"wasm"` a runtime-chosen (compile-cached) WASM component.
     if let Some(kind) = dynamic {
-        if kind != "js" {
-            return Err(anyhow!(
-                "component `{name}`: dynamic = {kind:?} is not supported (use \"js\")"
-            ));
-        }
         if source.is_some() {
             return Err(anyhow!(
                 "component `{name}`: `dynamic` and `source` are mutually exclusive (a template has no fixed bundle)"
             ));
         }
-        wasm.register_js_template(name.to_string(), caps.clone());
+        match kind {
+            "js" => wasm.register_js_template(name.to_string(), caps.clone()),
+            "wasm" => wasm.register_wasm_template(name.to_string(), caps.clone()),
+            other => {
+                return Err(anyhow!(
+                    "component `{name}`: dynamic = {other:?} is not supported (use \"js\" or \"wasm\")"
+                ));
+            }
+        }
         return Ok(Registration::Service);
     }
-    // A configured `source` (url/kv) supplies a JS bundle directly — the
-    // dynamic-deploy path, no local artifact needed.
+    // A configured `source` (url/kv) supplies a bundle directly — the dynamic-deploy
+    // path, no local artifact needed. Sniff the WASM magic to tell a compiled component
+    // from a JS bundle, so one `source` mechanism deploys either kind live.
     if let Some(bundle) = remote_bundle(source, wasm).await? {
-        wasm.register_js_component_with(name.to_string(), bundle, caps.clone());
+        if is_wasm(&bundle) {
+            let component = wasm
+                .compile_component(&bundle)
+                .with_context(|| format!("compiling remote component `{name}`"))?;
+            let prepared = wasm.prepare_component(&component, "run").with_context(|| {
+                format!("remote source for `{name}` is not a rusm actor component")
+            })?;
+            wasm.register_component_with(name.to_string(), prepared, caps.clone());
+        } else {
+            wasm.register_js_component_with(name.to_string(), bundle, caps.clone());
+        }
         return Ok(Registration::Service);
     }
     // TypeScript component: prefer the precompiled QuickJS bytecode (`<name>.qjsbc`,
@@ -1078,5 +1100,108 @@ mod tests {
         assert!(remote_bundle(Some("kv:b/absent"), &stored).await.is_err());
         // An unrecognised source shape.
         assert!(remote_bundle(Some("ftp://x"), &stored).await.is_err());
+    }
+
+    #[test]
+    fn is_wasm_recognises_the_module_magic() {
+        // The loader tells a compiled WASM bundle from a JS one by the `\0asm` magic, not a
+        // file extension — so a `source` deploys either kind without a hint.
+        assert!(is_wasm(b"\0asm\x0d\x00\x01\x00"), "WASM component header");
+        assert!(is_wasm(b"\0asm\x01\x00\x00\x00"), "WASM core-module header");
+        assert!(!is_wasm(b"module.exports.default = ..."), "JS bundle");
+        assert!(!is_wasm(b""), "empty is not WASM");
+    }
+
+    /// A `[components.<name>]` spec for a dynamic runner template (`dynamic = "<kind>"`).
+    fn template_spec(kind: &str) -> ComponentSpec {
+        ComponentSpec {
+            capability: "trusted".to_string(),
+            resident: false,
+            source: None,
+            dynamic: Some(kind.to_string()),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registers_a_dynamic_wasm_template() {
+        // `dynamic = "wasm"` registers a runner template (a profile, no fixed bundle): it's
+        // spawnable by name via `spawn-from`, never boot-parked. No artifact is read here.
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = WasmRuntime::new(Runtime::new()).unwrap();
+        let hosted = spawn_components(
+            dir.path(),
+            &wasm,
+            &components(&[("wasm-runner", template_spec("wasm"))]),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(hosted.names, ["wasm-runner"], "the template is registered");
+        assert!(
+            hosted.resident.is_empty(),
+            "a template is never boot-parked"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rejects_an_unknown_dynamic_kind() {
+        // Only `js`/`wasm` are runner-template kinds; anything else is a clear load error
+        // (a typo is caught at boot, not silently ignored).
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = WasmRuntime::new(Runtime::new()).unwrap();
+        let err = expect_err(
+            register_component(
+                dir.path(),
+                &wasm,
+                "runner",
+                &Capabilities::nothing(),
+                None,
+                Some("python"),
+            )
+            .await,
+        );
+        assert!(err.contains("python"), "names the bad kind: {err}");
+        assert!(
+            err.contains("js") && err.contains("wasm"),
+            "lists the valid kinds: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_remote_wasm_source_is_compiled_not_run_as_js() {
+        // A `source` whose bytes carry the WASM magic is routed to the component compile
+        // path, not the JS runner. Staging malformed-but-WASM-tagged bytes proves the
+        // routing: only the compile branch surfaces a compile error (the JS branch wouldn't).
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = WasmRuntime::with_store(Runtime::new(), dir.path().join("kv.redb")).unwrap();
+        wasm.store()
+            .unwrap()
+            .bucket("bundles")
+            .set("broken", b"\0asm\x0d\x00\x01\x00not-a-real-component")
+            .unwrap();
+        let err = expect_err(
+            register_component(
+                dir.path(),
+                &wasm,
+                "svc",
+                &Capabilities::nothing(),
+                Some("kv:bundles/broken"),
+                None,
+            )
+            .await,
+        );
+        assert!(
+            err.contains("compiling remote component"),
+            "the WASM magic routed to the compile path: {err}"
+        );
+    }
+
+    /// Unwrap the `Err` of a [`register_component`] result as a string (`Registration`
+    /// isn't `Debug`, so `unwrap_err` won't do).
+    fn expect_err(result: Result<Registration>) -> String {
+        match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected an error, got a registration"),
+        }
     }
 }

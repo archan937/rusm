@@ -8,16 +8,42 @@ pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
 ## [0.4.0] — 2026-06-22
 
-A **custom-bridges** release: an app can define its own **native host functions** — typed
-WIT functions backed by host Rust — and call them from **any** guest (Rust, Go, **and**
-TypeScript) as ordinary imports. It's RUSM's compiled-in answer to a wasmCloud capability
-provider: no lattice, no broker, no RPC, default-deny and gated by name. Underneath, the
+A **custom-bridges + dynamic-WASM** release. An app can define its own **native host
+functions** — typed WIT functions backed by host Rust — and call them from **any** guest
+(Rust, Go, **and** TypeScript) as ordinary imports: RUSM's compiled-in answer to a wasmCloud
+capability provider (no lattice, no broker, no RPC, default-deny and gated by name).
+Alongside it, **dynamic WASM** — a guest can now spawn a **compiled WASM component chosen at
+runtime** (`spawn-from` a `kv:`/`url:`/`inline:` source, or a `dynamic = "wasm"` template),
+compiled once and served from a content-addressed cache for hot re-spawns. Underneath, the
 host's own built-in capabilities were refactored into the same single-source **`bridges/`**
 layout. **One breaking change**: the `[[serve]]` `name` field is renamed to `component`. The
 whole workspace + the `rusm-ts` package move to **0.4.0** in lock-step; `rusm-go` is tagged
 `v0.4.0`.
 
 ### Added
+- **Dynamic WASM** — `spawn-from(template, source)` now loads a **compiled WASM component**,
+  not only a JS bundle: declare a runner template with `dynamic = "wasm"` (a capability
+  profile, no fixed bundle) and a guest spawns instances from a runtime-chosen `kv:`/`url:`/
+  `inline:` source. Backed by a **content-addressed compile cache** (keyed by the SHA-256 of
+  the bytes, not the source string): the first spawn of a bundle compiles (cold, ~17 ms for a
+  small component), every later spawn instantiates on the pooled fast path (hot, ~0.5 ms);
+  single-flight so concurrent first-spawns compile once, and a freshness/idle TTL
+  (`[node] dynamic_wasm_ttl_secs`, default 300 s) re-checks a source for new bytes and evicts
+  idle artifacts. The chosen code always runs under the **template's** profile — the request
+  picks *which* code, never *what it may do*. The same `source` mechanism also loads a remote
+  `.wasm` for a `[components.<name>]`/`[[serve]]` (sniffed by the WASM magic), so a compiled
+  component can deploy from a blob store, not only the local artifact.
+- **`rusm kv`** — a CLI command to read/write the node's durable store from the shell
+  (`set`/`get`/`list`/`rm`), chiefly to **publish a dynamic bundle** (`rusm kv set
+  plugins/greeter wasm/greeter.wasm`) that a `kv:` source then loads. The node must be stopped
+  (the store is single-writer).
+- **`examples/dynamic-wasm`** — a runnable plugin host: an HTTP dispatcher spawns
+  runtime-chosen compiled plugins (`greeter`, `shout`) in one sandbox, compiled once then hot.
+- **Two live dashboard scenarios** — `custom-bridge` (a sandboxed guest calling an
+  app-registered native bridge in a loop — ~310k round-trips/s, p50 ~12µs) and
+  `dynamic-wasm` (runtime-loaded compiled components through the cache — ~110k hot spawns/s
+  after the one-time cold compile), each a real engine with a `WasmRuntime::prepare_dynamic`
+  embedding entry point for the latter.
 - **Custom bridges** — an app declares `bridges/<name>/{bridge.wit, host.rs}` (its own WIT
   package + a native `impl <iface>::Host for BridgeHost`); `rusm build` generates the host
   glue, vendors the contract into each granted guest, and compiles a small host binary that

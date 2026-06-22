@@ -19,6 +19,10 @@ rusm-metrics = { path = "../../crates/rusm-metrics", version = "0.4.0" }
 rusm-observer = { path = "../../crates/rusm-observer", version = "0.4.0" }
 rusm-otp = { path = "../../crates/rusm-otp", version = "0.4.0" }
 rusm-wasm = { path = "../../crates/rusm-wasm", version = "0.4.0" }
+# Direct (already built transitively via rusm-wasm) so the custom-bridge engine can
+# host-side `bindgen!` a custom bridge — the macro emits bare `wasmtime::` paths. The
+# version matches rusm-wasm's so it resolves to the same crate (types unify).
+wasmtime = "45.0.1"
 # The durable KV primitive, driven directly by the kv-storm engine (as a guest
 # would, via the storage capability) for a factual durable-write throughput.
 rusm-kv = { path = "../../crates/rusm-kv", version = "0.4.0" }

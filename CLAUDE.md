@@ -95,17 +95,20 @@ stream**, and routes each message on its own **uni-stream**. It gives cross-node
 `send_global`), **remote spawn** (named `Spawnable` factories), and **live attach**
 (`remote_pids`) over one request/reply control-plane RPC — ~550k cross-node msgs/s,
 ~39µs p50 round-trip (the standalone `cluster_fanout` bench). The live
-`distributed-fanout` dashboard scenario now runs on this real engine — **all nineteen
+`distributed-fanout` dashboard scenario now runs on this real engine — **all twenty-one
 dashboard scenarios are real; none remain synthetic** (the ten core engines:
 spawn-storm, ping-pong, fault-recovery, connection-storm, connection-scale, fairness,
 module-storm, component-storm, stream-pipe, distributed-fanout; the six
 co-resident serving demos: `http-throughput`, `ws-echo`, `sse-fanout` and their `*-ts`
 twins — the fair serving headline numbers still come from `rusm-loadtest`
-out-of-process; plus three platform-primitive scenarios: `kv-storm` (durable
+out-of-process; three platform-primitive scenarios: `kv-storm` (durable
 read-modify-writes over the embedded redb store — the only disk-touching scenario, so
 the number is the ACID-commit ceiling), `pubsub-fanout` (a publisher broadcasting 1→N
 to subscriber processes — the `pubsub::Topics::publish` mechanics), and `crypto-ops`
-(`crypto.subtle` SHA-256 from a sandboxed TS guest on rquickjs)). The Wasmtime backend (`rusm-wasm`, the *only* crate that
+(`crypto.subtle` SHA-256 from a sandboxed TS guest on rquickjs); plus two
+extension-primitive scenarios: `custom-bridge` (a sandboxed guest calling an
+app-registered native bridge in a loop) and `dynamic-wasm` (a runtime-loaded compiled
+component through the content-addressed compile cache — cold once, then hot)). The Wasmtime backend (`rusm-wasm`, the *only* crate that
 touches Wasmtime) runs each component instance-per-process via the **component
 model** (`wasmtime-wasi`; `bridges/{wasip1,wasip2,wasip3}.rs` over a shared core).
 The component linker wires **WASI p2 and p3** — both `@0.2.0` and `@0.3.0`
@@ -197,7 +200,16 @@ store the declared caps; `actor::spawn` uses them) — what the manifest declare
 what runs, whoever spawns it, so secrets stay scoped to the component that needs them
 (an ad-hoc registration with no declared profile inherits the spawner's caps). A guest
 still can't fabricate capabilities the operator never granted. (The runner wraps each
-bundle in a CommonJS scope so its top-level vars can't clobber the runtime globals.) **Phase 11 also closed the standard-WASI surface**: stock
+bundle in a CommonJS scope so its top-level vars can't clobber the runtime globals.)
+**Code chosen at runtime** rides the same op via `spawn-from(template, source)`: a
+`[components.<name>]` with `dynamic = "js"` runs a runtime-chosen **JS** bundle, and
+`dynamic = "wasm"` runs a runtime-chosen **compiled WASM component** — `inline:`/`kv:`/`url:`
+sources, gated by the spawner's own storage/network cap, always run under the *template's*
+profile. Dynamic WASM is backed by a **content-addressed compile cache** (`bundle_cache.rs`:
+SHA-256 of the bytes → prepared component; single-flight `try_get_with`; freshness/idle TTL
+via `[node] dynamic_wasm_ttl_secs`, default 300s): first spawn compiles (cold ~17ms), later
+spawns hit the pooled fast path (hot ~0.5ms). The Wasm-free **`rusm kv`** CLI publishes a
+bundle to the node store (`rusm kv set <bucket>/<key> <file>`; node must be stopped). **Phase 11 also closed the standard-WASI surface**: stock
 **`wasi:cli/run`** command components run unchanged (`WasmRuntime::spawn_command` —
 DRY-shared `build_store` with the actor path), and the TS runner gained a
 capability-gated streaming **outbound `fetch`** (over `wasi:http`, gated by

@@ -1,0 +1,17 @@
+/// The fixture's own package — an *application* world (not `rusm:runtime`). It mixes the
+/// standard rusm interfaces (mapped to `rusm-rs`) with a **custom application bridge**
+/// (`demo:bridge/greet`, wired in at startup via `WasmRuntime::with_bridges`). Keeping it
+/// in its own package is exactly what an app does: `world.wit` stays the canonical
+/// `rusm:runtime` guest world (assembler-managed), the app's custom world lives here.
+package fixture:greeter@0.1.0;
+
+world greeter {
+    import rusm:runtime/actor@0.1.0;
+    import rusm:runtime/kv@0.1.0;
+    import rusm:runtime/log@0.1.0;
+    import rusm:runtime/pg@0.1.0;
+    import rusm:runtime/serve@0.1.0;
+    import rusm:runtime/streams@0.1.0;
+    import demo:bridge/greet@0.1.0;
+    export run: func();
+}

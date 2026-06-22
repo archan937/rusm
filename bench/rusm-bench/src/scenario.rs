@@ -38,6 +38,11 @@ pub enum Scenario {
     KvStorm,
     PubSubFanout,
     CryptoOps,
+    // Extension primitives (real, 0.4.0): an app's own native **custom bridge** called
+    // from a guest, and **dynamic WASM** — a runtime-chosen compiled component, compiled
+    // once then served hot from the content-addressed cache.
+    CustomBridge,
+    DynamicWasm,
 }
 
 /// Which guest language a serving scenario runs — the same server hosts a Rust
@@ -98,7 +103,7 @@ impl Scenario {
     // Serving scenarios (HTTP/WS/SSE, + TS twins) are **live co-resident demos** of
     // the serving path; the *fair* throughput headline is measured out-of-process by
     // the `rusm-loadtest` binary against a real `rusm serve` port.
-    pub const ALL: [Scenario; 19] = [
+    pub const ALL: [Scenario; 21] = [
         Scenario::SpawnStorm,        // phase 1
         Scenario::PingPong,          // phase 2
         Scenario::FaultRecovery,     // phase 3
@@ -118,6 +123,8 @@ impl Scenario {
         Scenario::KvStorm,           // phase 11 — durable KV write throughput (redb)
         Scenario::PubSubFanout,      // phase 11 — pub/sub 1→N broadcast
         Scenario::CryptoOps,         // phase 11 — crypto.subtle from a TS guest
+        Scenario::CustomBridge,      // phase 11 — guest → native custom-bridge call
+        Scenario::DynamicWasm,       // phase 11 — runtime-loaded compiled component (cold→hot)
     ];
 
     /// The guest language a serving scenario runs (Rust by default; the `*Ts`
@@ -150,6 +157,8 @@ impl Scenario {
             Scenario::KvStorm => "kv-storm",
             Scenario::PubSubFanout => "pubsub-fanout",
             Scenario::CryptoOps => "crypto-ops",
+            Scenario::CustomBridge => "custom-bridge",
+            Scenario::DynamicWasm => "dynamic-wasm",
         }
     }
 
@@ -189,6 +198,8 @@ impl Scenario {
             Scenario::KvStorm => "durable KV read-modify-writes/sec (a redb commit each)",
             Scenario::PubSubFanout => "subscriber deliveries/sec (1 publish → N subscribers)",
             Scenario::CryptoOps => "crypto.subtle SHA-256 digests/sec (TS guest round-trip)",
+            Scenario::CustomBridge => "native custom-bridge calls/sec (guest → host round-trip)",
+            Scenario::DynamicWasm => "dynamic component spawns/sec (compiled once, then cached)",
         }
     }
 
@@ -212,6 +223,8 @@ impl Scenario {
             Scenario::KvStorm => Some("read-modify-write"),
             Scenario::PubSubFanout => Some("publish → delivery (one-way)"),
             Scenario::CryptoOps => Some("digest round-trip"),
+            Scenario::CustomBridge => Some("bridge call round-trip"),
+            Scenario::DynamicWasm => Some("dynamic spawn (the first sample is the cold compile)"),
         }
     }
 
@@ -263,6 +276,8 @@ impl Scenario {
             Scenario::KvStorm => ("kvstorm.rs", include_str!("kvstorm.rs")),
             Scenario::PubSubFanout => ("pubsubfanout.rs", include_str!("pubsubfanout.rs")),
             Scenario::CryptoOps => ("cryptoops.rs", include_str!("cryptoops.rs")),
+            Scenario::CustomBridge => ("custombridge.rs", include_str!("custombridge.rs")),
+            Scenario::DynamicWasm => ("dynamicwasm.rs", include_str!("dynamicwasm.rs")),
         })
     }
 
@@ -494,6 +509,28 @@ impl Scenario {
                 ],
                 11,
             ),
+            Scenario::CustomBridge => (
+                "Custom bridge",
+                "How fast can a guest call an app's own NATIVE host function (a custom bridge)?",
+                vec![
+                    "What's unique here: each request is a typed call from a sandboxed guest into a native host function the app registered — a `demo:bridge/greet` custom bridge, wired via `WasmRuntime::with_bridges`, exactly the `bridges/<name>/host.rs` seam a real app uses. No dispatcher, no broker, no RPC — a plain WIT import resolved to Rust.",
+                    "Headline: native bridge calls/sec + per-call round-trip latency. Each guest calls `greet(\"World\")` in a loop; the host composes the reply (stamped with the calling pid) and returns it typed. The rate is the honest cost of a custom bridge call (the typed WIT call + the message round-trip to the driver).",
+                    "Why it matters: this is RUSM's compiled-in answer to a wasmCloud capability provider — default-deny, gated by name, identical for Rust/Go/TS guests — at in-process speed, no lattice.",
+                    "Phase 11 (0.4.0): REAL guests calling a real app-registered native bridge, measured live.",
+                ],
+                11,
+            ),
+            Scenario::DynamicWasm => (
+                "Dynamic WASM",
+                "How fast can RUSM run a COMPILED component chosen at runtime — cold once, then hot?",
+                vec![
+                    "What's unique here: unlike the component storm (a pre-prepared handle), each spawn goes through the content-addressed compile cache — `prepare_dynamic(source)` then spawn — exactly the path a guest's `spawn-from \"kv:…\"` takes. The runtime *chooses the component at run time*.",
+                    "Headline: dynamic component spawns/sec + per-spawn latency. The bundle is compiled ONCE on the first spawn (cold — the first latency sample shows the one-time compile cost, ~17 ms for a small component), then every later spawn is a cache hit instantiating on the pooled fast path (hot — ~0.5 ms). The rate is the steady-state HOT throughput.",
+                    "Why it matters: it proves runtime-loaded, operator-sandboxed plugins spawn at essentially built-in speed — the compile is paid once and cached (keyed by the SHA-256 of the bytes), single-flighted, with a freshness TTL. Untrusted/per-tenant compiled code, hot.",
+                    "Phase 11 (0.4.0): REAL components compiled + cached + spawned through the dynamic path, measured live.",
+                ],
+                11,
+            ),
         };
         ScenarioMeta {
             id: self.id().to_string(),
@@ -645,6 +682,8 @@ mod tests {
                 "kv-storm",
                 "pubsub-fanout",
                 "crypto-ops",
+                "custom-bridge",
+                "dynamic-wasm",
             ]
         );
     }
