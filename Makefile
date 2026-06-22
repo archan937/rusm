@@ -7,7 +7,7 @@ GH_PAGES := gh-pages
 SCENARIO ?= connection-storm
 SECONDS ?= 5
 EX ?= host_components
-VERSION ?= 0.3.0
+VERSION ?= 0.4.0
 
 # crates.io publish order — dependencies before dependents. Each crate is published from
 # its own directory, so the same loop works for workspace members AND the wasm-only guest
