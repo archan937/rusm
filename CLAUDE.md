@@ -208,7 +208,7 @@ handle-ABI byte streams are functionally complete and load-bearing for WS/SSE se
 so the native signature is cosmetic standards-polish (a sweeping change to the shared
 actor world deliberately not rushed). TLS folds into the Phase 9 secure cluster
 transport. See
-`docs/02-roadmap.md`.
+`docs/about/roadmap.md`.
 
 ## Tech stack
 

@@ -32,11 +32,11 @@ numbers, with no new plumbing.
 ## Concepts introduced
 
 - **Low-overhead observability** — relaxed-atomic counters + periodic snapshots,
-  never an event per op. See [03-benchmark-dashboard](../03-benchmark-dashboard.md).
+  never an event per op. See [03-benchmark-dashboard](/about/benchmark-dashboard).
 - **Deterministic synthetic data** — pure function of `(scenario, tick)`, so the
   dashboard is lively and tests are stable.
 - **A node and its clients** — the dashboard and REPL are clients of a node's
-  control channel; the same shape becomes [live attach](../concepts/live-attach.md).
+  control channel; the same shape becomes [live attach](/deep-dive/live-attach).
 
 ## Play with it
 

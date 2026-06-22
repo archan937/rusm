@@ -59,10 +59,10 @@ under saturation, latency is queue-dominated, so one number would mislead):
 
 ## Concepts introduced
 
-- [Distributed nodes](../concepts/distributed-nodes.md) — connecting, location
+- [Distributed nodes](/deep-dive/distributed-nodes) — connecting, location
   transparency, the wire shape.
-- [Live attach](../concepts/live-attach.md) — hooking into a running node.
-- [Distributed model](../04-distributed-model.md) — the full reference.
+- [Live attach](/deep-dive/live-attach) — hooking into a running node.
+- [Distributed model](/deep-dive/distributed-model) — the full reference.
 
 ## Play with it
 
@@ -96,6 +96,6 @@ out-of-process by `rusm-loadtest` against a live `rusm serve` port.
 
 ## Next
 
-[Phase 10](../02-roadmap.md): **scale & hardening** — an on-demand instance tier
+[Phase 10](/about/roadmap): **scale & hardening** — an on-demand instance tier
 above the pooled ceiling, opt-in bounded mailboxes, and supervisor
 restart-intensity.

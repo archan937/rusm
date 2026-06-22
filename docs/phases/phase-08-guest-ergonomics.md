@@ -64,12 +64,12 @@ the same story for Rust and TS, interoperable because they share one JSON wire.
 
 ## Concepts introduced
 
-- [Components & the actor world](../concepts/components-and-the-actor-world.md) —
+- [Components & the actor world](/deep-dive/components-and-the-actor-world) —
   the actor ABI the guest crates wrap; composition is message passing.
-- [Permissions & sandboxing](../concepts/permissions-and-sandboxing.md) — `spawn`,
+- [Permissions & sandboxing](/deep-dive/permissions-and-sandboxing) — `spawn`,
   `monitor`, and custom `[capabilities.<name>]` profiles.
 - The full guest story (TS + Rust, service / client / supervisor) — see
-  [Write a TypeScript component](../typescript-component), the
+  [Write a TypeScript component](/build-an-app/typescript-component), the
   [`rusm-ts`](https://github.com/archan937/rusm) package, and the `rusm-rs` crate.
 
 ## Play with it
@@ -149,5 +149,5 @@ standards-surface refinement; the byte streams already work over a handle ABI.
 
 ## Next
 
-[Phase 9](../02-roadmap.md): **distributed clusters + live attach** — QUIC + TLS,
+[Phase 9](/about/roadmap): **distributed clusters + live attach** — QUIC + TLS,
 remote spawn, and a global registry, so processes spawn and message across nodes.

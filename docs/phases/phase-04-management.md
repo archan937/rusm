@@ -51,9 +51,9 @@ let stopped = runtime.shutdown();                     // clean teardown
 ## Concepts introduced
 
 No new headline concept — this is the management surface over the
-[process model](../concepts/wasm-instance-as-process.md) and the
-[mailbox](../concepts/message-passing.md). See the
-[host ABI reference](../05-host-abi.md) for the full call list.
+[process model](/deep-dive/wasm-instance-as-process) and the
+[mailbox](/deep-dive/message-passing). See the
+[host ABI reference](/deep-dive/host-abi) for the full call list.
 
 ## Play with it
 

@@ -73,13 +73,13 @@ only core modules with its own ABI — it has no component-model host at all.
 
 ## Concepts introduced
 
-- [Components & the actor world](../concepts/components-and-the-actor-world.md) —
+- [Components & the actor world](/deep-dive/components-and-the-actor-world) —
   the component model + the `rusm:runtime` WIT world; composition is message passing.
-- [Permissions & sandboxing](../concepts/permissions-and-sandboxing.md) — per-process
+- [Permissions & sandboxing](/deep-dive/permissions-and-sandboxing) — per-process
   WASI capabilities, default-deny profiles.
-- [Byte streams](../concepts/byte-streams.md) — cross-process, Tokio-backpressured.
-- [The app model](../concepts/app-model.md) — `rusm.toml`, `./wasm/`, `rusm dev`.
-- The full ABI — see the [host ABI](../05-host-abi.md).
+- [Byte streams](/deep-dive/byte-streams) — cross-process, Tokio-backpressured.
+- [The app model](/deep-dive/app-model) — `rusm.toml`, `./wasm/`, `rusm dev`.
+- The full ABI — see the [host ABI](/deep-dive/host-abi).
 
 ## Play with it
 
@@ -108,6 +108,6 @@ the handle-based ops), and `rusm dev` filesystem watch/reload.
 
 ## Next
 
-[Phase 8](../02-roadmap.md): the **`rusm-rs` guest crate** — ergonomic
+[Phase 8](/about/roadmap): the **`rusm-rs` guest crate** — ergonomic
 spawn/Mailbox/AbstractProcess/Supervisor over the raw ABI, so guests write idiomatic
 code instead of hand-rolled bindings.

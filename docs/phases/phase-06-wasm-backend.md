@@ -40,7 +40,7 @@ core through its public API; Wasm never bleeds into Wasm-irrelevant code.
    must preempt, deadlocking. The store yields async on each epoch tick.
 5. **Host ABI via `Caller::data`** — `rusm::self_pid` (the guest's own pid) and
    `rusm::notify` (bumps a shared counter), the seed of the
-   [host ABI](../05-host-abi.md).
+   [host ABI](/deep-dive/host-abi).
 6. **Trap → `ExitReason::Crashed`** — a guest trap is reported through the same
    exit machinery as a native crash from [Phase 3](./phase-03-supervision.md).
 7. **Fairness engine** (`rusm-bench`) — Wasm spinners saturate **every core**
@@ -59,9 +59,9 @@ core through its public API; Wasm never bleeds into Wasm-irrelevant code.
 
 ## Concepts introduced
 
-- [Wasm instance as a process](../concepts/wasm-instance-as-process.md),
-  [fibers & blocking→async](../concepts/fibers-and-blocking-to-async.md), and
-  [epoch preemption](../concepts/epoch-preemption.md).
+- [Wasm instance as a process](/deep-dive/wasm-instance-as-process),
+  [fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async), and
+  [epoch preemption](/deep-dive/epoch-preemption).
 
 ## Play with it
 

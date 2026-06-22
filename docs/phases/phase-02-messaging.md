@@ -51,7 +51,7 @@ let reply = ctx.recv_match(|m| m.message()
 ## Concepts introduced
 
 - **Copying across isolated memories** and selective receive — see
-  [message passing](../concepts/message-passing.md).
+  [message passing](/deep-dive/message-passing).
 
 ## Play with it
 

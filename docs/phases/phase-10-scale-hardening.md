@@ -61,6 +61,6 @@ clippy clean.
 
 ## Next
 
-[Phase 11](../02-roadmap.md): the **standard-WASI surface** — `wasi:http` hosting
+[Phase 11](/about/roadmap): the **standard-WASI surface** — `wasi:http` hosting
 (serve HTTP/WS/SSE from a component), the `wasi:cli/run` entrypoint, and a native
 p3-typed `stream<u8>` for the actor world.

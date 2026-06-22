@@ -11,7 +11,7 @@ Wasmtime does the isolation.
 
 > **Status:** Phases 0–11 of 12 are functionally complete (the native `stream<u8>`
 > WIT signature is the one deferred refinement); Phase 12 (edge & cluster hardening)
-> is planned. See the [roadmap](docs/02-roadmap.md).
+> is planned. See the [roadmap](docs/about/roadmap.md).
 
 ## Prerequisites
 
@@ -84,10 +84,10 @@ TS service interoperate over one wire. Each process is a **sandboxed WASM instan
 supervised and hot-reloadable, and you never write `async` in a guest. Or skip
 components entirely and use the pure-Rust [`rusm-otp`](crates/rusm-otp) core directly.
 
-**New here?** The [Getting Started guide](docs/getting-started.md) walks from the
+**New here?** The [Getting Started guide](docs/introduction/install.md) walks from the
 pure-Rust OTP core to hosting a `.wasm`, the app model, and writing components in
 TypeScript and Rust — then the [Concepts](docs/) and the
-[`rusm` CLI reference](docs/reference-cli.md). `make help` lists every dev command.
+[`rusm` CLI reference](docs/build-an-app/cli.md). `make help` lists every dev command.
 
 ## Why
 
@@ -107,10 +107,10 @@ builds them in pure Rust, and uses WebAssembly purely as the per-process sandbox
 - **Secure clusters you can hook into** — nodes connect over TLS, and you can
   attach a live REPL/observer to a running node (like `iex --remsh`).
 
-See [`docs/00-vision.md`](docs/00-vision.md) for the full rationale,
-[`docs/01-architecture.md`](docs/01-architecture.md) for how Rust + Tokio +
+See [`docs/introduction/why-rusm.md`](docs/introduction/why-rusm.md) for the full rationale,
+[`docs/about/architecture.md`](docs/about/architecture.md) for how Rust + Tokio +
 Wasmtime map onto the BEAM, and the [RUSM vs Lunatic
-comparison](docs/lunatic-comparison.md) for where we borrow and where we aim to
+comparison](docs/about/rusm-vs-lunatic.md) for where we borrow and where we aim to
 beat the runtime that inspired this.
 
 ## What's there
@@ -187,12 +187,12 @@ a crash drops only that request; shared state lives in a `[components.<name>]` s
 `#[rusm_rs::handlers] pub mod api { pub fn home(req, params) -> Response { … } }` (SSE
 and WebSocket are per-connection `sse::serve` / `ws::serve` handlers) — no `main`, no router code. Env
 is resolved the Rust way — process env first, then `.env`. Full reference:
-**[configuration](docs/reference-configuration)**.
+**[configuration](docs/build-an-app/configuration)**.
 
 > The benchmark/dashboard node (`rusm-bench start`, a repo-only tool) has its own,
 > separate `[node]` knobs — `listen`, `profile` (`light`/`balanced`/`max`),
 > `ticks_per_second` — set via `rusm.toml`/`--config`/flags and switchable live
-> from the dashboard ([details](docs/03-benchmark-dashboard.md)).
+> from the dashboard ([details](docs/about/benchmark-dashboard.md)).
 
 ## Running tests
 

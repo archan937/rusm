@@ -12,10 +12,10 @@ const tagline =
   'Isolated lightweight processes, fault tolerance, per-actor sandboxing, and secure clusters you can hook into live — on WebAssembly.'
 
 const actions = [
-  { text: 'Get started', link: '/install', primary: true },
-  { text: 'Why RUSM', link: '/00-vision' },
-  { text: 'Architecture', link: '/01-architecture' },
-  { text: 'Roadmap', link: '/02-roadmap' },
+  { text: 'Get started', link: '/introduction/install', primary: true },
+  { text: 'Why RUSM', link: '/introduction/why-rusm' },
+  { text: 'Architecture', link: '/about/architecture' },
+  { text: 'Roadmap', link: '/about/roadmap' },
 ]
 
 const stats = [

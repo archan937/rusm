@@ -3,7 +3,7 @@
 **Goal:** let processes serve real traffic — `listen`/`connect`, with **one
 process per connection** so a slow or crashing client can't touch the others.
 **Graduates:** the **connection-storm** scenario to live data. (TLS folds into the
-[Phase 9](../02-roadmap.md) secure cluster transport.)
+[Phase 9](/about/roadmap) secure cluster transport.)
 
 ## Why this matters
 
@@ -52,7 +52,7 @@ acceptor.kill();                                     // stop listening
 ## Concepts introduced
 
 - **Process-per-connection** — a connection is just another isolated process; see
-  [the process model](../concepts/wasm-instance-as-process.md).
+  [the process model](/deep-dive/wasm-instance-as-process).
 
 ## Play with it
 

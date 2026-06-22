@@ -53,7 +53,7 @@ if let Received::Exit { from, reason } = ctx.recv().await {
 ## Concepts introduced
 
 - **Links, monitors, supervision, cascades** — see
-  [links & supervision](../concepts/links-and-supervision.md).
+  [links & supervision](/deep-dive/links-and-supervision).
 
 ## Play with it
 
