@@ -11,10 +11,12 @@ VERSION ?= 0.3.0
 
 # crates.io publish order — dependencies before dependents. Each crate is published from
 # its own directory, so the same loop works for workspace members AND the wasm-only guest
-# crates excluded from the workspace (rusm-rs, rusm-rs-macros).
+# crates excluded from the workspace (rusm-rs, rusm-rs-macros). rusm-metrics and
+# rusm-observer are deliberately omitted: they are `publish = false` (only the repo-only
+# `rusm-bench` depends on them; no published crate does).
 PUBLISH_ORDER := \
-	crates/rusm-logfmt crates/rusm-wire crates/rusm-metrics crates/rusm-kv crates/rusm-jsc \
-	crates/rusm-rs-macros crates/rusm-otp crates/rusm-observer crates/rusm-node \
+	crates/rusm-logfmt crates/rusm-wire crates/rusm-kv crates/rusm-jsc \
+	crates/rusm-rs-macros crates/rusm-otp crates/rusm-node \
 	crates/rusm-cluster crates/rusm-rs crates/rusm-wasm rusm-cli
 
 .PHONY: help
