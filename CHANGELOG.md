@@ -6,7 +6,7 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
-## [0.4.2] — unreleased
+## [0.4.2] — 2026-06-23
 
 Closes two guest-SDK gaps that forced apps to hand-roll platform plumbing (raw wire / raw
 `wasi:http`) — so application code stays application code.

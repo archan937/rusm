@@ -10,7 +10,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-rusm-rs = "0.4.1"
+rusm-rs = "0.4.2"
 wit-bindgen = "0.46"
 
 [profile.release]

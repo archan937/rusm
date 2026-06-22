@@ -257,8 +257,8 @@ re-syncs and aborts on any diff, so a stale binding can never ship.
 ## Migration plan — one breaking release
 
 Each split is a breaking ABI change (guests rebuild `actor.kv-*` → `kv.*`, etc.). **All
-remaining splits land in a single 0.4.1** — never serial breaking releases. kv's split is
-committed but unreleased; `actor`/`pg`/`stream`/`log`/`serve` join it before 0.4.1 ships, so
+remaining splits land in a single 0.4.2** — never serial breaking releases. kv's split is
+committed but unreleased; `actor`/`pg`/`stream`/`log`/`serve` join it before 0.4.2 ships, so
 guests rebuild exactly once.
 
 ## Adding / migrating a bridge — the checklist
