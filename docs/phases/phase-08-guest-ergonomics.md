@@ -69,8 +69,8 @@ the same story for Rust and TS, interoperable because they share one JSON wire.
 - [Permissions & sandboxing](../concepts/permissions-and-sandboxing.md) — `spawn`,
   `monitor`, and custom `[capabilities.<name>]` profiles.
 - The full guest story (TS + Rust, service / client / supervisor) — see
-  [Getting started](../getting-started.md), the [`rusm-ts`](https://github.com/archan937/rusm)
-  package, and the `rusm-rs` crate.
+  [Write a TypeScript component](../typescript-component), the
+  [`rusm-ts`](https://github.com/archan937/rusm) package, and the `rusm-rs` crate.
 
 ## Play with it
 

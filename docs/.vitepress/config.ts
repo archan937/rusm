@@ -4,14 +4,11 @@ import { defineConfig } from 'vitepress';
 // top nav (as dropdowns) and the sidebar (as sections), so they never diverge.
 const sections = [
   {
-    // One ordered learning path: quick start first (low-threshold, for adoption), then
-    // hands-on chapters, then the "how it works" deep dives — Guide reads quick start →
-    // use → understand. The (long) getting-started page's sub-headings are surfaced as
-    // anchor links so its whole arc is navigable from the sidebar.
-    text: 'Guide',
+    // Orient + get running.
+    text: 'Introduction',
     items: [
       {
-        text: 'Introduction',
+        text: 'Overview',
         items: [
           { text: 'Why RUSM?', link: '/00-vision' },
           { text: 'What you get', link: '/features' },
@@ -20,36 +17,51 @@ const sections = [
       {
         text: 'Getting started',
         items: [
-          { text: 'Install', link: '/getting-started#install' },
-          { text: 'Quick start', link: '/getting-started#quick-start' },
+          { text: 'Install', link: '/install' },
+          { text: 'Quick start', link: '/quick-start' },
         ],
       },
+    ],
+  },
+  {
+    // The hands-on how-to, in the order you build: the manifest + config + CLI, then
+    // writing components, then serving/coordination, then native capabilities (bridges).
+    text: 'Build an app',
+    items: [
       {
-        text: 'Build an app',
+        text: 'The app & its config',
         items: [
-          { text: 'The app model', link: '/getting-started#app-model' },
-          { text: 'Write a Rust component', link: '/getting-started#rust-component' },
-          { text: 'Write a TypeScript component', link: '/getting-started#ts-component' },
-          { text: 'Serve over HTTP/WS/SSE', link: '/getting-started#serve' },
+          { text: 'The app model', link: '/app-model' },
+          { text: 'Configuration', link: '/reference-configuration' },
+          { text: 'The rusm CLI', link: '/reference-cli' },
         ],
       },
       {
-        text: 'Inside a component',
+        text: 'Write a component',
         items: [
-          { text: 'Process management', link: '/getting-started#process-management' },
-          { text: 'Capabilities & sandboxing', link: '/getting-started#capabilities' },
-          { text: 'Observe a node', link: '/getting-started#observe' },
+          { text: 'Write a TypeScript component', link: '/typescript-component' },
+          { text: 'Write a Rust component', link: '/rust-component' },
         ],
       },
       {
-        text: 'Advanced',
+        text: 'Serve & coordinate',
         items: [
-          { text: 'Embedding RUSM as a library', link: '/getting-started#embedding' },
+          { text: 'Serve over HTTP/WS/SSE', link: '/serving' },
+          { text: 'Process management', link: '/process-management' },
+          { text: 'Capabilities & sandboxing', link: '/capabilities' },
         ],
       },
       {
-        // The deep dives — the same topics as the hands-on chapters above, one level down
-        // (the "explanation" half of the docs).
+        text: 'Native capabilities',
+        items: [{ text: 'Custom bridges', link: '/custom-bridges' }],
+      },
+    ],
+  },
+  {
+    // Advanced topics + how it works underneath.
+    text: 'Deep dive',
+    items: [
+      {
         text: 'The actor model',
         items: [
           { text: 'The process model', link: '/concepts/wasm-instance-as-process' },
@@ -83,33 +95,25 @@ const sections = [
         ],
       },
       {
-        text: 'Apps & clusters',
+        text: 'Apps, clusters & ops',
         items: [
           { text: 'The app model', link: '/concepts/app-model' },
           { text: 'Distributed nodes', link: '/concepts/distributed-nodes' },
           { text: 'The distributed model', link: '/04-distributed-model' },
           { text: 'Live attach', link: '/concepts/live-attach' },
-        ],
-      },
-    ],
-  },
-  {
-    // Pure lookup: exact CLI commands, manifest fields, the host ABI, the term map.
-    text: 'Reference',
-    items: [
-      {
-        text: 'CLI & configuration',
-        items: [
-          { text: 'The rusm CLI', link: '/reference-cli' },
-          { text: 'Configuration', link: '/reference-configuration' },
+          { text: 'Observe a node', link: '/observe' },
         ],
       },
       {
-        text: 'API & glossary',
+        text: 'Embedding & ABI',
         items: [
+          { text: 'Embedding RUSM as a library', link: '/embedding' },
           { text: 'Host ABI', link: '/05-host-abi' },
-          { text: 'Glossary', link: '/07-glossary' },
         ],
+      },
+      {
+        text: 'Glossary',
+        items: [{ text: 'Glossary', link: '/07-glossary' }],
       },
     ],
   },
