@@ -29,9 +29,9 @@ const sections = [
     text: 'Build an app',
     items: [
       {
-        text: 'Set up',
+        text: 'Basics',
         items: [
-          { text: 'The app model', link: '/build-an-app/app-model' },
+          { text: 'A basic app', link: '/build-an-app/app-model' },
           { text: 'The rusm CLI', link: '/build-an-app/cli' },
         ],
       },
