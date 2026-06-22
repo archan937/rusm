@@ -1,11 +1,12 @@
-# Custom bridges
+# Add your own functions
 
-A **bridge** is a native host capability *your app* defines — a typed function your guests
-call as an ordinary WIT import. It's RUSM's answer to a wasmCloud **capability provider**,
-but **compiled-in and typed**: no lattice, no broker, no RPC, no JSON dispatcher. You write
-the contract plus a small Rust impl once, grant it by name, and call it from **Rust,
-TypeScript, or Go** guests at the same cost as a built-in. The one example below — a
-`weather` bridge — is live in all three languages.
+Need your guests to call something the platform doesn't provide — a database client, an
+internal API, a signing routine? Add a **custom bridge**: a native function *your app*
+defines once (in Rust, the host language) and calls from **any** guest — TypeScript, Rust, or
+Go — as an ordinary typed import. It's RUSM's answer to a wasmCloud **capability provider**,
+but compiled-in and typed: no lattice, no broker, no RPC, no JSON dispatcher, and the same
+cost as a built-in. The example below — a `weather` function — is live in all three guest
+languages.
 
 ## 1 — Define the bridge
 

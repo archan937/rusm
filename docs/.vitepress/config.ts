@@ -24,12 +24,12 @@ const sections = [
     ],
   },
   {
-    // The hands-on how-to, in the order you build: the manifest + config + CLI, then
-    // writing components, then serving/coordination, then native capabilities (bridges).
+    // The hands-on how-to, in the order you build: set up, write a component, serve the
+    // web, then common patterns, then securing and extending the app.
     text: 'Build an app',
     items: [
       {
-        text: 'The app & CLI',
+        text: 'Set up',
         items: [
           { text: 'The app model', link: '/build-an-app/app-model' },
           { text: 'The rusm CLI', link: '/build-an-app/cli' },
@@ -38,34 +38,36 @@ const sections = [
       {
         text: 'Write a component',
         items: [
-          { text: 'Write a TypeScript component', link: '/build-an-app/typescript-component' },
-          { text: 'Write a Rust component', link: '/build-an-app/rust-component' },
-          { text: 'Write a Go component', link: '/build-an-app/go-component' },
+          { text: 'TypeScript', link: '/build-an-app/typescript-component' },
+          { text: 'Rust', link: '/build-an-app/rust-component' },
+          { text: 'Go', link: '/build-an-app/go-component' },
         ],
       },
       {
-        // The component shapes you build — fundamental, so they live with the how-to.
-        text: 'Component lifecycles',
+        text: 'Serve the web',
         items: [
-          { text: 'Overview', link: '/build-an-app/component-lifecycle' },
-          { text: 'HTTP component', link: '/build-an-app/lifecycle-http' },
-          { text: 'SSE component', link: '/build-an-app/lifecycle-sse' },
-          { text: 'WebSocket component', link: '/build-an-app/lifecycle-websocket' },
-          { text: 'Worker component (per-call)', link: '/build-an-app/lifecycle-worker' },
-          { text: 'Service component (resident)', link: '/build-an-app/lifecycle-service' },
+          { text: 'Serve HTTP', link: '/build-an-app/serve-http' },
+          { text: 'Serve WebSocket', link: '/build-an-app/serve-websocket' },
+          { text: 'Serve SSE', link: '/build-an-app/serve-sse' },
         ],
       },
       {
-        text: 'Serve & coordinate',
+        text: 'Common patterns',
         items: [
-          { text: 'Serve over HTTP/WS/SSE', link: '/build-an-app/serving' },
-          { text: 'Process management', link: '/build-an-app/process-management' },
-          { text: 'Capabilities & sandboxing', link: '/build-an-app/capabilities' },
+          { text: 'Call another component', link: '/build-an-app/call-another-component' },
+          { text: 'Run one-off work', link: '/build-an-app/run-one-off-work' },
+          { text: 'Build a stateful service', link: '/build-an-app/stateful-service' },
+          { text: 'Broadcast to many', link: '/build-an-app/broadcast' },
+          { text: 'Coordinate & supervise', link: '/build-an-app/coordinate-and-supervise' },
         ],
       },
       {
-        text: 'Native capabilities',
-        items: [{ text: 'Custom bridges', link: '/build-an-app/custom-bridges' }],
+        text: 'Secure',
+        items: [{ text: 'Grant capabilities', link: '/build-an-app/capabilities' }],
+      },
+      {
+        text: 'Extend',
+        items: [{ text: 'Add your own functions', link: '/build-an-app/custom-bridges' }],
       },
     ],
   },
@@ -88,6 +90,7 @@ const sections = [
         text: 'Components & guests',
         items: [
           { text: 'Components & the actor world', link: '/deep-dive/components-and-the-actor-world' },
+          { text: 'Component lifecycles', link: '/deep-dive/component-lifecycle' },
           { text: 'Guests: Rust, TypeScript & Go', link: '/deep-dive/guests' },
           { text: 'Permissions & sandboxing', link: '/deep-dive/permissions-and-sandboxing' },
         ],

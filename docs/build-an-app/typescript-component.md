@@ -114,25 +114,36 @@ pub mod calc {
 // caller:  let calc = calc::Client::spawn("calc")?;  calc.add(2, 3)?;
 ```
 
-Same JSON wire as rusm-ts, so a Rust client and a TS service interoperate. See the
-`rusm-rs` crate README and the `rs-service` fixture.
+Same JSON wire as rusm-ts, so a Rust client and a TS service interoperate (the **Go**
+twin, `rusm-go`, mirrors it again). See [Write a Rust component](/build-an-app/rust-component)
+and [Write a Go component](/build-an-app/go-component).
 
 **Logging — zero setup, all three languages.** A guest just uses the native idiom; the
 platform does the rest. The host stamps each line with the time, the calling
 `component#pid`, and a severity colour, and gates it by the node `[log] level` — so a
 guest never wires a name, pid, or logger object:
 
-```ts
-console.log(`generating ${req.collection}/${req.subjectId}`); // TS: console.{log,info,warn,error,debug}
+::: code-group
+
+```ts [TypeScript]
+console.log(`generating ${req.collection}/${req.subjectId}`); // console.{log,info,warn,error,debug}
 console.error("meta-json not found");
 ```
 
-```rust
-log::info!("generating {}/{}", req.collection, req.subject_id); // Rust: the `log` crate
+```rust [Rust]
+log::info!("generating {}/{}", req.collection, req.subject_id); // the `log` crate
 log::error!("meta-json not found");
 ```
 
+```go [Go]
+slog.Info("generating", "collection", req.Collection, "subject", req.SubjectID) // log / log/slog
+slog.Error("meta-json not found")
+```
+
+:::
+
 No `allow-stdio` grant — logging is a platform primitive, not stdout. The `console`
 methods are also typed by the standard `DOM` lib, and the `log` crate's sink is installed
-for you by `#[rusm_rs::main]` / `#[handlers]`. Both feed the same stream as the runtime's
-own lifecycle lines; see the [`[log]` reference](/deep-dive/configuration).
+for you by `#[rusm_rs::main]` / `#[handlers]` (Go uses the standard `log`/`log/slog`
+packages, routed by the SDK). All feed the same stream as the runtime's own lifecycle
+lines; see the [`[log]` reference](/deep-dive/configuration).

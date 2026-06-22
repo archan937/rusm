@@ -163,8 +163,21 @@ itself — the platform captures and delivers them.
 | header | `.header("last-event-id")` | `.header("last-event-id")` | `.Header("last-event-id")` |
 | method / addr | `.method()` / `.remote_addr()` | `.method` / `.remoteAddr` | `.Method()` / `.RemoteAddr()` |
 
-```rust
-// A per-connection SSE handler that streams one entity's patches, picked by the route.
+A per-connection SSE handler that streams one entity's patches, picked by the route:
+
+::: code-group
+
+```ts [TypeScript]
+export default sse({
+  open(stream) {
+    const plan = stream.info.param("plan");
+    // subscribe to this plan's topic; replay from stream.info.header("last-event-id"), …
+  },
+  message(stream, patch) { stream.data(patch); },
+});
+```
+
+```rust [Rust]
 impl sse::Handler for Events {
     fn open(&mut self, s: &Stream) {
         let plan = s.info().param("plan").unwrap_or_default();
@@ -173,6 +186,18 @@ impl sse::Handler for Events {
     fn message(&mut self, s: &Stream, patch: Vec<u8>) { s.data(&patch); }
 }
 ```
+
+```go [Go]
+web.Sse{
+    Open: func(s web.Stream) {
+        plan := s.Info().Param("plan")
+        // subscribe to this plan's topic; replay from s.Info().Header("last-event-id"), …
+    },
+    Message: func(s web.Stream, patch []byte) { s.Data(patch) },
+}.Serve()
+```
+
+:::
 
 ## WebSocket frames — binary, text, and close
 
@@ -187,13 +212,33 @@ RS/Go/TS:
 | text frame | `conn.send_text("…")` | `socket.sendText("…")` | `conn.SendText("…")` |
 | close (code, reason) | `conn.close(1000, "bye")` | `socket.close(1000, "bye")` | `conn.Close(1000, "bye")` |
 
-```rust
+::: code-group
+
+```ts [TypeScript]
+export default websocket({
+  message(socket, frame) {
+    socket.sendText(render(frame)); // a text frame the browser reads as a string
+  },
+});
+```
+
+```rust [Rust]
 impl ws::Handler for Chat {
     fn message(&mut self, conn: &Connection, frame: Vec<u8>) {
         conn.send_text(&render(&frame)); // a text frame the browser reads as a string
     }
 }
 ```
+
+```go [Go]
+web.WebSocket{
+    Message: func(c web.Conn, frame []byte) {
+        c.SendText(render(frame)) // a text frame the browser reads as a string
+    },
+}.Serve()
+```
+
+:::
 
 `send_text`/`sendText`/`SendText` returns `false` if the socket has already closed.
 
@@ -294,30 +339,39 @@ rustls + ring (the same stack as the cluster transport); the handshake runs in t
 per-connection task, off the accept loop, so a slow client can't stall new connections. A
 bad cert/key path fails `rusm serve` at startup rather than serving plaintext.
 
-## Handlers are named actions — no `main()`
+## Writing a handler
 
-A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]`. The
-developer writes **only** the handler functions. There is no router, no `main`, no
-wire/JSON plumbing — the macro generates the entire component shell (the `process`
-world, the `Guest` impl, `export!`) and the action dispatch.
+The handler is **just your code** — no router, no `main`, no wire/JSON plumbing; the platform
+owns all of it. The only difference by language is how routing is wired. **Rust & Go are
+routed**: a module/registry of named actions that `[serve.routes]` dispatches to (the
+`#[rusm_rs::handlers]` macro even generates the whole Rust component shell — the `process`
+world, the `Guest` impl, `export!`). **TypeScript is self-routing**: one `export default`
+`fetch` that does its own dispatch, so it needs no `[serve.routes]` for HTTP.
 
-> **The TypeScript equivalent is web standards**, not this macro — a TS handler is an
-> `export default` `fetch` / `websocket({…})` / `sse({…})` and does its own dispatch
-> (no `[serve.routes]` for HTTP). See [TypeScript serving](#typescript-serving-web-standards)
-> below for the matching HTTP, SSE, and WS forms.
+::: code-group
 
-```rust
+```ts [TypeScript]
+// self-routing — one fetch handler, no [serve.routes] table
+export default async function handle(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const m = url.pathname.match(/^\/users\/(.+)$/);
+  if (m) return new Response(`user ${m[1]}\n`);                 // GET /users/:id
+  if (req.method === "POST" && url.pathname === "/users")
+    return new Response(await req.text(), { status: 201 });     // POST /users — read body
+  return new Response("not found\n", { status: 404 });
+}
+```
+
+```rust [Rust]
 use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
 pub mod api {
     use super::*;
-
     // GET /users/:id   ->   "api#show"
     pub fn show(_req: Request, p: Params) -> Response {
         Response::text(format!("user {}\n", p.get("id").unwrap_or("?")))
     }
-
     // POST /users      ->   "api#create"  — read the request body
     pub fn create(req: Request, _p: Params) -> Response {
         Response::new(201, req.body).header("content-type", "application/json")
@@ -325,23 +379,54 @@ pub mod api {
 }
 ```
 
-The route value `"api#show"` names module `api`, action `show`. Each action is a
-**buffered** `fn(Request, Params) -> Response` — it computes a complete response and the
-host turns it into the HTTP reply. (Server-Sent Events are **not** a routed action — they
-are a per-connection handler, like WebSocket; see [SSE](#sse-a-per-connection-handler).)
+```go [Go]
+func run() {
+    h := web.NewHandlers()
+    // GET /users/:id   ->   "api#show"
+    h.Handle("show", func(_ web.Request, p web.Params) web.Response {
+        return web.Text("user " + p.Get("id") + "\n")
+    })
+    // POST /users      ->   "api#create"  — read the request body
+    h.Handle("create", func(req web.Request, _ web.Params) web.Response {
+        return web.Bytes(201, req.Body).Header("content-type", "application/json")
+    })
+    h.Serve()
+}
+```
 
-### `Params` — captured path parameters
+:::
 
-`Params::get(name)` returns the segment captured by `:name` (or `Some("a/b/c")` for the
-`*` wildcard), `None` if the route had no such parameter:
+For the routed languages the value `"api#show"` names handler `api`, action `show`; each
+action is a **buffered** `(Request, Params) -> Response` that computes a complete reply the
+host turns into the HTTP response (and can read the request body and set status/headers).
+(Server-Sent Events are **not** a routed action — they are a per-connection handler, like
+WebSocket; see [SSE](#sse-a-per-connection-handler).)
 
-```rust
+### Captured path parameters
+
+A routed handler reads a `:name` segment (or the `*` wildcard tail) from the `Params` the
+host captured — there's no URL parsing in your code. (TypeScript self-routes, so a TS handler
+reads params straight from `new URL(request.url)` instead of a `Params` map.)
+
+::: code-group
+
+```rust [Rust]
+// route: "GET /users/:id/posts/:post" = "api#post"
 pub fn post(_req: Request, p: Params) -> Response {
     let user = p.get("id").unwrap_or("?");
     let post = p.get("post").unwrap_or("?");
     Response::text(format!("post {post} by user {user}\n"))
 }
 ```
+
+```go [Go]
+// route: "GET /users/:id/posts/:post" = "api#post"
+h.Handle("post", func(_ web.Request, p web.Params) web.Response {
+    return web.Text("post " + p.Get("post") + " by user " + p.Get("id") + "\n")
+})
+```
+
+:::
 
 ### SSE — a per-connection handler {#sse-a-per-connection-handler}
 
@@ -351,7 +436,19 @@ Server-Sent Events are served like WebSocket — **one sandboxed process per con
 handler subscribes to an event source in `open` (typically a **process-group tag**), emits
 each pushed event in `message`, and cleans up in `close`:
 
-```rust
+::: code-group
+
+```ts [TypeScript]
+import { sse, Process } from "rusm-ts";
+
+export default sse({
+  open(stream)        { Process.registerTag("todos"); }, // subscribe
+  message(stream, ev) { stream.data(ev); },              // a published event → emit
+  close(stream)       {},
+});
+```
+
+```rust [Rust]
 use rusm_rs::sse::{self, Handler, Stream};
 
 struct Feed;
@@ -365,14 +462,23 @@ impl Handler for Feed {
 fn run() { sse::serve(Feed); }
 ```
 
+```go [Go]
+web.Sse{
+    Open:    func(s web.Stream) { rusm.RegisterTag("todos") }, // subscribe
+    Message: func(s web.Stream, ev []byte) { s.Data(ev) },     // a published event → emit
+    Close:   func(s web.Stream) {},
+}.Serve()
+```
+
+:::
+
 A publisher broadcasts to the tag — `whereis_tag("todos")` then `send` each pid — and
 every open stream's `message` fires (push, not polling). The **platform** owns the SSE
 wire (the `text/event-stream` head + `Cache-Control: no-cache`, `data:` framing, keep-alive
 heartbeats), the **bounded, back-pressured** body, and disconnect (the body's writer dies →
 `close` fires), so a slow client slows the producer instead of growing memory and an idle or
-endless feed never leaks. The TS twin is `export default sse({ open, message, close })`; the
-Go twin is `web.Sse{ Open, Message, Close }.Serve()`. See the
-[SSE lifecycle](/build-an-app/lifecycle-sse) and [byte streams](/deep-dive/byte-streams).
+endless feed never leaks. See the [SSE lifecycle](/build-an-app/serve-sse) and
+[byte streams](/deep-dive/byte-streams).
 
 #### Rich events & resumption
 
@@ -388,7 +494,17 @@ Beyond the plain `data:` shortcut, a handler emits **rich events** with an `even
 reconnects, the browser sends the last id it saw as the `Last-Event-ID` header, which the
 handler reads from its [connection context](#the-connection-context) and replays from:
 
-```rust
+::: code-group
+
+```ts [TypeScript]
+open(stream) {
+  const from = stream.info.header("last-event-id"); // null on first connect
+  for (const ev of eventsSince(from))               // replay the gap, then live-tail
+    stream.emit({ data: ev.data, id: ev.id });
+}
+```
+
+```rust [Rust]
 fn open(&mut self, s: &Stream) {
     let from = s.info().header("last-event-id"); // None on first connect
     for ev in events_since(from) {               // replay the gap, then live-tail
@@ -396,6 +512,17 @@ fn open(&mut self, s: &Stream) {
     }
 }
 ```
+
+```go [Go]
+Open: func(s web.Stream) {
+    from := s.Info().Header("last-event-id") // "" on first connect
+    for _, ev := range eventsSince(from) {   // replay the gap, then live-tail
+        s.Emit(web.Event{Data: ev.Data, ID: ev.ID})
+    }
+},
+```
+
+:::
 
 The rich-event path is bounded + back-pressured like `data:`; `id`/`event` are single-line
 (an embedded newline is dropped, so framing can't be injected).
@@ -449,7 +576,7 @@ listen    = "127.0.0.1:8080"
 
 # The handler the routes name — declared in [components.<name>], carries its own
 # capability; spawned per request, so no `resident`:
-[components.api]                  # wasm/api.wasm
+[components.api]                  # wasm/api.{wasm,js}
 capability = "sandboxed"          # default-deny profile
 
 # Shared state is NOT in the handler — it's a long-lived, resident service:
@@ -458,9 +585,29 @@ capability = "sandboxed"
 resident = true                   # boot-spawned + supervised
 ```
 
-`components/api/src/lib.rs`:
+The handler (`components/api/`) — the routed languages register one action per route;
+TypeScript self-routes one `fetch` (so it needs no `[serve.routes]`, just `component = "api"`):
 
-```rust
+::: code-group
+
+```ts [TypeScript]
+// components/api/index.ts — one self-routing fetch handler
+export default async function handle(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  if (url.pathname === "/") return new Response("hello from RUSM\n");
+  const u = url.pathname.match(/^\/users\/(.+)$/);
+  if (u) return new Response(`user ${u[1]}\n`);
+  if (req.method === "POST" && url.pathname === "/users")
+    // For state, call the resident `sessions` service — never store it in this instance.
+    return new Response(await req.text(), { status: 201 });
+  const s = url.pathname.match(/^\/static\/(.+)$/);
+  if (s) return new Response(`serving ${s[1]}\n`);
+  return new Response("not found\n", { status: 404 });
+}
+```
+
+```rust [Rust]
+// components/api/src/lib.rs
 use rusm_rs::http::{Params, Request, Response};
 
 #[rusm_rs::handlers]
@@ -486,6 +633,39 @@ pub mod api {
     }
 }
 ```
+
+```go [Go]
+// components/api/main.go
+package main
+
+import (
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+func run() {
+	h := web.NewHandlers()
+	h.Handle("home", func(_ web.Request, _ web.Params) web.Response {
+		return web.Text("hello from RUSM\n")
+	})
+	h.Handle("show", func(_ web.Request, p web.Params) web.Response {
+		return web.Text("user " + p.Get("id") + "\n")
+	})
+	h.Handle("create", func(req web.Request, _ web.Params) web.Response {
+		// For state, call the resident `sessions` service — never store it here.
+		return web.Bytes(201, req.Body)
+	})
+	h.Handle("static", func(_ web.Request, p web.Params) web.Response {
+		return web.Text("serving " + p.Get("*") + "\n")
+	})
+	h.Serve()
+}
+```
+
+:::
 
 ```sh
 rusm build           # cargo wasm32-wasip2 per components/*

@@ -10,11 +10,11 @@ This overview covers what's shared — the two domains, the phases, and the fail
 vocabulary. Then there's **a chapter per component type**, each walking that type's
 events (normal, disconnect, connection error, crash, memory/OOM crash, kill):
 
-- [**HTTP component**](/build-an-app/lifecycle-http) — a fresh instance per request.
-- [**SSE component**](/build-an-app/lifecycle-sse) — a per-request streaming feed.
-- [**WebSocket component**](/build-an-app/lifecycle-websocket) — one process per connection.
-- [**Worker component**](/build-an-app/lifecycle-worker) — non-serving, spawned per call.
-- [**Service component**](/build-an-app/lifecycle-service) — non-serving, resident and stateful.
+- [**HTTP component**](/build-an-app/serve-http) — a fresh instance per request.
+- [**SSE component**](/build-an-app/serve-sse) — a per-request streaming feed.
+- [**WebSocket component**](/build-an-app/serve-websocket) — one process per connection.
+- [**Worker component**](/build-an-app/run-one-off-work) — non-serving, spawned per call.
+- [**Service component**](/build-an-app/stateful-service) — non-serving, resident and stateful.
 
 (A stock [`wasi:cli` command](#other-wasi-cli-command-components) component is covered
 briefly at the end.)

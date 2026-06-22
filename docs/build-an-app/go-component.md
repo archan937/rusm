@@ -32,7 +32,7 @@ func run() {
 The `Process` API is the Erlang toolkit — `Self` / `Send` / `Receive` / `Spawn` /
 `Register` / `Whereis` / `IsAlive` / `Kill` / `SetLabel` / `RegisterTag` / `WhereisTag`
 (process groups) / `OpenStream` / `AcceptStream` — see
-[process management](/build-an-app/process-management).
+[process management](/build-an-app/coordinate-and-supervise).
 
 ## A service + typed client
 
@@ -77,6 +77,6 @@ rusm dev     # build + run, then watch ./components and reload on edit
 
 `rusm build` runs TinyGo for each Go component and generates the WIT bindings it needs;
 you write plain Go. To serve a Go component over HTTP/WS/SSE, see
-[Serve over HTTP, WebSocket & SSE](/build-an-app/serving). The runnable
+[Serve over HTTP, WebSocket & SSE](/build-an-app/serve-http). The runnable
 [`go`](https://github.com/archan937/rusm/tree/main/examples/go) todo-board example is the
 same model wired end to end.
