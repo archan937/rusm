@@ -1,0 +1,260 @@
+package rusm:runtime@0.1.0;
+
+interface actor {
+    /// A process identifier (Erlang's pid) — the shared type, so a pid is interchangeable
+    /// across the actor/stream/pg interfaces.
+    use types.{pid};
+
+    /// A snapshot of a process, mirroring the host's `Process.info`.
+    record process-info {
+        pid: pid,
+        links: u32,
+        monitors: u32,
+        names: list<string>,
+        label: option<string>,
+        mailbox-depth: u32,
+        trap-exit: bool,
+    }
+
+    /// This process's own pid (Erlang's `self()`).
+    own-pid: func() -> pid;
+
+    /// Spawn a registered component (by the name it was registered under) as a new
+    /// process, returning its pid (Erlang's `spawn`). Capability-gated and
+    /// **non-escalating**: the child inherits the spawner's capabilities, never
+    /// more. `err` with a message if spawn is denied or the name is unknown.
+    spawn: func(component: string) -> result<pid, string>;
+
+    /// Spawn a **dynamic JS** instance of `component` — a node-declared *runner template*
+    /// (a capability profile with no fixed bundle) — whose JS bundle is fetched at runtime
+    /// from `source`: `url:<u>` / `http(s)://…`, or `kv:<bucket>/<key>` (the node's store).
+    /// The instance runs under `component`'s **declared** profile (operator policy — the
+    /// guest chooses the code, never the capabilities). Capability-gated: `spawn`, plus the
+    /// spawner's own `network` (for a `url:` source) or `storage` (for `kv:`) — so a
+    /// sandboxed guest can't drive arbitrary host fetches. `err` if denied, if `component`
+    /// is not a dynamic template, or if the source can't be loaded.
+    spawn-from: func(component: string, source: string) -> result<pid, string>;
+
+    /// Monitor a process: when `target` dies, this process receives a `__down`
+    /// message (Erlang's `monitor`) — the basis for a guest Supervisor.
+    monitor: func(target: pid);
+
+    /// Send a byte message to another process; silently dropped if it's gone
+    /// (like Erlang's `send`).
+    send: func(to: pid, message: list<u8>);
+
+    /// Receive the next message, suspending until one arrives (FIFO). The host
+    /// runs this asynchronously, so a blocked guest frees its scheduler thread.
+    receive: func() -> list<u8>;
+
+    /// Like [`receive`], but gives up after `timeout-ms` and returns `none` —
+    /// Erlang's `receive … after`. The basis for heartbeats and deadlines without
+    /// a busy loop: wait for the next message *or* the timeout, whichever comes
+    /// first. A monitored `__down` counts as a message (as it does for `receive`).
+    receive-timeout: func(timeout-ms: u64) -> option<list<u8>>;
+
+    /// Every live pid (Erlang's `Process.list/0`).
+    list-processes: func() -> list<pid>;
+
+    /// A snapshot of a process (Erlang's `Process.info/1`), or none if it's gone.
+    info: func(target: pid) -> option<process-info>;
+
+    /// Whether a process is alive (`Process.alive?/1`).
+    is-alive: func(target: pid) -> bool;
+
+    /// Kill a process (`Process.exit(pid, :kill)`). False if already gone.
+    kill: func(target: pid) -> bool;
+
+    /// Register / look up / release a name in the node registry.
+    register: func(name: string) -> bool;
+    whereis: func(name: string) -> option<pid>;
+    unregister: func(name: string) -> bool;
+
+    /// Attach a human-readable label for observability (`Process.set_label/1`).
+    set-label: func(label: string);
+
+    /// A restart strategy for [`supervise`].
+    enum supervise-strategy {
+        one-for-one,
+        one-for-all,
+        rest-for-one,
+    }
+
+    /// Supervise named child components: restart a dead child per `strategy`, with a
+    /// restart budget of at most `max-restarts` within `within-ms` (both `0` =
+    /// unlimited / over the whole lifetime). Returns the supervisor's pid.
+    /// Capability-gated like `spawn`; children inherit these capabilities, and the
+    /// supervisor is linked to the caller — if it gives up (or the caller dies) the
+    /// whole tree is torn down. This is the **one** restart implementation; the guest
+    /// `Supervisor` SDKs delegate to it.
+    supervise: func(strategy: supervise-strategy, children: list<string>, max-restarts: u32, within-ms: u32) -> result<pid, string>;
+}
+
+/// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).
+/// Bytes in, bytes out, namespaced by `bucket`; backed by an embedded store the node owns
+/// (no external daemon). Each op `err`s with a message if storage is denied or
+/// unconfigured. The host application owns the store's file; a guest just names buckets +
+/// keys. (`%list` is the WIT keyword-escape — `list` is reserved; wit-bindgen strips the
+/// `%`, so guests call `kv.list()`.)
+interface kv {
+    get: func(bucket: string, key: string) -> result<option<list<u8>>, string>;
+    set: func(bucket: string, key: string, value: list<u8>) -> result<_, string>;
+    delete: func(bucket: string, key: string) -> result<bool, string>;
+    exists: func(bucket: string, key: string) -> result<bool, string>;
+    %list: func(bucket: string) -> result<list<string>, string>;
+}
+
+/// Platform logging — a **polyfill** bridge. A guest's *standard* logging (`console.*` in
+/// TS, the `log` crate in Rust, `log`/`slog` in Go) routes here; the host stamps the time,
+/// the process's component name (its label) + pid, and the severity colour, formats it via
+/// `rusm-logfmt` exactly like every other RUSM line, and writes it to the node's log stream
+/// — gated by the node `[log] level`. Not capability-gated: it's operator-controlled
+/// diagnostics (an `off` node drops every line), so the guest wires no name/pid/format.
+interface log {
+    /// Severity — maps to `console.{error,warn,log/info,debug}` (TS) and the `log` crate's
+    /// levels (Rust). `log`'s sub-debug `trace` folds into `debug`.
+    enum log-level {
+        error,
+        warn,
+        info,
+        debug,
+    }
+
+    /// Emit one line through the platform logger; the guest supplies only severity + message.
+    log: func(level: log-level, message: string);
+}
+
+/// Process-group tags (Erlang's `pg`) — an **introduced** bridge. A process joins a tag,
+/// many processes may share a tag, and a process may hold many tags; memberships release on
+/// exit (like names). This is RUSM's cross-language pub/sub primitive: subscribe =
+/// `register-tag`, publish = `whereis-tag` + `send`. `register-tag`/`unregister-tag`
+/// join/leave **this** process (unprivileged); `kill-tag` terminates a whole group and is
+/// capability-gated by `process-control` (it targets other processes), exactly like `kill`.
+interface pg {
+    use types.{pid};
+
+    /// Join this process to `tag`.
+    register-tag: func(tag: string);
+    /// Leave a tag this process holds.
+    unregister-tag: func(tag: string);
+    /// Live members of `tag` (empty if unknown).
+    whereis-tag: func(tag: string) -> list<pid>;
+    /// Terminate every live member of `tag`; returns the count. Gated by process-control.
+    kill-tag: func(tag: string) -> u32;
+}
+
+/// Per-connection serving controls — the ABI a **WebSocket or SSE handler** uses to read
+/// its request context and push frames/events back. The host spawns one handler process per
+/// accepted connection (via the http/ws/sse transport bridges) and wires these ops to that
+/// connection's writer; a normal process gets `none`/`false`. A polyfill+introduced straddle:
+/// the HTTP `fetch`-handler shape is web-standard, the WS/SSE `open`/`message`/`close`
+/// handlers are a RUSM shape. The ergonomic guest wrappers (`ws::Connection`, `sse::Stream`)
+/// build on these.
+interface serve {
+    /// The HTTP request context of a **per-connection serving process** — a WebSocket or
+    /// SSE handler the host spawned for one accepted connection. Captured at accept time
+    /// and fixed for the connection's life, so a handler reads it once in `open`.
+    record connection-info {
+        /// Request method (`GET`, …), uppercased.
+        method: string,
+        /// Path only, without the query string (`/events/plan/pages/42`).
+        path: string,
+        /// Raw query string without the leading `?` (empty when absent).
+        query: string,
+        /// Route parameters captured from the listener's `[serve.routes]` pattern
+        /// (`"GET /events/:plan" → [("plan", "…")]`); empty when the listener is unrouted.
+        params: list<tuple<string, string>>,
+        /// Request headers, lowercased names, in arrival order (a name may repeat).
+        headers: list<tuple<string, string>>,
+        /// Peer socket address (`ip:port`), empty if the transport can't report one.
+        remote-addr: string,
+        /// The negotiated WebSocket subprotocol, if one was agreed (always none for SSE).
+        subprotocol: option<string>,
+    }
+
+    /// This per-connection serving process's [`connection-info`], or `none` for every
+    /// other process (a normal actor, a per-request HTTP handler, a service). Read it once
+    /// in a WebSocket/SSE handler's `open`. Additive and non-escalating: a guest that never
+    /// calls it is unaffected, and a non-connection process always gets `none`.
+    connection: func() -> option<connection-info>;
+
+    /// Send a **text** WebSocket frame on this connection (the binary path is a plain
+    /// `send` to the writer pid). `payload` is the UTF-8 text. Returns `false` if this is
+    /// not a WebSocket handler or the socket has closed. Additive: a guest that never calls
+    /// it keeps sending binary frames exactly as before.
+    ws-send-text: func(payload: list<u8>) -> bool;
+
+    /// Close this WebSocket connection with a status `code` + `reason` (server-initiated).
+    ws-close: func(code: u16, reason: string);
+
+    /// Emit a rich SSE event (data + optional event/id/retry); plain data: is a regular send.
+    sse-send: func(data: list<u8>, event: option<string>, id: option<string>, retry: option<u32>) -> bool;
+}
+
+/// Cross-process byte streams — an **introduced** bridge: a Tokio-backpressured pipe
+/// between two RUSM processes. The write end stays with the opener (under a handle); the
+/// read end is delivered to the target, which `stream-accept`s it and `stream-read`s
+/// chunks. `stream-write`/`-read`/`-accept` suspend the guest fiber under back-pressure /
+/// until data arrives (the "write blocking code, get async" property), never busy-spin.
+interface streams {
+    use types.{pid};
+
+    /// A handle to one byte stream this process owns (an id local to the process).
+    /// (`stream` is a reserved WIT keyword, hence `stream-id`.)
+    type stream-id = u64;
+
+    /// Open a Tokio-backpressured byte stream to another process: the read end is
+    /// delivered to `to` (it arrives via `stream-accept`), the write end is kept
+    /// here under the returned handle. `none` if `to` is already gone.
+    stream-open: func(to: pid) -> option<stream-id>;
+
+    /// Write one chunk to a stream, suspending if the buffer is full (the reader
+    /// applies natural back-pressure). `false` once the reader is gone / unknown id.
+    stream-write: func(handle: stream-id, chunk: list<u8>) -> bool;
+
+    /// Close the write end — the reader then sees end-of-stream.
+    stream-close: func(handle: stream-id);
+
+    /// Accept the next incoming byte stream, suspending until one arrives; returns
+    /// a handle for reading it. (Like `receive`, plain messages are skipped here.)
+    stream-accept: func() -> stream-id;
+
+    /// Read the next chunk from an accepted stream, suspending until one arrives.
+    /// `none` at end-of-stream (the writer was closed/dropped).
+    stream-read: func(handle: stream-id) -> option<list<u8>>;
+}
+
+/// Shared WIT type vocabulary — the types used across more than one bridge interface, so
+/// they're one nominal type, not N look-alikes (a `pid` from `actor.own-pid` must be the
+/// same type the `stream`/`pg` interfaces accept). This interface declares no `func`, so the
+/// assembler emits it into the package but never `import`s it into the world — every bridge
+/// that needs a type writes `use types.{…}` instead. Not a capability; no host impl, no
+/// guest binding (wit-bindgen materializes the types into each guest automatically).
+interface types {
+    /// A process identifier (Erlang's pid).
+    type pid = u64;
+}
+
+/// A RUSM actor component: imports the actor API + platform bridges, and exports an
+/// entry point the runtime calls to start the process.
+world process {
+    import actor;
+    import kv;
+    import log;
+    import pg;
+    import serve;
+    import streams;
+    export run: func();
+}
+
+/// Imports only — what the `rusm-rs` library generates. A guest crate generates the
+/// full `process` world and maps these interfaces to this crate's bindings (so each is
+/// imported once), then `export!`s its `run`.
+world imports {
+    import actor;
+    import kv;
+    import log;
+    import pg;
+    import serve;
+    import streams;
+}

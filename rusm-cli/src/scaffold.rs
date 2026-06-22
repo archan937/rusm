@@ -280,20 +280,20 @@ fn has_routes(app: &NewApp) -> bool {
 /// guards it against drift.
 const WASMTIME_VERSION: &str = "45.0.1";
 
-// The host-side custom-bridge files are taken **verbatim** from the live `examples/custom-bridge`
-// (the single source, proven end to end) via `include_str!`, so a scaffolded app is exactly the
-// example: the host `main.rs`, the example bridge's contract + impl, and the Rust guest. (The Go
-// guest differs only by its module path — see `go_bridge_guest`.)
-const BRIDGE_HOST_MAIN: &str = include_str!("../../examples/custom-bridge/src/main.rs");
-const BRIDGE_WIT: &str = include_str!("../../examples/custom-bridge/bridges/weather/bridge.wit");
-const BRIDGE_HOST_IMPL: &str = include_str!("../../examples/custom-bridge/bridges/weather/host.rs");
-const BRIDGE_RUST_GUEST: &str =
-    include_str!("../../examples/custom-bridge/components/api/src/lib.rs");
+// The host-side custom-bridge files are the live `examples/custom-bridge` (the single source,
+// proven end to end), **vendored** into `templates/weather/` so they ship in the published
+// tarball (the workspace `../../examples/` isn't packaged) — `make sync-templates` keeps them
+// byte-identical to the example, guarded by a drift test. A scaffolded app is exactly the
+// example: the host `main.rs`, the bridge's contract + impl, and the Rust guest. (The Go guest
+// differs only by its module path — see `go_bridge_guest`.)
+const BRIDGE_HOST_MAIN: &str = include_str!("../templates/weather/host-main.rs");
+const BRIDGE_WIT: &str = include_str!("../templates/weather/bridge.wit");
+const BRIDGE_HOST_IMPL: &str = include_str!("../templates/weather/host.rs");
+const BRIDGE_RUST_GUEST: &str = include_str!("../templates/weather/rust-guest.rs");
 // The TypeScript guest — a per-connection WebSocket handler calling the `weather` bridge.
 // Verbatim from the live example; its `/// <reference path="../../bridges.d.ts" />` resolves
 // the same from `components/api/` (the scaffold) as from `components/tsweather/` (the example).
-const BRIDGE_TS_GUEST: &str =
-    include_str!("../../examples/custom-bridge/components/tsweather/index.ts");
+const BRIDGE_TS_GUEST: &str = include_str!("../templates/weather/ts-guest.ts");
 
 /// `.gitignore` for a custom-bridge app: build output plus the `rusm build`-generated bridge
 /// glue (the host crate's `wit/` + `src/{bindings,bridges}.rs`, and each guest's `wit/` +
@@ -428,8 +428,7 @@ fn bridge_rusm_toml(lang: Lang) -> String {
 /// The Go guest, single-sourced from the live example and retargeted from its `go-api` module
 /// to the scaffold's `api` module (the only difference — the logic is identical).
 fn go_bridge_guest() -> String {
-    include_str!("../../examples/custom-bridge/components/go-api/main.go")
-        .replace("go-api/internal", "api/internal")
+    include_str!("../templates/weather/go-guest.go").replace("go-api/internal", "api/internal")
 }
 
 const TOML_HEADER: &str =

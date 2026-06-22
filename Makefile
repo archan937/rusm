@@ -121,6 +121,18 @@ sync-templates: ## Regenerate rusm-cli/templates/ — the vendored copy of the e
 	@# reads it as a nested package), so the Rust manifests are vendored as Cargo.toml.tmpl;
 	@# template::files() strips the suffix back to Cargo.toml when scaffolding an app.
 	@find rusm-cli/templates -name Cargo.toml -exec sh -c 'mv "$$1" "$$1.tmpl"' _ {} \;
+	@# The `weather` custom-bridge template: the scaffolder embeds specific files from
+	@# examples/custom-bridge (renamed flat) plus the rusm:runtime guest WIT from rusm-rs.
+	@# Same reason as above — `../../examples/` and `../../crates/` aren't in the rusm-cli
+	@# tarball, so these are vendored here and drift-guarded by `template::` tests.
+	@mkdir -p rusm-cli/templates/weather
+	@cp examples/custom-bridge/src/main.rs                   rusm-cli/templates/weather/host-main.rs
+	@cp examples/custom-bridge/bridges/weather/bridge.wit    rusm-cli/templates/weather/bridge.wit
+	@cp examples/custom-bridge/bridges/weather/host.rs       rusm-cli/templates/weather/host.rs
+	@cp examples/custom-bridge/components/api/src/lib.rs     rusm-cli/templates/weather/rust-guest.rs
+	@cp examples/custom-bridge/components/tsweather/index.ts rusm-cli/templates/weather/ts-guest.ts
+	@cp examples/custom-bridge/components/go-api/main.go     rusm-cli/templates/weather/go-guest.go
+	@cp crates/rusm-rs/wit/world.wit                         rusm-cli/templates/runtime-world.wit
 	@echo "==> synced — \`cargo test -p rusm-cli template::\` guards against drift"
 
 .PHONY: sync-bridges
@@ -222,6 +234,10 @@ publish: ## Full release v$(VERSION): dry-run, then crates.io + npm + tags (resu
 	@# anything, a sync was missed — abort so a stale bridge binding can never ship.
 	@$(MAKE) --no-print-directory sync-bridges >/dev/null
 	@test -z "$$(git status --porcelain)" || { echo "✗ bridges out of sync — run \`make sync-bridges\` and commit"; exit 1; }
+	@# Same for the scaffolder's vendored example/template copies — regenerate; any change
+	@# means a vendored copy drifted, so abort before a stale scaffold template can ship.
+	@$(MAKE) --no-print-directory sync-templates >/dev/null
+	@test -z "$$(git status --porcelain)" || { echo "✗ templates out of sync — run \`make sync-templates\` and commit"; exit 1; }
 	@git diff --quiet origin/main..HEAD 2>/dev/null || echo "→ note: push commits to origin first so the tags point at pushed history"
 	@# Check npm login up front (unless rusm-ts is already published) — a missing login must
 	@# abort BEFORE any crate is uploaded, not halfway through the release.

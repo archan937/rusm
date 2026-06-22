@@ -471,11 +471,12 @@ pub fn vendor_into_component(component_dir: &Path, bridge: &BridgeSpec) -> Resul
     Ok(())
 }
 
-/// The canonical `rusm:runtime` WIT, embedded directly from `rusm-rs` (not a vendored copy —
-/// `include_str!` of the one source, so it can never drift). `rusm build` writes it into a
-/// generated guest component's `wit/deps/rusm-runtime/`, so the component's world resolves the
-/// same `rusm:runtime` interfaces the `rusm-rs` SDK is generated from (identical types).
-pub const RUNTIME_WIT: &str = include_str!("../../crates/rusm-rs/wit/world.wit");
+/// The canonical `rusm:runtime` WIT, vendored from `rusm-rs` into `templates/` (the published
+/// crate's tarball has no `../../crates/`, so it can't `include_str!` across the workspace —
+/// `make sync-templates` keeps this copy byte-identical, guarded by a drift test). `rusm build`
+/// writes it into a generated guest component's `wit/deps/rusm-runtime/`, so the component's
+/// world resolves the same `rusm:runtime` interfaces the `rusm-rs` SDK is generated from.
+pub const RUNTIME_WIT: &str = include_str!("../templates/runtime-world.wit");
 
 /// The func-bearing `rusm:runtime` interfaces a component imports (the `process` world's
 /// imports; `types` is `use`d, not imported).

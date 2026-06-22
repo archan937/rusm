@@ -314,6 +314,52 @@ mod tests {
         }
     }
 
+    /// The `weather` custom-bridge scaffold template is vendored — from `examples/custom-bridge`
+    /// (and the `rusm:runtime` guest WIT from `rusm-rs`) into `templates/weather/` — so it ships
+    /// in the published `rusm-cli` tarball, where `../../examples/` and `../../crates/` don't
+    /// exist. Each vendored file must stay byte-identical to its source, or a scaffolded app
+    /// would diverge from the live example. Regenerate with `make sync-templates`.
+    #[test]
+    fn vendored_weather_template_matches_sources() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.join("..");
+        // (vendored under rusm-cli/, canonical source relative to the repo root)
+        let pairs = [
+            ("templates/runtime-world.wit", "crates/rusm-rs/wit/world.wit"),
+            ("templates/weather/host-main.rs", "examples/custom-bridge/src/main.rs"),
+            (
+                "templates/weather/bridge.wit",
+                "examples/custom-bridge/bridges/weather/bridge.wit",
+            ),
+            (
+                "templates/weather/host.rs",
+                "examples/custom-bridge/bridges/weather/host.rs",
+            ),
+            (
+                "templates/weather/rust-guest.rs",
+                "examples/custom-bridge/components/api/src/lib.rs",
+            ),
+            (
+                "templates/weather/ts-guest.ts",
+                "examples/custom-bridge/components/tsweather/index.ts",
+            ),
+            (
+                "templates/weather/go-guest.go",
+                "examples/custom-bridge/components/go-api/main.go",
+            ),
+        ];
+        for (vendored, source) in pairs {
+            let v = std::fs::read(manifest.join(vendored))
+                .unwrap_or_else(|_| panic!("missing vendored {vendored} — run `make sync-templates`"));
+            let s = std::fs::read(root.join(source))
+                .unwrap_or_else(|_| panic!("missing source {source}"));
+            assert_eq!(
+                v, s,
+                "{vendored} drifted from {source} — run `make sync-templates`"
+            );
+        }
+    }
+
     /// No scaffolded manifest may carry a repo-local dependency reference — the standalone
     /// app must depend on the published SDKs, not paths into this tree.
     #[test]
