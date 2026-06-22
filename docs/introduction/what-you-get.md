@@ -92,10 +92,20 @@ One CLI from scaffold to live node, plus cross-node clustering and live attach:
   wasm32-wasip2 / Bun, no jco) → `./wasm/`. → [the app model](/deep-dive/the-app-model)
 - **CLI** — `rusm new` (scaffold), `rusm run`, `rusm serve`, `rusm dev` (watch +
   reload), `rusm attach` (a live REPL into a local or remote node).
+- **Custom bridges** — give your guests a native host function the platform doesn't
+  provide (a DB client, an internal API, a signing routine): define it once in Rust and
+  call it from **any** guest — TypeScript, Rust, **and** Go — as an ordinary typed import.
+  RUSM's compiled-in answer to a capability provider: no lattice, no broker, default-deny
+  and gated by name. → [add your own functions](/build-an-app/add-your-own-functions)
 - **Dynamic JS** — load a guest's JS from a URL or the durable `kv` store (`source = "…"`)
   to **deploy live with no node rebuild**, or run code chosen *at runtime* — generated,
   fetched, or user-submitted — inside an operator-defined sandbox (`dynamic = "js"` +
-  `spawn-from`): the guest picks the code, never the capabilities. → [Dynamic JS](/build-an-app/dynamic-js)
+  `spawn-from`): the guest picks the code, never the capabilities. Drivable from
+  TypeScript, Rust, and Go. → [Dynamic JS](/build-an-app/dynamic-js)
+- **Dynamic WASM** — the compiled twin of Dynamic JS: spawn a **compiled WASM component
+  chosen at runtime** (`dynamic = "wasm"` + `spawn-from`, or a remote `source`), compiled
+  once then served **hot** from a content-addressed cache — ~17 ms cold → ~0.5 ms hot. The
+  plugin can be any wasip2 component (Rust, Go, …); driven from any guest. → [Dynamic WASM](/build-an-app/dynamic-wasm)
 - **Distributed clustering** — `ClusterNode::connect` (the `Node.connect` equivalent),
   cross-node send, a gossiped global registry, remote spawn, all over QUIC + **mutual
   TLS**. → [distributed nodes](/deep-dive/distributed-nodes)
