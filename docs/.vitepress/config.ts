@@ -31,7 +31,7 @@ const sections = [
       {
         text: 'Basics',
         items: [
-          { text: 'A basic app', link: '/build-an-app/app-model' },
+          { text: 'A URL shortener', link: '/build-an-app/app-model' },
           { text: 'The rusm CLI', link: '/build-an-app/cli' },
         ],
       },
