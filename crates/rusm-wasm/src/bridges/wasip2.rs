@@ -1854,6 +1854,92 @@ mod tests {
         );
     }
 
+    /// A worker that answers one call by hand: first a colliding-ref REQUEST (op/from, no
+    /// ok/err — the trap), then the genuine reply. Shared by the collision tests below as the
+    /// noisy peer that reproduces the wire `ref`-collision race.
+    const NOISY_ECHOER: &str = r#"
+        module.exports.default = async function () {
+            const req = JSON.parse(await Process.receiveText());
+            const from = BigInt(req.from);
+            Process.send(from, JSON.stringify({ op: "noise", from: Process.self().toString(), ref: req.ref }));
+            Process.send(from, JSON.stringify({ ref: req.ref, ok: "echoed:" + req.args[0] }));
+        };
+    "#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_isnt_fooled_by_a_colliding_ref_request_during_the_wait() {
+        // Regression for the wire `ref`-collision (the bug genius-rusm hit): while a client
+        // awaits its reply (ref 1), a concurrent inbound *request* that happens to carry the
+        // same per-process ref must NOT be mistaken for the reply (bug 1), nor re-read forever
+        // off the stash (bug 2). The echoer hand-crafts exactly that race: a request-shaped
+        // message carrying the call's ref, sent just before the real reply. Drives the real
+        // js-runner (the rpc.js fix), the cross-guest twin of the rusm-rs `classify_reply`
+        // unit tests.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+
+        // The client uses the typed `spawn().method()` path — exercising `__call`.
+        const CLIENT: &str = r#"
+            module.exports.default = async function () {
+                const collector = BigInt(await Process.receiveText());
+                const r = await spawn("echoer").echo("hi");
+                Process.send(collector, "got:" + r);
+            };
+        "#;
+        wr.register_js_component("echoer", NOISY_ECHOER.as_bytes().to_vec());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        // The client needs `spawn` (Trusted grants it).
+        let client = wr.spawn_js_with(CLIENT.as_bytes(), CapabilityProfile::Trusted.capabilities());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("client must not hang on the colliding request (bug 2: stash re-read loop)")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "got:echoed:hi",
+            "the colliding request was set aside and the real reply returned (bug 1)"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_call_isnt_fooled_by_a_colliding_ref_request() {
+        // The Go twin: a real Go guest's typed `Call` must set the colliding-ref request aside
+        // and return the genuine reply — driven against the same noisy JS echoer, so it also
+        // proves cross-language wire correctness.
+        const GO_CLIENT: &[u8] = include_bytes!("../../tests/fixtures/go_collision_client.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let echoer = wr.spawn_js(NOISY_ECHOER.as_bytes());
+        let cli = wr
+            .prepare_component(&wr.compile_component(GO_CLIENT).unwrap(), "run")
+            .unwrap();
+        let client = wr.spawn_component(&cli);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        // The client expects the echoer pid, then the collector pid.
+        rt.send(client.pid(), echoer.pid().raw().to_string().into_bytes());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("the Go client must not hang on the colliding request")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "got:echoed:hi",
+            "Go Call set the colliding request aside and returned the real reply"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_go_supervisor_restarts_a_dead_child() {
         // rusm.Supervisor (one-for-one) over the host's native supervise ABI: it spawns

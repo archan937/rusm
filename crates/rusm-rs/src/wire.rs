@@ -7,7 +7,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::{me, receive_bytes, send_bytes, stash, Pid, Stream};
+use crate::{me, receive_bytes, send_bytes, unstash_front, Pid, Stream};
 
 /// A decoded service request.
 #[derive(serde::Deserialize)]
@@ -34,7 +34,11 @@ impl Request {
     }
 }
 
-/// Block for the next service request, skipping any malformed message.
+/// Block for the next service request. Non-request mail is **skipped** — a malformed message
+/// or a monitor `__down`: a `#[service]` is request/reply only. A service that must react to a
+/// monitored process's death should use a [`Supervisor`](crate::supervisor::Supervisor) or a
+/// hand-rolled receive loop (matching `__down` via [`down_pid`](crate::down_pid)), not the
+/// `#[service]` dispatch loop.
 pub fn next_request() -> Request {
     loop {
         if let Ok(req) = serde_json::from_slice::<Request>(&receive_bytes()) {
@@ -81,9 +85,9 @@ fn send_request<A: Serialize>(to: Pid, op: &str, args: &A, reference: Option<u64
     send_bytes(to, &serde_json::to_vec(&req).expect("request serializes"));
 }
 
-/// A blocking **call**: send the request, then wait for the matching reply,
-/// stashing any unrelated mail so the app's own `receive` still sees it, and
-/// dispatching any callback invocations. `args` serializes as a JSON array.
+/// A blocking **call**: send the request, then wait for the matching reply, setting any
+/// unrelated mail aside so the app's own `receive` still sees it (in order), and dispatching
+/// any callback invocations. `args` serializes as a JSON array.
 pub fn call<A: Serialize, R: DeserializeOwned>(to: Pid, op: &str, args: &A) -> Result<R, String> {
     call_json(
         to,
@@ -103,25 +107,61 @@ pub fn call_json<R: DeserializeOwned>(
     let req =
         serde_json::json!({ "op": op, "args": args, "from": me().0.to_string(), "ref": reference });
     send_bytes(to, &serde_json::to_vec(&req).expect("request serializes"));
-    loop {
+    // Selective receive: hold non-matching mail in a LOCAL buffer while we wait, then restore
+    // it to the inbox front. We must NOT re-stash mid-loop — `receive_bytes` drains the inbox
+    // first, so a re-stashed message would be re-read forever while the real reply waits in the
+    // mailbox behind it (a hang for any service that also makes calls).
+    let mut saved: Vec<Vec<u8>> = Vec::new();
+    let outcome = loop {
         let raw = receive_bytes();
-        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
-            stash(raw);
-            continue;
-        };
-        if v.get("op").and_then(serde_json::Value::as_str) == Some("__cb") {
-            dispatch_callback(&v);
-            continue;
-        }
-        if v.get("ref").and_then(serde_json::Value::as_u64) == Some(reference) {
-            if let Some(err) = v.get("err").and_then(serde_json::Value::as_str) {
-                return Err(err.to_string());
+        let v = match serde_json::from_slice::<serde_json::Value>(&raw) {
+            Ok(v) => v,
+            Err(_) => {
+                saved.push(raw); // not even JSON — leave it for the app
+                continue;
             }
-            let ok = v.get("ok").cloned().unwrap_or(serde_json::Value::Null);
-            return serde_json::from_value(ok).map_err(|e| e.to_string());
+        };
+        match classify_reply(&v, reference) {
+            Disposition::Callback => dispatch_callback(&v),
+            Disposition::Reply(Err(err)) => break Err(err),
+            Disposition::Reply(Ok(ok)) => {
+                break serde_json::from_value(ok).map_err(|e| e.to_string())
+            }
+            Disposition::NotMine => saved.push(raw), // a request/other message — for the app
         }
-        stash(raw); // not our reply — leave it for the app
+    };
+    unstash_front(saved);
+    outcome
+}
+
+/// How `call_json` should treat an inbound message while awaiting reply `reference`.
+enum Disposition {
+    /// A `{op:"__cb"}` callback invocation — dispatch it and keep waiting.
+    Callback,
+    /// Our reply: the inner `err` string, or the `ok` value to deserialize.
+    Reply(Result<serde_json::Value, String>),
+    /// Not ours — set it aside for the process's own `receive`.
+    NotMine,
+}
+
+/// Classify an inbound message against the ref we're awaiting. A reply is matched by ref
+/// **and shape**: it must carry `ok` or `err`. Matching on ref alone is unsound — `ref`
+/// numbers are a per-process counter, so a concurrent **request** from another process (which
+/// also carries a `ref`) can collide with ours; without the shape check `call_json` would read
+/// that request as its reply (no `ok`/`err` → `null` → a deserialize error). This is the
+/// load-bearing rule for a service that also makes calls (a GenServer calling a GenServer).
+fn classify_reply(v: &serde_json::Value, reference: u64) -> Disposition {
+    if v.get("op").and_then(serde_json::Value::as_str) == Some("__cb") {
+        return Disposition::Callback;
     }
+    let is_reply = v.get("ok").is_some() || v.get("err").is_some();
+    if is_reply && v.get("ref").and_then(serde_json::Value::as_u64) == Some(reference) {
+        if let Some(err) = v.get("err").and_then(serde_json::Value::as_str) {
+            return Disposition::Reply(Err(err.to_string()));
+        }
+        return Disposition::Reply(Ok(v.get("ok").cloned().unwrap_or(serde_json::Value::Null)));
+    }
+    Disposition::NotMine
 }
 
 /// A **cast**: fire-and-forget (no reply awaited).
@@ -207,6 +247,56 @@ where
         }
     }
     stream.close();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_reply, Disposition};
+    use serde_json::json;
+
+    fn reply(v: &serde_json::Value, reference: u64) -> Option<Result<serde_json::Value, String>> {
+        match classify_reply(v, reference) {
+            Disposition::Reply(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_matching_reply_is_taken() {
+        let ok = json!({ "ref": 1, "ok": { "Ok": null } });
+        assert_eq!(reply(&ok, 1), Some(Ok(json!({ "Ok": null }))));
+        let err = json!({ "ref": 1, "err": "boom" });
+        assert_eq!(reply(&err, 1), Some(Err("boom".to_string())));
+    }
+
+    #[test]
+    fn an_ok_reply_with_a_null_value_is_still_a_reply() {
+        // A `() ` return serializes its `ok` as `null`; the key is present, so it matches.
+        assert_eq!(
+            reply(&json!({ "ref": 1, "ok": null }), 1),
+            Some(Ok(json!(null)))
+        );
+    }
+
+    #[test]
+    fn a_reply_for_a_different_ref_is_not_ours() {
+        assert!(reply(&json!({ "ref": 2, "ok": null }), 1).is_none());
+    }
+
+    #[test]
+    fn an_inbound_request_with_a_colliding_ref_is_not_mistaken_for_the_reply() {
+        // The regression: a service awaiting reply ref=1 receives another process's *request*
+        // that also carries ref=1 (per-process counters collide). It has `op`/`from`, no
+        // `ok`/`err` — it must be left for the app, never read as the reply.
+        let request = json!({ "op": "subscribe_app", "args": ["app"], "from": "7", "ref": 1 });
+        assert!(matches!(classify_reply(&request, 1), Disposition::NotMine));
+    }
+
+    #[test]
+    fn a_callback_invocation_is_dispatched_not_matched() {
+        let cb = json!({ "op": "__cb", "cbref": 3, "args": [null] });
+        assert!(matches!(classify_reply(&cb, 1), Disposition::Callback));
+    }
 }
 
 /// Client side of a **streaming** call: send a stream request, accept the stream

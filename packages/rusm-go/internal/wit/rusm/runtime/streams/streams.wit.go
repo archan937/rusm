@@ -77,6 +77,9 @@ func StreamClose(handle StreamID) {
 //
 // Accept the next incoming byte stream, suspending until one arrives; returns
 // a handle for reading it. (Like `receive`, plain messages are skipped here.)
+// A guest is single-fiber — an async host call suspends the whole instance — so a
+// process can have at most one `stream-accept` outstanding at a time; concurrent
+// streaming calls serialize, so "accept the next stream" is unambiguous.
 //
 //	stream-accept: func() -> stream-id
 //

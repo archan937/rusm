@@ -63,7 +63,10 @@ func (ws WebSocket) Serve() {
 	}
 	for {
 		frame := rusm.ReceiveBytes()
-		if dead, ok := rusm.DownPid(frame); ok && dead == writer {
+		if dead, ok := rusm.DownPid(frame); ok {
+			if dead != writer {
+				continue // a __down for another monitored pid, not an inbound frame
+			}
 			if ws.Close != nil {
 				ws.Close(conn)
 			}

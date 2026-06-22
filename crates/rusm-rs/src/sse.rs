@@ -116,8 +116,11 @@ pub fn serve<H: Handler>(mut handler: H) {
     handler.open(&stream);
     while !stream.done.get() {
         let data = crate::receive_bytes();
-        if crate::down_pid(&data) == Some(writer) {
-            break; // client disconnected
+        if let Some(pid) = crate::down_pid(&data) {
+            if pid == writer {
+                break; // client disconnected
+            }
+            continue; // a `__down` for some other monitored pid — not an event
         }
         handler.message(&stream, data);
     }

@@ -6,6 +6,41 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.4.1] — unreleased
+
+A **correctness** release for the guest RPC wire, surfaced by porting a real app
+(genius-rusm) onto RUSM: the first GenServer-that-also-calls — a service that makes a `call`
+while serving requests — exposed a latent flaw shared by all three guest SDKs. No ABI/WIT
+change: a guest built against 0.4.1 runs unchanged on a 0.4.0 host.
+
+### Fixed
+- **Wire reply-matching `ref` collision (Rust, Go, TS).** A blocking `call` matched its reply
+  by correlation `ref` alone. But `ref` is a per-process counter, so a **concurrent inbound
+  request** from another process could carry the same `ref` and be mis-read as the reply (no
+  `ok`/`err` → decoded to null/garbage → silently resolved the call wrong). Replies are now
+  matched by **`ref` *and* shape** (must carry `ok`/`err`). Only affected a process that both
+  serves requests and makes calls — the core Erlang/OTP GenServer pattern.
+- **Selective-receive re-read loop (Rust, Go, TS).** While awaiting a reply, `call` set
+  non-matching mail aside into the *same inbox `receive` drains first* — so it was re-read
+  forever and the real reply (behind it in the mailbox) was never reached (a hang). Set-aside
+  mail is now held in a call-local buffer and restored to the inbox front after the call (a
+  proper selective receive), via a new single-sourced `unstash-front` actor primitive.
+- **WS/SSE connection loops (Rust, Go, TS).** A monitor `__down` for a pid *other* than the
+  connection's writer (e.g. a backend the handler itself monitors) was delivered to the
+  handler as if it were an inbound frame/event. Stray `__down`s are now skipped; only the
+  writer's death ends the connection.
+
+### Notes
+- A `#[service]` / `Service` dispatch loop is request/reply only — it skips non-request mail
+  (including `__down`); react to a monitored process's death via a `Supervisor` or a
+  hand-rolled receive loop.
+- Cross-process stream `accept` is unambiguous by construction: a guest is single-fiber, so a
+  process can have at most one `stream-accept` outstanding; concurrent streaming serializes.
+- Coverage: Rust host unit tests for the reply classifier + the selective-receive restore;
+  **Go & TS integration tests** drive real guests through the `ref`-collision against a shared
+  noisy echoer; and **RS/Go/TS integration tests** assert the WS/SSE connection loop skips a
+  stray `__down` (real echo guests, each connection-loop implementation).
+
 ## [0.4.0] — 2026-06-22
 
 A **custom-bridges + dynamic-WASM** release. An app can define its own **native host

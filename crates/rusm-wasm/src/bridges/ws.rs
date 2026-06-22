@@ -598,6 +598,78 @@ mod tests {
             .expect("collector channel stays open")
     }
 
+    /// Drive a spawned per-connection echo handler `handler` directly (bypassing the socket)
+    /// and assert the connection loop **skips a stray `__down`** — a monitor down for a pid
+    /// other than the writer must never be echoed to the client as an inbound frame. Shared by
+    /// the RS/Go/TS cases below (the three connection-loop implementations).
+    async fn assert_skips_stray_down(rt: &rusm_otp::Runtime, handler: rusm_otp::Pid) {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // The collector stands in for the writer: the handler echoes frames to it.
+        let writer = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let rusm_otp::Received::Message(b) = ctx.recv().await {
+                    let _ = tx.send(b);
+                }
+            }
+        });
+        rt.send(handler, writer.pid().raw().to_string().into_bytes()); // msg 1: the writer pid
+        rt.send(handler, br#"{"__down":"999999"}"#.to_vec()); // a stray __down (not the writer)
+        rt.send(handler, b"frame".to_vec()); // a real inbound frame
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            .await
+            .expect("the connection loop must not hang or mis-handle the stray __down")
+            .expect("collector channel stays open");
+        assert_eq!(
+            got, b"frame",
+            "the stray __down was skipped; only the real frame was echoed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rs_ws_connection_loop_skips_a_stray_down() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+        const RS_WS_ECHO: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_echo.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(RS_WS_ECHO).unwrap(), "run")
+            .unwrap();
+        let handler = wr.spawn_component_with(&prepared, CapabilityProfile::Trusted.capabilities());
+        assert_skips_stray_down(&rt, handler.pid()).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn go_ws_connection_loop_skips_a_stray_down() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+        const GO_WS_ECHO: &[u8] = include_bytes!("../../tests/fixtures/go_ws_echo.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_WS_ECHO).unwrap(), "run")
+            .unwrap();
+        let handler = wr.spawn_component_with(&prepared, CapabilityProfile::Trusted.capabilities());
+        assert_skips_stray_down(&rt, handler.pid()).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn js_connection_loop_skips_a_stray_down() {
+        use crate::{CapabilityProfile, WasmRuntime};
+        use rusm_otp::Runtime;
+        // An inline per-connection handler that echoes each frame to the writer — driving the
+        // js-runner's `__rusm_connection` loop (the TS twin of the RS/Go cases).
+        const JS_ECHO: &str =
+            "module.exports.default = { websocket: { message: (w, ev) => Process.send(w, ev) } };";
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let handler = wr.spawn_js_with(
+            JS_ECHO.as_bytes(),
+            CapabilityProfile::Trusted.capabilities(),
+        );
+        assert_skips_stray_down(&rt, handler.pid()).await;
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_ws_handler_runs_open_message_and_close_on_disconnect() {
         use crate::{CapabilityProfile, WasmRuntime};

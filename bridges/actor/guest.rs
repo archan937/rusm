@@ -135,9 +135,17 @@ thread_local! {
         std::cell::RefCell::new(std::collections::VecDeque::new());
 }
 
-/// Set a message aside for the app's own `receive` (used by the RPC client).
-pub(crate) fn stash(raw: Vec<u8>) {
-    INBOX.with(|q| q.borrow_mut().push_back(raw));
+/// Return messages an RPC client set aside (in arrival order) to the **front** of the inbox,
+/// so the app's own `receive` sees them next, before any newer mail. The client holds them in a
+/// local buffer *during* the call — never re-inserting mid-call, since [`receive_bytes`] drains
+/// the inbox first and would otherwise re-read the same message forever (a spin/hang).
+pub(crate) fn unstash_front(saved: Vec<Vec<u8>>) {
+    INBOX.with(|q| {
+        let mut q = q.borrow_mut();
+        for raw in saved.into_iter().rev() {
+            q.push_front(raw);
+        }
+    });
 }
 
 /// Block until the next message arrives; returns its raw bytes. Drains any mail
@@ -176,4 +184,25 @@ pub fn receive<T: DeserializeOwned>() -> serde_json::Result<T> {
 /// the next message deserialized from JSON.
 pub fn receive_timeout<T: DeserializeOwned>(timeout_ms: u64) -> Option<serde_json::Result<T>> {
     receive_bytes_timeout(timeout_ms).map(|raw| serde_json::from_slice(&raw))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{receive_bytes, unstash_front};
+
+    #[test]
+    fn unstash_front_restores_set_aside_mail_in_arrival_order() {
+        // The selective-receive restore: mail set aside during a call returns to the front of
+        // the inbox, oldest first, ahead of newer mail — so the app's own `receive` sees it in
+        // order. (`receive_bytes` drains the inbox before the real mailbox, so these three pops
+        // never touch the runtime.)
+        unstash_front(vec![
+            b"first".to_vec(),
+            b"second".to_vec(),
+            b"third".to_vec(),
+        ]);
+        assert_eq!(receive_bytes(), b"first");
+        assert_eq!(receive_bytes(), b"second");
+        assert_eq!(receive_bytes(), b"third");
+    }
 }

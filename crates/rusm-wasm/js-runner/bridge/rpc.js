@@ -74,20 +74,28 @@ async function __call(pid, op, args, expectReply) {
   if (expectReply) msg.ref = ref;
   const ids = __sendRequest(pid, msg);
   if (!expectReply) return undefined; // cast: fire-and-forget
+  // Hold non-matching mail in a LOCAL buffer for the duration of the call, restored to the
+  // inbox front in `finally` — never re-stashing mid-loop, since `receive` drains the inbox
+  // first and a re-stashed message would be re-read forever while the reply waits behind it.
+  const setAside = [];
   try {
     for (;;) {
       const raw = await Process.receive();
       let m;
-      try { m = JSON.parse(__td.decode(raw)); } catch { __rusm_stash(raw); continue; }
+      try { m = JSON.parse(__td.decode(raw)); } catch { setAside.push(raw); continue; }
       if (m && m.op === "__cb") { __callbacks[m.cbref]?.(...(m.args || [])); continue; }
-      if (m && m.ref === ref) {
+      // A reply carries `ok`/`err`; match by ref AND shape so a concurrent inbound request
+      // whose per-process `ref` collides with ours isn't mis-read as the reply.
+      const isReply = m && typeof m === "object" && ("ok" in m || "err" in m);
+      if (isReply && m.ref === ref) {
         if ("err" in m) throw new Error(m.err);
         return m.ok;
       }
-      __rusm_stash(raw); // not our reply — leave it for the app
+      setAside.push(raw); // not our reply — hold locally for the app
     }
   } finally {
     for (const id of ids) delete __callbacks[id];
+    if (setAside.length) __rusm_unstash_front(setAside);
   }
 }
 
@@ -311,7 +319,11 @@ async function __rusm_connection(table) {
   while (!stopped()) {
     let data;
     try { data = await Process.receive(); } catch { return; }
-    if (__downPid(data) === writer) break; // client disconnected
+    const dead = __downPid(data);
+    if (dead !== null) {
+      if (dead === writer) break; // client disconnected
+      continue; // a `__down` for some other monitored pid — not an inbound frame/event
+    }
     await table.message(writer, data);
   }
   if (table.close) await table.close(writer);

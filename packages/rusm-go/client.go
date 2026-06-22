@@ -37,7 +37,7 @@ func argsOf(args []any) []any {
 }
 
 // Call sends a blocking request to a service pid and returns the typed reply. While it
-// waits it stashes any unrelated mail, so the app's own Receive still sees it (FIFO).
+// waits it sets any unrelated mail aside, so the app's own Receive still sees it (in order).
 func Call[R any](to Pid, op string, args ...any) (R, error) {
 	var zero R
 	marked, cbIDs := prepareArgs(args) // callback args → `{"__cb": id}` markers
@@ -48,18 +48,23 @@ func Call[R any](to Pid, op string, args ...any) (R, error) {
 		return zero, err
 	}
 	SendBytes(to, req)
+	// Hold non-matching mail in a local buffer for the duration of the call, then restore it to
+	// the inbox front — never re-stashing mid-loop, since ReceiveBytes drains the inbox first and
+	// a re-stashed message would be re-read forever while the real reply waits behind it.
+	var setAside [][]byte
+	defer func() { unstashFront(setAside) }()
 	for {
 		raw := ReceiveBytes()
 		var env map[string]json.RawMessage
 		if json.Unmarshal(raw, &env) != nil {
-			stashMessage(raw) // not JSON we understand — leave it for the app
+			setAside = append(setAside, raw) // not JSON we understand — leave it for the app
 			continue
 		}
 		if dispatchCallback(env) {
 			continue // the service invoked a callback; keep awaiting the reply
 		}
 		if !replyMatches(env, ref) {
-			stashMessage(raw) // someone else's reply or a plain message
+			setAside = append(setAside, raw) // someone else's reply, request, or plain message
 			continue
 		}
 		if e, ok := env["err"]; ok {
@@ -120,8 +125,16 @@ func Cast(to Pid, op string, args ...any) error {
 	return nil
 }
 
-// replyMatches reports whether env is the reply carrying our correlation ref.
+// replyMatches reports whether env is the reply carrying our correlation ref. A reply carries
+// `ok` or `err`; matching on `ref` alone is unsound — `ref` is a per-process counter, so a
+// concurrent inbound *request* (which also carries a `ref`) can collide and be mis-read as the
+// reply. So require the reply shape AND the ref.
 func replyMatches(env map[string]json.RawMessage, ref uint64) bool {
+	_, hasOk := env["ok"]
+	_, hasErr := env["err"]
+	if !hasOk && !hasErr {
+		return false
+	}
 	r, ok := env["ref"]
 	if !ok {
 		return false

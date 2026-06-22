@@ -30,7 +30,7 @@ func CB[A any](f func(A)) func(json.RawMessage) {
 }
 
 // callbacks holds the caller-side closures awaiting invocation, by id (the guest is
-// single-threaded — one mailbox — so a plain map needs no lock, like the stash).
+// single-threaded — one mailbox — so a plain map needs no lock, like the inbox).
 var callbacks = make(map[uint64]func(json.RawMessage))
 
 // prepareArgs replaces each callback argument with a `{"__cb": id}` marker and registers

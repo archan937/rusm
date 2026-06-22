@@ -49,19 +49,28 @@ func Send(to Pid, msg any) error {
 	return nil
 }
 
-// stash holds messages the RPC client set aside while awaiting a reply, so the app's
-// own Receive still sees them (the guest is single-threaded — one mailbox).
-var stash [][]byte
+// inbox holds messages the RPC client set aside while awaiting a reply, restored to the FRONT
+// after the call so the app's own Receive sees them next (the guest is single-threaded — one
+// mailbox).
+var inbox [][]byte
 
-// stashMessage sets a message aside for the app's own Receive (used by the wire client).
-func stashMessage(raw []byte) { stash = append(stash, raw) }
+// unstashFront returns messages the wire client set aside (in arrival order) to the front of
+// the inbox, so the app's own Receive sees them next, before newer mail. The client holds them
+// in a local slice DURING the call — never re-inserting mid-call, since ReceiveBytes drains the
+// inbox first and would otherwise re-read the same message forever (a spin/hang).
+func unstashFront(saved [][]byte) {
+	if len(saved) == 0 {
+		return
+	}
+	inbox = append(saved, inbox...)
+}
 
 // ReceiveBytes blocks until the next message arrives and returns its raw bytes (FIFO),
 // draining any mail the wire client set aside first.
 func ReceiveBytes() []byte {
-	if len(stash) > 0 {
-		raw := stash[0]
-		stash = stash[1:]
+	if len(inbox) > 0 {
+		raw := inbox[0]
+		inbox = inbox[1:]
 		return raw
 	}
 	return actor.Receive().Slice()
@@ -70,9 +79,9 @@ func ReceiveBytes() []byte {
 // ReceiveBytesTimeout is ReceiveBytes with a deadline: ok is false after timeoutMs
 // with no message (Erlang's `receive … after`). Stashed mail returns immediately.
 func ReceiveBytesTimeout(timeoutMs uint64) (msg []byte, ok bool) {
-	if len(stash) > 0 {
-		raw := stash[0]
-		stash = stash[1:]
+	if len(inbox) > 0 {
+		raw := inbox[0]
+		inbox = inbox[1:]
 		return raw, true
 	}
 	o := actor.ReceiveTimeout(timeoutMs)

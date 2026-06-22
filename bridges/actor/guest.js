@@ -16,9 +16,12 @@
 // BigInt; messages/chunks are Uint8Array, with text helpers.
 
 // Messages the RPC client set aside while awaiting a reply (so a typed call never
-// swallows the app's own mail). `Process.receive*` drains this before the host.
+// swallows the app's own mail). `Process.receive*` drains this before the host. The client
+// holds set-aside mail in a LOCAL buffer during the call and restores it to the FRONT here
+// afterward — never re-inserting mid-call, since `receive` drains __inbox first and would
+// otherwise re-read the same message forever (a spin/hang).
 const __inbox = [];
-globalThis.__rusm_stash = (raw) => __inbox.push(raw);
+globalThis.__rusm_unstash_front = (saved) => __inbox.unshift(...saved);
 
 // `Stream` (the cross-process byte stream) is the stream bridge's binding — defined as a
 // global in bridge/stream.js (eval'd before this); Process.openStream/acceptStream below

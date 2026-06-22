@@ -77,7 +77,10 @@ func (sse Sse) Serve() {
 	}
 	for !done {
 		event := rusm.ReceiveBytes()
-		if dead, ok := rusm.DownPid(event); ok && dead == writer {
+		if dead, ok := rusm.DownPid(event); ok {
+			if dead != writer {
+				continue // a __down for another monitored pid, not an event
+			}
 			break // client disconnected
 		}
 		if sse.Message != nil {

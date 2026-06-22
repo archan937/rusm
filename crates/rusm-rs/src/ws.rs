@@ -86,9 +86,12 @@ pub fn serve<H: Handler>(mut handler: H) {
     handler.open(&conn);
     loop {
         let data = crate::receive_bytes();
-        if crate::down_pid(&data) == Some(writer) {
-            handler.close(&conn);
-            return;
+        if let Some(pid) = crate::down_pid(&data) {
+            if pid == writer {
+                handler.close(&conn);
+                return;
+            }
+            continue; // a `__down` for some other monitored pid — not an inbound frame
         }
         handler.message(&conn, data);
     }
