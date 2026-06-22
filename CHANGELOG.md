@@ -6,6 +6,17 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.4.2] — unreleased
+
+Closes two guest-SDK gaps that forced apps to hand-roll platform plumbing (raw wire / raw
+`wasi:http`) — so application code stays application code.
+
+### Added
+- **`rusm-ts` `connect(name | pid)`** — a typed client over an **already-running** service (a
+  resident), the TS twin of Rust's `Client::connect(pid)` / Go's `Call(pid, …)`. `spawn<T>` only
+  ever started a *fresh* instance, so reaching a resident from TS previously meant hand-building
+  the RPC envelope; `connect` makes it `await connect<Counter>("counter").bump(1)`.
+
 ## [0.4.1] — 2026-06-23
 
 A **correctness** release for the guest RPC wire, surfaced by porting a real app

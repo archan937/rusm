@@ -73,35 +73,41 @@ in every language.
 
 ## How callers reach it
 
-The typed client's `spawn` (`spawn<T>` / `Client::spawn` / `rusm.Spawn`) starts a **fresh**
-instance — ideal for a per-call service, but it does *not* hand you the running resident. To
-talk to the one resident, have it **register a name**, then reach that pid directly. **Rust and
-Go** give you a typed call over an existing pid; **TypeScript**'s typed client only spawns, so
-a TS app shares a resident's state through [`kv`](/build-an-app/url-shortener) instead.
+A resident is **one** instance, so to talk to it a caller needs its pid — **not** `spawn`,
+which would start a *fresh* instance. The service **claims a name** in its entry; a caller
+**looks that name up** and calls the pid. This is ordinary app code you write — two lines on
+each side:
 
 ::: code-group
 
 ```rust [Rust]
-// In the service's entry: claim a name, then run the dispatch loop.
+// Service entry: claim a name, then run the dispatch loop.
 rusm_rs::register("counter");
 counter::serve();
 
-// A caller reaches the *running* instance by pid — no new spawn:
+// Caller: reach the running instance by pid — a typed call, with the reply.
 let c = counter::Client::connect(rusm_rs::whereis("counter").unwrap());
-c.bump(1).unwrap();
+let total = c.bump(1).unwrap();
 ```
 
 ```go [Go]
-// In the service, before Serve(): claim a name.
+// Service: claim a name before Serve().
 rusm.Register("counter")
 svc.Serve()
 
-// A caller looks it up and calls it by pid (Call takes any pid):
+// Caller: look it up and call by pid (Call takes any pid, returns the reply).
 pid, _ := rusm.Whereis("counter")
 total, _ := rusm.Call[int](pid, "bump", 1)
 ```
 
 :::
+
+**TypeScript** has no typed call to an *existing* pid yet — `spawn<T>(name)` only starts a fresh
+instance, a parity gap with Rust's `Client::connect(pid)` and Go's `Call(pid, …)`. So from TS,
+share a resident's state through [`kv`](/build-an-app/url-shortener), the cross-language answer
+the example apps use. (Dropping to a raw `Process.send` with a hand-built request envelope does
+reach a resident, but that's the platform's internal wire protocol, not application code —
+prefer `kv`.)
 
 ## What you need to know
 

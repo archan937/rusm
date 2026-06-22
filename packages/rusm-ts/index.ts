@@ -4,10 +4,13 @@
 // factory as globals (and polyfills the Web APIs); this package re-exports them as
 // a normal module and ships the types, so a component writes:
 //
-//     import { Process, spawn } from "rusm-ts";
+//     import { Process, spawn, connect } from "rusm-ts";
 //
-// Pids are u64s, too large for a JS number, so they cross as `bigint`. Messages
-// and stream chunks are `Uint8Array`. `receive` / `Stream.read` are async.
+// A **pid** is a process's identity: a host-assigned u64. Too large for a JS number, it
+// crosses as a `bigint` here (e.g. `42n`); on the JSON message wire it's that number's
+// decimal string (e.g. `"42"`) — which is why `send`/`monitor`/`kill`/… also accept a
+// `string`. `self()`, `spawn()`, and `whereis()` hand you one. Messages and stream chunks
+// are `Uint8Array`; `receive` / `Stream.read` are async.
 
 /** A back-pressured byte stream to or from another process. */
 export interface Stream {
@@ -21,6 +24,7 @@ export interface Stream {
 
 /** The RUSM actor API: this process and its peers. Mirrors the Erlang `Process`. */
 export interface ProcessApi {
+  /** This process's own pid. */
   self(): bigint;
   list(): bigint[];
   /** Spawn a registered component by name → its pid (capability-gated). With a runtime
@@ -122,6 +126,11 @@ export type ServiceClient<T> = {
   stop(): void;
 };
 
+/** A typed client over an **already-running** service (a resident reached by name or pid via
+ *  {@link connect}) — like {@link ServiceClient} but without `stop()`: you didn't spawn it, so
+ *  you don't kill it. */
+export type Client<T> = Omit<ServiceClient<T>, "stop">;
+
 /** How a supervisor reacts when one child dies. */
 export type Strategy = "one_for_one" | "one_for_all" | "rest_for_one";
 
@@ -164,6 +173,7 @@ export interface Kv {
 const g = globalThis as unknown as {
   Process: ProcessApi;
   spawn: <T>(component: string) => ServiceClient<T>;
+  connect: <T>(target: string | bigint) => Client<T>;
   supervise: (opts: SupervisorOptions) => Promise<void>;
   kv: Kv;
 };
@@ -180,6 +190,15 @@ export const kv: Kv = g.kv;
 export const spawn = <T = Record<string, (...args: any[]) => any>>(
   component: string,
 ): ServiceClient<T> => g.spawn<T>(component);
+
+/** Get a typed client for an **already-running** service — a resident — by its registered
+ *  name or its pid. Unlike {@link spawn} it starts nothing; it's the TS twin of Rust's
+ *  `Client::connect(pid)` / Go's `Call(pid, …)`. `connect(name)` throws if no process is
+ *  registered under `name`. Type it with the service's contract:
+ *  `connect<Counter>("counter").bump(1)`. */
+export const connect = <T = Record<string, (...args: any[]) => any>>(
+  target: string | bigint,
+): Client<T> => g.connect<T>(target);
 
 /** Run a **supervisor**: spawn + monitor the given child components and restart
  *  them per the strategy when one dies. `await` it as your worker's body. */

@@ -1941,6 +1941,48 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_ts_guest_connects_to_a_resident_by_name_and_calls_it() {
+        // rusm-ts `connect(name)`: a TS caller reaches an EXISTING resident by its registered
+        // name and makes a typed call — clean app code, no hand-rolled wire envelope (the TS
+        // twin of Rust's `Client::connect` / Go's `Call(pid, …)`).
+        const COUNTER: &str = r#"
+            let count = 0;
+            module.exports.bump  = (by) => { count += by; return count; };
+            module.exports.total = ()   => count;
+        "#;
+        const CALLER: &str = r#"
+            module.exports.default = async () => {
+                const collector = BigInt(await Process.receiveText());
+                const c = connect("counter");          // reach the running resident by name
+                const a = await c.bump(2);
+                const b = await c.bump(3);             // its in-memory state persists across calls
+                Process.send(collector, "total:" + b + " first:" + a);
+            };
+        "#;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let counter = wr.spawn_js(COUNTER.as_bytes()); // the resident service
+        rt.register("counter", counter.pid()); // registered under its name (a resident self-registers)
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let caller = wr.spawn_js_with(CALLER.as_bytes(), CapabilityProfile::Trusted.capabilities());
+        rt.send(caller.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("the connect()ed call must return")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "total:5 first:2",
+            "connect(name) reached the resident; its in-memory state persisted across calls"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_go_supervisor_restarts_a_dead_child() {
         // rusm.Supervisor (one-for-one) over the host's native supervise ABI: it spawns
         // + monitors the `flaky` Go child, which announces its pid to the registered

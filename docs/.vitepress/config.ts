@@ -58,6 +58,7 @@ const sections = [
           { text: 'Run one-off work', link: '/build-an-app/run-one-off-work' },
           { text: 'Build a stateful service', link: '/build-an-app/build-a-stateful-service' },
           { text: 'Broadcast to many', link: '/build-an-app/broadcast-to-many' },
+          { text: 'Receive a broadcast', link: '/build-an-app/receive-a-broadcast' },
           { text: 'Coordinate & supervise', link: '/build-an-app/coordinate-and-supervise' },
         ],
       },

@@ -127,20 +127,38 @@ function __castClient(pid) {
   return new Proxy({}, { get: (_t, op) => (...args) => __call(pid, String(op), args, false) });
 }
 
-// `spawn(name)` → a typed client over a freshly spawned component.
-globalThis.spawn = function (name) {
-  const pid = Process.spawn(name);
+// A typed client over a process `pid`: each property is a call (`await`) / stream
+// (`for await`); `.cast` is fire-and-forget; `.pid` is the pid. `owned` (a spawned process)
+// also exposes `.stop()` — a connected client to a resident you don't own does not.
+function __clientProxy(pid, owned) {
   return new Proxy(
     {},
     {
       get(_t, op) {
         if (op === "pid") return pid;
-        if (op === "stop") return () => Process.kill(pid);
         if (op === "cast") return __castClient(pid);
+        if (op === "stop") return owned ? () => Process.kill(pid) : undefined;
         return (...args) => __invoke(pid, String(op), args);
       },
     },
   );
+}
+
+// `spawn(name)` → a typed client over a freshly spawned component.
+globalThis.spawn = function (name) {
+  return __clientProxy(Process.spawn(name), true);
+};
+
+// `connect(name | pid)` → a typed client over an EXISTING process (a resident): a registered
+// name is resolved with `whereis`, or a `bigint` pid is used directly. Unlike `spawn` it
+// starts nothing — the TS twin of Rust's `Client::connect(pid)` / Go's `Call(pid, …)`.
+globalThis.connect = function (target) {
+  let pid = target;
+  if (typeof target !== "bigint") {
+    pid = Process.whereis(target);
+    if (pid == null) throw new Error("connect: no process registered as " + target);
+  }
+  return __clientProxy(pid, false);
 };
 
 // Service dispatch: receive a request, call the matching exported handler, and
