@@ -2,7 +2,7 @@
 
 A short-lived process a sibling `spawn`s to do **one unit of work** and exit. No socket
 and no listener — pure actor work, off the serving path. See the
-[overview](/deep-dive/component-lifecycle) for the shared two-domain model and failure
+[overview](/build-an-app/component-lifecycle) for the shared two-domain model and failure
 vocabulary.
 
 ## Shape (what you write)
@@ -90,4 +90,4 @@ a [byte stream](/deep-dive/byte-streams) or messages — and returns. The dispat
 - **Concurrency = many workers.** A guest is single-threaded; you get parallelism by
   spawning *more* workers (each its own process/instance), not by threading inside one.
 
-Prev: [WebSocket component](/deep-dive/lifecycle-websocket) · Next: [Service component](/deep-dive/lifecycle-service)
+Prev: [WebSocket component](/build-an-app/lifecycle-websocket) · Next: [Service component](/build-an-app/lifecycle-service)

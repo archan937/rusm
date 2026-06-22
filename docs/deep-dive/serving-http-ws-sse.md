@@ -372,7 +372,7 @@ heartbeats), the **bounded, back-pressured** body, and disconnect (the body's wr
 `close` fires), so a slow client slows the producer instead of growing memory and an idle or
 endless feed never leaks. The TS twin is `export default sse({ open, message, close })`; the
 Go twin is `web.Sse{ Open, Message, Close }.Serve()`. See the
-[SSE lifecycle](/deep-dive/lifecycle-sse) and [byte streams](/deep-dive/byte-streams).
+[SSE lifecycle](/build-an-app/lifecycle-sse) and [byte streams](/deep-dive/byte-streams).
 
 #### Rich events & resumption
 

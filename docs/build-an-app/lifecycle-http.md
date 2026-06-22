@@ -4,7 +4,7 @@ A per-request HTTP handler: a `#[rusm_rs::handlers]` action (Rust), a `web.Handl
 action (Go), or a `wasi:http` `export default { fetch }` (TypeScript). **A fresh
 sandboxed instance per request**,
 which handles exactly one request and exits. See the
-[overview](/deep-dive/component-lifecycle) for the shared two-domain model and failure
+[overview](/build-an-app/component-lifecycle) for the shared two-domain model and failure
 vocabulary this chapter builds on.
 
 ## Shape (what you write)
@@ -97,9 +97,9 @@ That's the **application domain** in full — a function from a request to a res
   request; the listener and every other in-flight request are untouched (each is its
   own instance with its own memory).
 - **Where state goes.** A handler is stateless and disposable. Cross-request state
-  lives in a [service component](/deep-dive/lifecycle-service) (reached via `whereis` +
+  lives in a [service component](/build-an-app/lifecycle-service) (reached via `whereis` +
   `call`) or in durable `kv` — never in the handler.
 - **Same lifecycle, every language.** The Rust, TypeScript, and Go forms above share
   the exact per-request lifecycle in the table — a fresh instance, one request, then exit.
 
-Next: [SSE component](/deep-dive/lifecycle-sse) · [WebSocket component](/deep-dive/lifecycle-websocket)
+Next: [SSE component](/build-an-app/lifecycle-sse) · [WebSocket component](/build-an-app/lifecycle-websocket)

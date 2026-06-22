@@ -2,7 +2,7 @@
 
 One sandboxed component process **per connection**. The host owns the socket and
 delivers each inbound frame to the process's mailbox; the process replies through a
-writer pid. See the [overview](/deep-dive/component-lifecycle) for the shared two-domain
+writer pid. See the [overview](/build-an-app/component-lifecycle) for the shared two-domain
 model and failure vocabulary.
 
 ## Shape (what you write)
@@ -114,7 +114,7 @@ sharing. `open` and `close` are optional; only `message` is required.
   for application-level cleanup (leave a presence set, log the disconnect) — not to free
   platform resources, which the runtime reclaims regardless.
 - **Shared state lives elsewhere.** Cross-connection state (presence counts, a shared
-  log) belongs in a [service component](/deep-dive/lifecycle-service) or `kv`, never in the
+  log) belongs in a [service component](/build-an-app/lifecycle-service) or `kv`, never in the
   per-connection process. Group broadcast (a chat room fanning a message to its members)
   needs neither: **process-group tags** (`register-tag`/`whereis-tag`) are the platform
   primitive — each connection tags itself, membership auto-releases on exit.
@@ -122,4 +122,4 @@ sharing. `open` and `close` are optional; only `message` is required.
   process — the connection-storm benchmark measures exactly this
   (sandboxed-process-per-connection establishments per second).
 
-Prev: [SSE component](/deep-dive/lifecycle-sse) · Next: [Worker component](/deep-dive/lifecycle-worker)
+Prev: [SSE component](/build-an-app/lifecycle-sse) · Next: [Worker component](/build-an-app/lifecycle-worker)

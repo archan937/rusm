@@ -1,12 +1,12 @@
 # Lifecycle — SSE component
 
 One sandboxed component process **per connection** — the SSE twin of the
-[WebSocket component](/deep-dive/lifecycle-websocket). SSE is one-way (server → client): the
+[WebSocket component](/build-an-app/lifecycle-websocket). SSE is one-way (server → client): the
 handler emits events; there are no inbound client frames. The host owns the response body
 and delivers events to the handler through its **mailbox** — typically a
 [process-group tag](/deep-dive/links-and-supervision) the handler subscribes to, so a
 publisher's broadcast fans out to every open stream (push, not polling). See the
-[overview](/deep-dive/component-lifecycle) for the shared two-domain model.
+[overview](/build-an-app/component-lifecycle) for the shared two-domain model.
 
 ## Shape (what you write)
 
@@ -109,8 +109,8 @@ fires. A resident `[components.<name>]` service or an HTTP handler is the usual 
   ~nothing and never leaks. Regression-guarded by the disconnect-teardown test.
 - **Push, not polling.** Events arrive through the mailbox, so there's no poll loop and no
   timer — the feed is exactly as live as its publisher. The same process-group tags power
-  [WebSocket](/deep-dive/lifecycle-websocket) broadcast and any 1→N fan-out.
+  [WebSocket](/build-an-app/lifecycle-websocket) broadcast and any 1→N fan-out.
 - **Shared state lives elsewhere.** Cross-connection state belongs in a
-  [service component](/deep-dive/lifecycle-service) or `kv`, never in the per-connection process.
+  [service component](/build-an-app/lifecycle-service) or `kv`, never in the per-connection process.
 
-Prev: [HTTP component](/deep-dive/lifecycle-http) · Next: [WebSocket component](/deep-dive/lifecycle-websocket)
+Prev: [HTTP component](/build-an-app/lifecycle-http) · Next: [WebSocket component](/build-an-app/lifecycle-websocket)

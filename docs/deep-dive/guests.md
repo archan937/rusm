@@ -114,7 +114,7 @@ component shell is a three-line `init` + `main` + `run`; the bindings live in th
 component (no `wit/` dir, no bindings boilerplate in your source).
 
 Serving mirrors Rust: HTTP is routed by `[serve.routes]` to named actions registered on a
-`web.Handlers`; WebSocket and SSE are one process per connection ([`web.Sse`](/deep-dive/lifecycle-sse)).
+`web.Handlers`; WebSocket and SSE are one process per connection ([`web.Sse`](/build-an-app/lifecycle-sse)).
 An `Handle` action is a buffered `func(Request, Params) Response`:
 
 ```go

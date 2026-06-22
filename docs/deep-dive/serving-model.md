@@ -64,7 +64,7 @@ A Rust serving component is a module of `pub fn`s under `#[rusm_rs::handlers]` �
 `main`, no router, no wire plumbing. The macro generates the whole component shell and
 the action dispatch; the developer writes only handler functions. Each action is a
 **buffered** `fn(Request, Params) -> Response`. (Server-Sent Events are a per-connection
-[`sse::serve`](/deep-dive/lifecycle-sse) handler — like WS — not a routed action.)
+[`sse::serve`](/build-an-app/lifecycle-sse) handler — like WS — not a routed action.)
 
 TypeScript serving uses web standards instead (the macro is Rust): HTTP
 `export default` a `fetch`-shaped handler, SSE `export default sse({…})`; WS uses

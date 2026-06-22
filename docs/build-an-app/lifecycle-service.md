@@ -3,7 +3,7 @@
 A long-lived, **stateful** process — a `#[rusm_rs::service]` holding state (a counter, a
 cache, a pub/sub hub), reached via `whereis` + `call`/`send`. **This is where "resident
 vs per-call" lives — never in the serving tier.** See the
-[overview](/deep-dive/component-lifecycle) for the shared two-domain model and failure
+[overview](/build-an-app/component-lifecycle) for the shared two-domain model and failure
 vocabulary.
 
 ## Shape (what you write)
@@ -83,9 +83,9 @@ local call (Rust, TypeScript, and Go interoperate over one wire).
 - **A call to a dead service fails, it doesn't hang.** The reply ref is never answered,
   so a caller using `call`-with-timeout gets a clear error and can react — back-pressure
   for failure, not a silent stall.
-- **The home for shared state.** [HTTP](/deep-dive/lifecycle-http),
-  [SSE](/deep-dive/lifecycle-sse), and [WebSocket](/deep-dive/lifecycle-websocket) components are
+- **The home for shared state.** [HTTP](/build-an-app/lifecycle-http),
+  [SSE](/build-an-app/lifecycle-sse), and [WebSocket](/build-an-app/lifecycle-websocket) components are
   stateless and disposable; anything they need to share (a cache, a broker, a session
   map) lives in a service like this and is reached by message.
 
-Prev: [Worker component](/deep-dive/lifecycle-worker) · Overview: [Component lifecycles](/deep-dive/component-lifecycle)
+Prev: [Worker component](/build-an-app/lifecycle-worker) · Overview: [Component lifecycles](/build-an-app/component-lifecycle)

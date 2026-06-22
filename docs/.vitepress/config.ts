@@ -44,6 +44,18 @@ const sections = [
         ],
       },
       {
+        // The component shapes you build — fundamental, so they live with the how-to.
+        text: 'Component lifecycles',
+        items: [
+          { text: 'Overview', link: '/build-an-app/component-lifecycle' },
+          { text: 'HTTP component', link: '/build-an-app/lifecycle-http' },
+          { text: 'SSE component', link: '/build-an-app/lifecycle-sse' },
+          { text: 'WebSocket component', link: '/build-an-app/lifecycle-websocket' },
+          { text: 'Worker component (per-call)', link: '/build-an-app/lifecycle-worker' },
+          { text: 'Service component (resident)', link: '/build-an-app/lifecycle-service' },
+        ],
+      },
+      {
         text: 'Serve & coordinate',
         items: [
           { text: 'Serve over HTTP/WS/SSE', link: '/build-an-app/serving' },
@@ -75,12 +87,6 @@ const sections = [
       {
         text: 'Components & guests',
         items: [
-          { text: 'Component lifecycles', link: '/deep-dive/component-lifecycle' },
-          { text: 'HTTP component', link: '/deep-dive/lifecycle-http' },
-          { text: 'SSE component', link: '/deep-dive/lifecycle-sse' },
-          { text: 'WebSocket component', link: '/deep-dive/lifecycle-websocket' },
-          { text: 'Worker component (per-call)', link: '/deep-dive/lifecycle-worker' },
-          { text: 'Service component (resident)', link: '/deep-dive/lifecycle-service' },
           { text: 'Components & the actor world', link: '/deep-dive/components-and-the-actor-world' },
           { text: 'Guests: Rust, TypeScript & Go', link: '/deep-dive/guests' },
           { text: 'Permissions & sandboxing', link: '/deep-dive/permissions-and-sandboxing' },
