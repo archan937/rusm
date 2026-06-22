@@ -17,6 +17,7 @@ use std::time::Duration;
 use rusm_otp::{Context, ExitReason, Pid, Received, Runtime, Strategy};
 
 use crate::bridges::WasiHost;
+use crate::DynamicKind;
 
 use crate::bindings::rusm::runtime::actor;
 
@@ -45,9 +46,9 @@ impl actor::Host for WasiHost {
         let entry = spawner
             .lookup(&component)
             .ok_or_else(|| format!("unknown component `{component}`"))?;
-        if entry.dynamic {
+        if entry.dynamic.is_some() {
             return Err(format!(
-                "`{component}` is a dynamic JS template — spawn it with spawn-from(component, source)"
+                "`{component}` is a dynamic runner template — spawn it with spawn-from(component, source)"
             ));
         }
         // A node-registered component runs under its **declared** profile (the manifest's
@@ -55,7 +56,11 @@ impl actor::Host for WasiHost {
         // registration with no declared profile inherits this process's caps
         // (non-escalating). Either way the `spawn` capability above gates who may spawn.
         let caps = entry.caps.clone().unwrap_or_else(|| self.caps.clone());
-        let child = spawner.spawn_component(&entry.prepared, caps, Some(&component));
+        let prepared = entry
+            .prepared
+            .as_ref()
+            .ok_or_else(|| format!("`{component}` has no prepared component"))?;
+        let child = spawner.spawn_component(prepared, caps, Some(&component));
         // A TS service carries its bundle as message 1 (the js-runner's protocol).
         if let Some(bundle) = &entry.bundle {
             self.rt
@@ -74,42 +79,63 @@ impl actor::Host for WasiHost {
         if !self.caps.can_spawn() {
             return Err("spawn denied: missing the spawn capability".to_string());
         }
-        let bundle = match self.resolve_local(&source)? {
-            Some(bytes) => bytes,
-            None => {
-                // `url:` source: gate on the spawner's own network capability, then fetch
-                // via the node-injected resolver. Extract the resolver (an owned Arc) first
-                // so no `&self` borrow is held across the await (keeps the future `Send`).
-                if !self.caps.network_allowed() {
-                    return Err("spawn-from url denied: missing the network capability".to_string());
-                }
-                let resolver = self
-                    .spawner
-                    .as_ref()
-                    .and_then(|s| s.bundle_resolver.get().cloned())
-                    .ok_or("url: bundle sources are not configured on this node")?;
-                let url = source
-                    .trim()
-                    .strip_prefix("url:")
-                    .unwrap_or(source.trim())
-                    .to_string();
-                resolver(url).await?
-            }
-        };
-        let spawner = self.spawner.as_ref().ok_or("spawn unavailable here")?;
+        // Clone the spawner handle so no `&self` borrow is held across an await (keeps the
+        // future `Send`), then dispatch on the template kind.
+        let spawner = self.spawner.clone().ok_or("spawn unavailable here")?;
         let entry = spawner
             .lookup(&component)
             .ok_or_else(|| format!("unknown component `{component}`"))?;
-        if !entry.dynamic {
-            return Err(format!(
-                "`{component}` is not a dynamic JS template (use spawn for a fixed component)"
-            ));
-        }
         let caps = entry.caps.clone().unwrap_or_else(|| self.caps.clone());
-        let child = spawner.spawn_component(&entry.prepared, caps, Some(&component));
-        // The js-runner takes its bundle as message 1 (the runner's protocol).
-        self.rt.send(Pid::from_raw(child.pid().raw()), bundle);
-        Ok(child.pid().raw())
+        match entry.dynamic {
+            None => Err(format!(
+                "`{component}` is not a dynamic template (use `spawn` for a fixed component)"
+            )),
+            // Dynamic JS: fetch the bundle and run it on the shared js-runner (message 1).
+            Some(DynamicKind::Js) => {
+                // Resolve inline:/kv: synchronously; for url:, gate `network` and extract the
+                // resolver (an owned `Arc`) *before* awaiting, so no `&self` (the `!Sync`
+                // WasiHost) is held across the await — keeping the spawn-from future `Send`.
+                let bundle = match self.resolve_local(&source)? {
+                    Some(bytes) => bytes,
+                    None => {
+                        if !self.caps.network_allowed() {
+                            return Err(
+                                "spawn-from url denied: missing the network capability".to_string()
+                            );
+                        }
+                        let resolver = spawner
+                            .bundle_resolver
+                            .get()
+                            .cloned()
+                            .ok_or("url: bundle sources are not configured on this node")?;
+                        let url = source
+                            .trim()
+                            .strip_prefix("url:")
+                            .unwrap_or(source.trim())
+                            .to_string();
+                        resolver(url).await?
+                    }
+                };
+                let prepared = entry
+                    .prepared
+                    .as_ref()
+                    .ok_or("dynamic JS template has no runner")?;
+                let child = spawner.spawn_component(prepared, caps, Some(&component));
+                // The js-runner takes its bundle as message 1 (the runner's protocol).
+                self.rt.send(Pid::from_raw(child.pid().raw()), bundle);
+                Ok(child.pid().raw())
+            }
+            // Dynamic WASM: gate the I/O capability by scheme, then compile (cold once, cached
+            // by content hash) and spawn the prepared component on the pooled fast path (hot).
+            // `dynamic_wasm` borrows only the `Sync` spawner across its await, so the future
+            // stays `Send`.
+            Some(DynamicKind::Wasm) => {
+                self.gate_source(&source)?;
+                let prepared = spawner.dynamic_wasm(&source).await?;
+                let child = spawner.spawn_component(prepared.as_ref(), caps, Some(&component));
+                Ok(child.pid().raw())
+            }
+        }
     }
 
     /// Monitor `target`: when it dies, this process receives a `__down` message
@@ -239,7 +265,11 @@ impl actor::Host for WasiHost {
             let entry = spawner
                 .lookup(&name)
                 .ok_or_else(|| format!("unknown component `{name}`"))?;
-            let prepared = entry.prepared.clone();
+            // A supervised child is a fixed component (a dynamic template runs only via
+            // spawn-from, so it can't be a supervisor child).
+            let prepared = entry.prepared.clone().ok_or_else(|| {
+                format!("`{name}` is a dynamic template and can't be a supervised child")
+            })?;
             let bundle = entry.bundle.clone();
             // A supervised child runs under its OWN declared profile — consistent with a
             // direct spawn-by-name — falling back to the supervisor's caps for an ad-hoc
@@ -285,6 +315,23 @@ impl WasiHost {
     /// `kv_bucket`). `Ok(None)` signals a `url:`/`http(s)://` source, which `spawn-from`
     /// fetches via the node-injected resolver (enforcing `network`); `Err` is an
     /// unrecognised source.
+    /// Gate a dynamic-WASM `source` by its scheme **without fetching** — so the capability is
+    /// enforced on every spawn (cold *and* hot), and a cached `url:`/`kv:` bundle can never be
+    /// reached by a guest lacking `network`/`storage`. `inline:` needs no extra capability.
+    fn gate_source(&self, source: &str) -> Result<(), String> {
+        let source = source.trim();
+        if source.starts_with("kv:") && !self.caps.storage_allowed() {
+            return Err("spawn-from kv denied: missing the storage capability".to_string());
+        }
+        let is_url = source.starts_with("url:")
+            || source.starts_with("http://")
+            || source.starts_with("https://");
+        if is_url && !self.caps.network_allowed() {
+            return Err("spawn-from url denied: missing the network capability".to_string());
+        }
+        Ok(())
+    }
+
     fn resolve_local(&self, source: &str) -> Result<Option<Vec<u8>>, String> {
         let source = source.trim();
         if let Some(js) = source.strip_prefix("inline:") {

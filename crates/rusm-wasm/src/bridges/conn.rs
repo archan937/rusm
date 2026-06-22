@@ -88,7 +88,10 @@ impl Source {
                 } => {
                     let entry = spawner.lookup(&component)?;
                     Some(Resolved {
-                        prepared: entry.prepared,
+                        // A routed WS/SSE handler is a fixed component (never a dynamic
+                        // template), so `prepared` is present; `None` would mean a misrouted
+                        // template — treated as no match (the caller answers 404).
+                        prepared: entry.prepared?,
                         bundle: entry.bundle,
                         caps: caps.get(&component).cloned()?,
                         params,

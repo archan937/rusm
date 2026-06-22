@@ -264,10 +264,18 @@ impl RoutedHttpServer {
             body,
         };
 
+        // A routed HTTP handler is a fixed component (never a dynamic template), so `prepared`
+        // is present; `None` would mean a route pointing at a template — a config error.
+        let Some(prepared) = entry.prepared.as_ref() else {
+            return Ok(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("`{component}` is a dynamic template, not an HTTP handler"),
+            ));
+        };
         // Process-per-request: a fresh instance handles this one request, then exits.
         let child = self
             .spawner
-            .spawn_component(&entry.prepared, caps, Some(&component));
+            .spawn_component(prepared, caps, Some(&component));
         let child_pid = child.pid();
         // A TS handler carries its bundle as message 1 (the js-runner's protocol).
         if let Some(bundle) = &entry.bundle {

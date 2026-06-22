@@ -58,6 +58,43 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<ComponentLinker<WasiHost>>
     Ok(linker)
 }
 
+/// Resolve a component's imports against `linker` (and, if present, the overflow tier) and
+/// precompute its `entry` export index — the expensive `instantiate_pre`, done once, never per
+/// spawn. Shared by [`WasmRuntime::prepare_component`] and the dynamic-WASM preparer (which has
+/// the engine + linker but not a `&WasmRuntime`), so the prepare logic lives in one place.
+pub(crate) fn prepare_component_with(
+    linker: &ComponentLinker<WasiHost>,
+    overflow: Option<(&Engine, &ComponentLinker<WasiHost>)>,
+    component: &Component,
+    entry: &str,
+) -> Result<PreparedComponent> {
+    let pre = linker.instantiate_pre(component)?;
+    let entry_index = component
+        .get_export_index(None, entry)
+        .ok_or_else(|| anyhow::anyhow!("component has no `{entry}` export"))?;
+    // With an overflow tier, prepare the same component against it too — without recompiling:
+    // serialize the already-compiled component and load it into the overflow engine.
+    let overflow = match overflow {
+        Some((engine, overflow_linker)) => {
+            let cwasm = component.serialize()?;
+            // Safety: `cwasm` was just produced by `serialize` on a trusted, in-process
+            // component — exactly the precondition `deserialize` wants.
+            let overflow_component = unsafe { Component::deserialize(engine, &cwasm)? };
+            let overflow_pre = overflow_linker.instantiate_pre(&overflow_component)?;
+            let overflow_entry = overflow_component
+                .get_export_index(None, entry)
+                .ok_or_else(|| anyhow::anyhow!("component has no `{entry}` export"))?;
+            Some((overflow_pre, overflow_entry))
+        }
+        None => None,
+    };
+    Ok(PreparedComponent {
+        pre,
+        entry: entry_index,
+        overflow,
+    })
+}
+
 impl WasmRuntime {
     /// Compiles a component from Wasm bytes or component-model `.wat` text.
     pub fn compile_component(&self, wasm: impl AsRef<[u8]>) -> Result<Component> {
@@ -73,33 +110,11 @@ impl WasmRuntime {
         component: &Component,
         entry: &str,
     ) -> Result<PreparedComponent> {
-        let pre = self.component_linker.instantiate_pre(component)?;
-        let entry_index = component
-            .get_export_index(None, entry)
-            .ok_or_else(|| anyhow::anyhow!("component has no `{entry}` export"))?;
-
-        // If an overflow tier exists, prepare the same component against it too —
-        // without recompiling: serialize the already-compiled component and load it
-        // into the overflow engine.
-        let overflow = match (&self.overflow_component_linker, &self.spawner.overflow) {
-            (Some(linker), Some(engine)) => {
-                let cwasm = component.serialize()?;
-                // Safety: `cwasm` was just produced by `serialize` on a trusted,
-                // in-process component — exactly the precondition `deserialize` wants.
-                let overflow_component = unsafe { Component::deserialize(engine, &cwasm)? };
-                let overflow_pre = linker.instantiate_pre(&overflow_component)?;
-                let overflow_entry = overflow_component
-                    .get_export_index(None, entry)
-                    .ok_or_else(|| anyhow::anyhow!("component has no `{entry}` export"))?;
-                Some((overflow_pre, overflow_entry))
-            }
+        let overflow = match (&self.spawner.overflow, &self.overflow_component_linker) {
+            (Some(engine), Some(linker)) => Some((engine, linker.as_ref())),
             _ => None,
         };
-        Ok(PreparedComponent {
-            pre,
-            entry: entry_index,
-            overflow,
-        })
+        prepare_component_with(&self.component_linker, overflow, component, entry)
     }
 
     /// Spawns a prepared component as an isolated process under the **default-deny
@@ -215,7 +230,9 @@ impl Spawner {
             .caps
             .clone()
             .unwrap_or_else(|| CapabilityProfile::Sandboxed.capabilities());
-        let handle = self.spawn_component(&entry.prepared, caps, Some(name));
+        // A boot/resident component is fixed (never a dynamic template), so `prepared` is
+        // present; `None` (a template) has nothing to boot, so there's nothing to spawn here.
+        let handle = self.spawn_component(entry.prepared.as_ref()?, caps, Some(name));
         if let Some(bundle) = &entry.bundle {
             self.rt.send(handle.pid(), (**bundle).clone());
         }

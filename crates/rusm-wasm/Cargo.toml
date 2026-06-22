@@ -51,6 +51,11 @@ rusm-wire = { path = "../rusm-wire", version = "0.4.0" }
 # provider the cluster transport uses.
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
 rustls-pemfile = "2"
+# Content-addressed compile cache for dynamic-WASM components: `moka` is a battle-proven
+# async cache giving TTL + single-flight (each distinct bundle compiles once, every later
+# spawn is hot); `sha2` is the content hash that keys it. Host-only — the dynamic-WASM path.
+moka = { version = "0.12", features = ["future"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 # The routed-gateway test drives the real manifest route matcher (a sibling crate;

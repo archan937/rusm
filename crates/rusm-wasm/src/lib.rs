@@ -25,6 +25,7 @@ use wasmtime::{
 
 mod bindings;
 mod bridges;
+mod bundle_cache;
 mod caps;
 
 pub use bridges::http::{HttpServer, PreparedHttp};
@@ -99,18 +100,29 @@ pub(crate) struct Counters {
     pub(crate) notifications: AtomicU64,
 }
 
-/// The spawn core shared between the [`WasmRuntime`] and every **running guest** —
-/// held behind an `Arc` so a component's host context can spawn siblings without a
-/// back-reference to the whole runtime. It carries exactly what a spawn needs (the
-/// engine, the process runtime, and a name → prepared-component registry) and
-/// nothing the prepare-time linkers own, keeping the per-spawn path lean.
-/// A component registered for spawn-by-name: the prepared component plus an
-/// optional first message to deliver on spawn. For a **TS service** the prepared
-/// component is the shared js-runner and `bundle` is the JS source (replayed as
-/// message 1, the runner's protocol); for a Rust component `bundle` is `None`.
+/// A **dynamic runner template** kind — a registered component whose code is supplied per
+/// spawn from a runtime source (`spawn-from`), not fixed at registration. The loaded code
+/// runs under the template's declared `caps` (operator policy — the guest picks the code,
+/// never the capabilities). `spawn`-by-name is rejected for a template; only `spawn-from`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DynamicKind {
+    /// A JS runner template: the prepared component is the shared js-runner; the source is a
+    /// JS bundle delivered as message 1 (the runner's protocol).
+    Js,
+    /// A WASM runner template: the source is a `.wasm` component, compiled + prepared (cached
+    /// by content hash) at spawn — cold once, hot thereafter on the pooled fast path.
+    Wasm,
+}
+
+/// A component registered for spawn-by-name: the prepared component plus an optional first
+/// message to deliver on spawn. For a **TS service** the prepared component is the shared
+/// js-runner and `bundle` is the JS source (replayed as message 1, the runner's protocol);
+/// for a Rust component `bundle` is `None`; for a dynamic template see [`DynamicKind`].
 #[derive(Clone)]
 pub(crate) struct Registered {
-    pub(crate) prepared: PreparedComponent,
+    /// The prepared component to instantiate on spawn. `None` only for a [`DynamicKind::Wasm`]
+    /// template, whose component is compiled per-source at spawn (see the dynamic-WASM cache).
+    pub(crate) prepared: Option<PreparedComponent>,
     /// `Arc` so a lookup clone is cheap; the bytes copy once, on the actual send.
     pub(crate) bundle: Option<Arc<Vec<u8>>>,
     /// The component's **declared** capability profile. When set, a guest `spawn`-by-name
@@ -118,11 +130,9 @@ pub(crate) struct Registered {
     /// policy — what the manifest declares is what runs), instead of inheriting the
     /// spawner's caps. `None` → inherit the spawner's caps (ad-hoc registration / tests).
     pub(crate) caps: Option<Capabilities>,
-    /// A **dynamic JS runner template**: the prepared component is the js-runner and the
-    /// bundle is supplied per spawn from a runtime source (`spawn-from`), not fixed here.
-    /// `spawn`-by-name is rejected for these (there's no bundle); only `spawn-from` runs
-    /// them, under `caps` (the operator's declared profile).
-    pub(crate) dynamic: bool,
+    /// `Some(kind)` marks a **dynamic runner template** (JS or WASM): code supplied per spawn
+    /// via `spawn-from`. `None` is an ordinary fixed component.
+    pub(crate) dynamic: Option<DynamicKind>,
 }
 
 /// Resolves a `url:` `spawn-from` source to JS bundle bytes. **Injected by the
@@ -132,6 +142,23 @@ pub type BundleResolver = Arc<
     dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send>> + Send + Sync,
 >;
 
+/// Compiles + prepares a fetched dynamic-`.wasm` bundle into a [`PreparedComponent`]. Injected
+/// at construction (it captures the engine + the component linker + the overflow tier), so the
+/// dynamic-WASM `spawn-from` path compiles a runtime bundle without reaching back into the
+/// `WasmRuntime` — no `Arc` cycle. Sync: `Component::new` + `instantiate_pre` are CPU-bound.
+pub(crate) type WasmPreparer =
+    Arc<dyn Fn(&[u8]) -> Result<PreparedComponent, String> + Send + Sync>;
+
+/// Default freshness/idle window for the dynamic-WASM compile cache: how long a fetched
+/// bundle is reused for a source before the source is re-checked, and how long a compiled
+/// artifact survives without use. Generous by default; tune per node via the builder.
+pub(crate) const DEFAULT_DYNAMIC_TTL: Duration = Duration::from_secs(300);
+
+/// The spawn core shared between the [`WasmRuntime`] and every **running guest** — held
+/// behind an `Arc` so a component's host context can spawn siblings without a back-reference
+/// to the whole runtime. It carries what a spawn needs (the engine, the process runtime, a
+/// name → prepared-component registry) plus the dynamic-WASM compile cache + preparer, keeping
+/// the per-spawn path lean.
 pub(crate) struct Spawner {
     pub(crate) engine: Engine,
     pub(crate) rt: Runtime,
@@ -158,6 +185,13 @@ pub(crate) struct Spawner {
     /// [`WasmRuntime::set_bundle_resolver`]). Empty by default → a `url:` source errors
     /// ("not configured"); `inline:`/`kv:` never need it.
     pub(crate) bundle_resolver: OnceLock<BundleResolver>,
+    /// Compiles a fetched dynamic-`.wasm` bundle to a prepared component (see [`WasmPreparer`]).
+    /// Injected once at construction; absent only on a bare spawner (never on a real runtime).
+    pub(crate) wasm_preparer: OnceLock<WasmPreparer>,
+    /// Content-addressed compile cache for dynamic-WASM `spawn-from`: the first spawn of a
+    /// bundle compiles (cold), every later spawn reuses the prepared component on the pooled
+    /// fast path (hot). See [`crate::bundle_cache`].
+    pub(crate) wasm_cache: bundle_cache::BundleCache<PreparedComponent>,
 }
 
 impl Spawner {
@@ -178,6 +212,64 @@ impl Spawner {
             .get(name)
             .cloned()
     }
+
+    /// Fetch a dynamic bundle's bytes from a runtime `source` — `inline:<bytes>`,
+    /// `kv:<bucket>/<key>` (the node store), or `url:`/`http(s)://…` (the injected resolver).
+    /// Pure I/O; the **caller gates the capability** for the scheme before calling.
+    pub(crate) async fn fetch_bundle(&self, source: &str) -> Result<Vec<u8>, String> {
+        let source = source.trim();
+        if let Some(inline) = source.strip_prefix("inline:") {
+            return Ok(inline.as_bytes().to_vec());
+        }
+        if let Some(rest) = source.strip_prefix("kv:") {
+            let (bucket, key) = rest
+                .split_once('/')
+                .ok_or_else(|| format!("kv source must be `kv:<bucket>/<key>`, got {source:?}"))?;
+            let store = self
+                .store
+                .as_ref()
+                .ok_or_else(|| format!("kv source {source:?} needs a node store"))?;
+            return store
+                .bucket(bucket)
+                .get(key)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("bundle not found at {source}"));
+        }
+        let url = source.strip_prefix("url:").unwrap_or(source);
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let resolver = self
+                .bundle_resolver
+                .get()
+                .cloned()
+                .ok_or("url: bundle sources are not configured on this node")?;
+            return resolver(url.to_string()).await;
+        }
+        Err(format!(
+            "unrecognised bundle source {source:?} (expected `inline:<…>`, `kv:<bucket>/<key>`, or `http(s)://…`)"
+        ))
+    }
+
+    /// Resolve a dynamic-WASM `source` to a prepared component through the content-addressed
+    /// cache: the first spawn of a bundle compiles (cold), every later spawn reuses the prepared
+    /// component on the pooled fast path (hot). The caller must have gated the capability for the
+    /// source's scheme first.
+    pub(crate) async fn dynamic_wasm(
+        &self,
+        source: &str,
+    ) -> Result<Arc<PreparedComponent>, String> {
+        let preparer = self
+            .wasm_preparer
+            .get()
+            .cloned()
+            .ok_or("dynamic WASM is not configured on this node")?;
+        self.wasm_cache
+            .get(
+                source,
+                || self.fetch_bundle(source),
+                move |bytes| preparer(bytes),
+            )
+            .await
+    }
 }
 
 /// Runs Wasm guests as RUSM processes.
@@ -192,11 +284,15 @@ pub struct WasmRuntime {
     linker: Linker<bridges::wasip1::CoreHost>,
     /// The component-model counterpart of `linker`, with WASI wired in. Used by
     /// the wasip2/p3 bridges to prepare and spawn components. Built once.
-    component_linker: wasmtime::component::Linker<bridges::WasiHost>,
+    /// `Arc`-shared so the dynamic-WASM preparer closure (injected into the spawner) can
+    /// capture it to compile runtime bundles, without an `Arc` cycle back to the runtime.
+    /// `Arc` auto-derefs, so `instantiate_pre` call sites are unchanged.
+    component_linker: Arc<wasmtime::component::Linker<bridges::WasiHost>>,
     /// The component linker bound to the **overflow** engine (`None` unless built
     /// with [`with_overflow`](Self::with_overflow)); used to prepare a component's
-    /// overflow `InstancePre` alongside its pooled one.
-    pub(crate) overflow_component_linker: Option<wasmtime::component::Linker<bridges::WasiHost>>,
+    /// overflow `InstancePre` alongside its pooled one. `Arc`-shared (see above).
+    pub(crate) overflow_component_linker:
+        Option<Arc<wasmtime::component::Linker<bridges::WasiHost>>>,
     /// The prebuilt rquickjs **js-runner** component (for `spawn_js`), compiled +
     /// prepared lazily on first use so non-JS nodes pay nothing.
     js_runner: std::sync::OnceLock<PreparedComponent>,
@@ -443,16 +539,42 @@ impl WasmRuntime {
         // The component linker carries the built-in bridges; `extend` then wires any
         // custom application bridges on top — on *every* engine tier (pooled +
         // overflow), so an overflow-tier instance resolves the same custom imports.
-        let mut component_linker = bridges::wasip2::build_linker(&engine)?;
-        extend(&mut component_linker)?;
+        // `Arc`-shared so the dynamic-WASM preparer can capture it (no cycle to the runtime).
+        let component_linker = Arc::new({
+            let mut linker = bridges::wasip2::build_linker(&engine)?;
+            extend(&mut linker)?;
+            linker
+        });
         let overflow_component_linker = match overflow.as_ref() {
             Some(engine) => {
                 let mut linker = bridges::wasip2::build_linker(engine)?;
                 extend(&mut linker)?;
-                Some(linker)
+                Some(Arc::new(linker))
             }
             None => None,
         };
+
+        // The dynamic-WASM preparer: compiles a fetched `.wasm` bundle to a prepared component
+        // against the same linker(s). Captures clones of the engine + linkers (not the runtime),
+        // so it can run from the spawner's `spawn-from` path without an `Arc` cycle.
+        let wasm_preparer: WasmPreparer = {
+            let engine = engine.clone();
+            let linker = Arc::clone(&component_linker);
+            let overflow_engine = overflow.clone();
+            let overflow_linker = overflow_component_linker.clone();
+            Arc::new(move |bytes: &[u8]| {
+                let component = wasmtime::component::Component::new(&engine, bytes)
+                    .map_err(|e| format!("compiling dynamic WASM component: {e}"))?;
+                let overflow = match (&overflow_engine, &overflow_linker) {
+                    (Some(e), Some(l)) => Some((e, l.as_ref())),
+                    _ => None,
+                };
+                bridges::wasip2::prepare_component_with(&linker, overflow, &component, "run")
+                    .map_err(|e| format!("preparing dynamic WASM component: {e}"))
+            })
+        };
+        let wasm_preparer_cell = OnceLock::new();
+        let _ = wasm_preparer_cell.set(wasm_preparer);
 
         // Bump the epoch on a cadence — on a **dedicated OS thread**, not a Tokio
         // task. The whole point is to preempt guests that are pinning the Tokio
@@ -483,6 +605,8 @@ impl WasmRuntime {
                 pooled_cap: max_instances,
                 store,
                 bundle_resolver: OnceLock::new(),
+                wasm_preparer: wasm_preparer_cell,
+                wasm_cache: bundle_cache::BundleCache::new(DEFAULT_DYNAMIC_TTL),
             }),
             linker,
             component_linker,
@@ -514,10 +638,10 @@ impl WasmRuntime {
         self.spawner.register(
             name,
             Registered {
-                prepared,
+                prepared: Some(prepared),
                 bundle: None,
                 caps: None,
-                dynamic: false,
+                dynamic: None,
             },
         );
     }
@@ -536,10 +660,10 @@ impl WasmRuntime {
         self.spawner.register(
             name,
             Registered {
-                prepared,
+                prepared: Some(prepared),
                 bundle: None,
                 caps: Some(caps),
-                dynamic: false,
+                dynamic: None,
             },
         );
     }
@@ -553,10 +677,10 @@ impl WasmRuntime {
         self.spawner.register(
             name,
             Registered {
-                prepared,
+                prepared: Some(prepared),
                 bundle: Some(Arc::new(bundle.into())),
                 caps: None,
-                dynamic: false,
+                dynamic: None,
             },
         );
     }
@@ -574,10 +698,10 @@ impl WasmRuntime {
         self.spawner.register(
             name,
             Registered {
-                prepared,
+                prepared: Some(prepared),
                 bundle: Some(Arc::new(bundle.into())),
                 caps: Some(caps),
-                dynamic: false,
+                dynamic: None,
             },
         );
     }
@@ -593,10 +717,29 @@ impl WasmRuntime {
         self.spawner.register(
             name,
             Registered {
-                prepared,
+                prepared: Some(prepared),
                 bundle: None,
                 caps: Some(caps),
-                dynamic: true,
+                dynamic: Some(DynamicKind::Js),
+            },
+        );
+    }
+
+    /// Registers a **dynamic WASM runner template** under `name`: a capability profile with no
+    /// fixed component. A guest cannot `spawn` it; it runs only via `spawn-from(name, source)`,
+    /// which fetches a `.wasm` component from a runtime source (`kv:`/`url:`), compiles +
+    /// prepares it (cached by content hash — cold once, hot thereafter on the pooled fast
+    /// path), and instantiates it under `caps` (the operator's declared profile — the guest
+    /// chooses the code, never the capabilities). The app loader registers these for a
+    /// `[components.<name>]` marked `dynamic = "wasm"`.
+    pub fn register_wasm_template(&self, name: impl Into<String>, caps: Capabilities) {
+        self.spawner.register(
+            name,
+            Registered {
+                prepared: None,
+                bundle: None,
+                caps: Some(caps),
+                dynamic: Some(DynamicKind::Wasm),
             },
         );
     }
