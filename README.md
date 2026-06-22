@@ -142,7 +142,7 @@ beat the runtime that inspired this.
 
 ## Benchmarks
 
-Nineteen dashboard scenarios run on **live data** — release builds, measured under
+Twenty-one dashboard scenarios run on **live data** — release builds, measured under
 everyday machine load; they scale up with free CPU.
 
 | Scenario | Result |

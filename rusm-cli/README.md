@@ -22,6 +22,7 @@ rusm run            # run the app's components under their declared capabilities
 rusm dev            # watch ./components and rebuild + reload on edit
 rusm serve          # host rusm.toml [[serve]] entries (HTTP / WS / SSE) on real ports
 rusm node start     # host the app as an attachable node
+rusm kv set|get|list|rm    # read/write the durable store (publish kv: dynamic bundles)
 rusm attach         # observe a running node — local or host[:port]
 ```
 
