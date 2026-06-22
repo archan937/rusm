@@ -135,4 +135,4 @@ log::error!("meta-json not found");
 No `allow-stdio` grant — logging is a platform primitive, not stdout. The `console`
 methods are also typed by the standard `DOM` lib, and the `log` crate's sink is installed
 for you by `#[rusm_rs::main]` / `#[handlers]`. Both feed the same stream as the runtime's
-own lifecycle lines; see the [`[log]` reference](/build-an-app/configuration).
+own lifecycle lines; see the [`[log]` reference](/deep-dive/configuration).

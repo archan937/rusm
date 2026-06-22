@@ -29,10 +29,9 @@ const sections = [
     text: 'Build an app',
     items: [
       {
-        text: 'The app & its config',
+        text: 'The app & CLI',
         items: [
           { text: 'The app model', link: '/build-an-app/app-model' },
-          { text: 'Configuration', link: '/build-an-app/configuration' },
           { text: 'The rusm CLI', link: '/build-an-app/cli' },
         ],
       },
@@ -41,6 +40,7 @@ const sections = [
         items: [
           { text: 'Write a TypeScript component', link: '/build-an-app/typescript-component' },
           { text: 'Write a Rust component', link: '/build-an-app/rust-component' },
+          { text: 'Write a Go component', link: '/build-an-app/go-component' },
         ],
       },
       {
@@ -108,18 +108,17 @@ const sections = [
           { text: 'The distributed model', link: '/deep-dive/distributed-model' },
           { text: 'Live attach', link: '/deep-dive/live-attach' },
           { text: 'Observe a node', link: '/deep-dive/observe' },
-        ],
-      },
-      {
-        text: 'Embedding & ABI',
-        items: [
           { text: 'Embedding RUSM as a library', link: '/deep-dive/embedding' },
-          { text: 'Host ABI', link: '/deep-dive/host-abi' },
         ],
       },
       {
-        text: 'Glossary',
-        items: [{ text: 'Glossary', link: '/deep-dive/glossary' }],
+        // The exhaustive lookup specs (the teaching is in the Guide; this is the spec).
+        text: 'Reference',
+        items: [
+          { text: 'Configuration', link: '/deep-dive/configuration' },
+          { text: 'Host ABI', link: '/deep-dive/host-abi' },
+          { text: 'Glossary', link: '/deep-dive/glossary' },
+        ],
       },
     ],
   },

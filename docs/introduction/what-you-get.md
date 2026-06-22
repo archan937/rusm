@@ -83,7 +83,7 @@ that teaches it.
   reload), `rusm attach` (a live REPL into a local or remote node).
 - **Dynamic bundle sourcing** — a component's JS can load from a URL or the durable
   `kv` store (`source = "…"`) instead of a local artifact: deploy JS live, no node
-  rebuild. → [configuration](/build-an-app/configuration#dynamic-bundle-sourcing)
+  rebuild. → [configuration](/deep-dive/configuration#dynamic-bundle-sourcing)
 - **Distributed clustering** — `ClusterNode::connect` (the `Node.connect` equivalent),
   cross-node send, a gossiped global registry, remote spawn, all over QUIC + **mutual
   TLS**. → [distributed nodes](/deep-dive/distributed-nodes)

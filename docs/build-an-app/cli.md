@@ -11,7 +11,7 @@ rusm dev           # build + run + watch & reload (iterate)
 rusm attach        # live REPL into a running node
 ```
 
-Config comes from `rusm.toml` (see **[configuration](/build-an-app/configuration)**);
+Config comes from `rusm.toml` (see **[configuration](/deep-dive/configuration)**);
 the commands that start a node also accept the flags in the last section.
 
 ## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board]`

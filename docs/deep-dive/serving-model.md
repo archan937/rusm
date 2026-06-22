@@ -100,7 +100,7 @@ number is the server's — see the [benchmark reference](/about/benchmark-dashbo
 See the full [serving guide](/deep-dive/serving-http-ws-sse) for routing syntax, the
 `#[rusm_rs::handlers]` macro, the `Sse` API, the TypeScript path, and a worked example;
 the `[[serve]]` and `[serve.routes]` schema is in the
-[configuration reference](/build-an-app/configuration).
+[configuration reference](/deep-dive/configuration).
 
 For a complete runnable app in each language, see the collaborative todo board —
 [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript) ·

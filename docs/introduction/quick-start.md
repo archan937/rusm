@@ -22,6 +22,6 @@ cd board && rusm build && rusm serve   # → open http://127.0.0.1:8080
 
 `rusm new --rust` (or `--lang go`) scaffolds a single Rust or Go component; `--protocol
 ws|sse` a WebSocket or SSE handler. The scaffolded `rusm.toml` is the app manifest — see the
-[configuration reference](/build-an-app/configuration) for every table and field
+[configuration reference](/deep-dive/configuration) for every table and field
 (`[[serve]]`, `[serve.routes]`, `[capabilities.<name>]`, `[components.<name>]`, env), and the
 [`rusm` CLI reference](/build-an-app/cli) for the full command set.

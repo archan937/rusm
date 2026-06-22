@@ -186,7 +186,7 @@ routes it to the node's log stream. The `log` crate (Rust), `console.*` (TS), an
 `log/slog` (Go) all flow to the platform **`log` op**, which stamps the timestamp, this
 process's `component#pid`, and the severity. There's no init to call and nothing to wire —
 name, pid, and format are the platform's. Output is gated by the node's `[log] level`
-([configuration](/build-an-app/configuration#log--platform-lifecycle-logging)), the
+([configuration](/deep-dive/configuration#log--platform-lifecycle-logging)), the
 single source of truth (not a capability) — a record below the threshold is dropped.
 
 ::: code-group
@@ -218,7 +218,7 @@ log.Printf("gave up after %d attempts", attempt)
 :::
 
 These are your **application** logs. They're distinct from the **platform** lifecycle
-log (`[log] level = …` → `rusm spawn/exit component#pid …`, [configuration](/build-an-app/configuration#log--platform-lifecycle-logging)),
+log (`[log] level = …` → `rusm spawn/exit component#pid …`, [configuration](/deep-dive/configuration#log--platform-lifecycle-logging)),
 which the runtime emits and tags `rusm` so the two are easy to tell apart on stderr.
 
 ## The shared runner — tiny TS components (vs jco)

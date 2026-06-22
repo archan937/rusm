@@ -15,7 +15,7 @@ Capabilities::nothing()                               // start from nothing…
 ```
 
 In the app model you declare the same grants as a `[capabilities.<name>]` profile in
-`rusm.toml` (see [Configuration](/build-an-app/configuration)); the builder above is for
+`rusm.toml` (see [Configuration](/deep-dive/configuration)); the builder above is for
 [embedding](/deep-dive/embedding). Grants map onto standard WASI plus a `StoreLimiter` memory cap. A
 breach traps *only that process*. See
 [permissions & sandboxing](/deep-dive/permissions-and-sandboxing).

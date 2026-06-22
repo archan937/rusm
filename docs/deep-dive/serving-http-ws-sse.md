@@ -63,7 +63,7 @@ serving instance:
   `send`). This is your counter, cache, session map, rate limiter, chat-room registry,
   pub/sub hub. A handler `call`s it and shapes the reply into a response.
 - **Durable `kv`** — the embedded redb-backed key-value store, for state that must
-  survive a restart (see the [configuration reference](/build-an-app/configuration)).
+  survive a restart (see the [configuration reference](/deep-dive/configuration)).
 
 This is where the old "resident vs per-call" distinction now lives — and it lives in
 `[components.<name>]`, not in serving: a `resident = true` **service** holds state and is
@@ -238,7 +238,7 @@ allowed_origins = ["https://app.example.com"] # restrict the handshake Origin (W
   **cross-site WebSocket hijacking (CSWSH) protection**. A handshake from an unlisted (or
   absent) `Origin` is refused with **`403`**, before any process is spawned. Empty
   (default) = any origin (no check). (A browser still applies CORS to HTTP/SSE replies via
-  [`[serve.headers]`](/build-an-app/configuration#serve-headers-per-listener-response-headers);
+  [`[serve.headers]`](/deep-dive/configuration#serve-headers-per-listener-response-headers);
   `Origin` checks are the WebSocket equivalent, since WS has no CORS preflight.)
 
 ## Compression {#compression}
@@ -274,7 +274,7 @@ covers the paths the platform itself frames (routed HTTP, SSE, WS).
 
 ## TLS — `https` / `wss` {#tls}
 
-Add a [`[serve.tls]`](/build-an-app/configuration#servetls-listener-tls) cert/key to a listener
+Add a [`[serve.tls]`](/deep-dive/configuration#servetls-listener-tls) cert/key to a listener
 and it serves over TLS — `https` for HTTP/SSE, `wss` for WebSocket. The host terminates TLS on
 each connection *before* HTTP, so routing, the connection context, compression, caps, and the
 per-connection process model are all unchanged; only the transport is encrypted.
