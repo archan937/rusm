@@ -1,6 +1,6 @@
 [package]
 name = "rusm-otp"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ description = "The Wasm-free Erlang/OTP core of RUSM: processes, mailboxes, sche
 # Invariant: this crate must NOT depend on `wasmtime` or any Wasm type — the
 # actor model stands alone. Wasm is a separate, optional backend (`rusm-wasm`).
 [dependencies]
-rusm-logfmt = { path = "../rusm-logfmt", version = "0.4.0" }
+rusm-logfmt = { path = "../rusm-logfmt", version = "0.4.1" }
 dashmap = "6.2.1"
 futures-util = { version = "0.3.32", default-features = false, features = ["alloc"] }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "sync", "macros", "time", "net", "io-util"] }

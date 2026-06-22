@@ -6,7 +6,7 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
-## [0.4.1] — unreleased
+## [0.4.1] — 2026-06-23
 
 A **correctness** release for the guest RPC wire, surfaced by porting a real app
 (genius-rusm) onto RUSM: the first GenServer-that-also-calls — a service that makes a `call`

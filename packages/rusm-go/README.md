@@ -183,7 +183,7 @@ tinygo build -target=wasip2 -no-debug -panic=trap -opt=z \
 A component module just requires this SDK:
 
 ```
-require github.com/archan937/rusm/packages/rusm-go v0.4.0
+require github.com/archan937/rusm/packages/rusm-go v0.4.1
 ```
 
 Toolchain: Go + TinyGo (0.41+) + `wit-bindgen-go` + `wasm-tools` + `binaryen` (wasm-opt).

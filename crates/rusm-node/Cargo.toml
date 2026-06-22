@@ -1,6 +1,6 @@
 [package]
 name = "rusm-node"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ description = "The RUSM node layer: the rusm.toml app manifest, resource profile
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "1.1.2"
-rusm-otp = { path = "../rusm-otp", version = "0.4.0" }
+rusm-otp = { path = "../rusm-otp", version = "0.4.1" }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 tokio-tungstenite = "0.29.0"
 futures-util = "0.3.32"

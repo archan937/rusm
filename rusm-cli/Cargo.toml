@@ -1,6 +1,6 @@
 [package]
 name = "rusm-cli"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,14 +13,14 @@ name = "rusm"
 path = "src/main.rs"
 
 [dependencies]
-rusm-node = { path = "../crates/rusm-node", version = "0.4.0" }
-rusm-otp = { path = "../crates/rusm-otp", version = "0.4.0" }
-rusm-wasm = { path = "../crates/rusm-wasm", version = "0.4.0" }
+rusm-node = { path = "../crates/rusm-node", version = "0.4.1" }
+rusm-otp = { path = "../crates/rusm-otp", version = "0.4.1" }
+rusm-wasm = { path = "../crates/rusm-wasm", version = "0.4.1" }
 # Build-time QuickJS bytecode compiler (version-locked to the js-runner) so
 # `rusm build` precompiles each TS bundle → wasm/<name>.qjsbc.
-rusm-jsc = { path = "../crates/rusm-jsc", version = "0.4.0" }
+rusm-jsc = { path = "../crates/rusm-jsc", version = "0.4.1" }
 # Reading a kv-sourced component bundle from the node's durable store.
-rusm-kv = { path = "../crates/rusm-kv", version = "0.4.0" }
+rusm-kv = { path = "../crates/rusm-kv", version = "0.4.1" }
 anyhow = { workspace = true }
 # Parsing a custom bridge's bridge.wit (package + interface names) to synthesize the
 # generated host crate's `bindgen!` world. The WIT-format parser only — no wasmtime.

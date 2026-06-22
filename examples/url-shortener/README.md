@@ -8,8 +8,8 @@ One handler component (`api`) keeps the `code → URL` map in durable **`kv`**, 
 link survives a restart. Each request runs in its own sandboxed WASM instance; there's no
 shared state to corrupt.
 
-Every variant uses **published** dependency specs (`rusm-ts@^0.4.0`, `rusm-rs = "0.4.0"`,
-`rusm-go@v0.4.0`) — copy any one directory out of the repo and it builds on its own.
+Every variant uses **published** dependency specs (`rusm-ts@^0.4.1`, `rusm-rs = "0.4.1"`,
+`rusm-go@v0.4.1`) — copy any one directory out of the repo and it builds on its own.
 
 ## Run it
 

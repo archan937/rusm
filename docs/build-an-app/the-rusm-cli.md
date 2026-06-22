@@ -233,4 +233,4 @@ Two flags are **global** — they work with any command, or none:
 | Flag | Meaning |
 | --- | --- |
 | `-h`, `--help` | The top-level help, or a command's (`rusm <command> --help`). |
-| `-V`, `--version` | Print the `rusm` version (e.g. `rusm 0.4.0`). |
+| `-V`, `--version` | Print the `rusm` version (e.g. `rusm 0.4.1`). |
