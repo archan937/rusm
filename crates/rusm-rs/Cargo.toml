@@ -24,3 +24,9 @@ log = "0.4"
 # crates.io resolves against once published; the path is used in-repo.
 rusm-wire = { path = "../rusm-wire", version = "0.4.1" }
 rusm-rs-macros = { path = "../rusm-rs-macros", version = "0.4.1" }
+
+# Raw `wasi:http` bindings for the outbound `http::fetch` helper. Confined to wasm32 so the
+# host test build (which can't link the wasi imports) still builds + tests the pure modules.
+# Used over `wstd`, whose poll reactor stalls under RUSM's async component model.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasip2 = "1.0.3"

@@ -1,0 +1,24 @@
+# A guest that makes one outbound GET via `rusm_rs::http::fetch` (the SDK's outbound HTTP over
+# raw wasi:http) and reports the result — proving a Rust guest does outbound HTTP without
+# hand-rolling the wasi:http plumbing. Built for wasm32-wasip2, checked in as rs_fetch.wasm.
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/rs_fetch.wasm ../rs_fetch.wasm
+[workspace]
+
+[package]
+name = "rs-fetch"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "rs_fetch"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"

@@ -38,6 +38,34 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
+impl Request {
+    /// A `GET` request to `url` (build an outbound request for `rusm_rs::http::fetch`).
+    pub fn get(url: impl Into<String>) -> Self {
+        Self {
+            method: "GET".into(),
+            url: url.into(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+    }
+
+    /// A `POST` request to `url` with a raw body.
+    pub fn post(url: impl Into<String>, body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            method: "POST".into(),
+            url: url.into(),
+            headers: Vec::new(),
+            body: body.into(),
+        }
+    }
+
+    /// Adds a header, builder-style.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+}
+
 /// The response a resident handler returns. The guest serializes it as the reply's
 /// `ok`; the host deserializes it. `stream` marks an SSE response whose body then
 /// rides a byte stream rather than `body`.

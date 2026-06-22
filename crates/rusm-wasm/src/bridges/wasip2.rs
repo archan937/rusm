@@ -1983,6 +1983,85 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rs_http_fetch_reaches_a_server_when_granted_and_is_denied_when_sandboxed() {
+        // The `rusm_rs::http::fetch` SDK helper (raw wasi:http, capability-gated) — a Rust guest
+        // does outbound HTTP without hand-rolling the plumbing. Granted → reaches the server;
+        // sandboxed → refused at the host. (The Rust twin of the JS `fetch` test above.)
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = stream.read(&mut buf).await; // consume the request head
+                    let body = "hello from server";
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.flush().await;
+                });
+            }
+        });
+
+        const RS_FETCH: &[u8] = include_bytes!("../../tests/fixtures/rs_fetch.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(RS_FETCH).unwrap(), "run")
+            .unwrap();
+        let url = format!("http://{addr}/");
+
+        // Granted: a NetworkClient guest fetches and reads the body.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let guest =
+            wr.spawn_component_with(&prepared, CapabilityProfile::NetworkClient.capabilities());
+        rt.send(guest.pid(), url.clone().into_bytes());
+        rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("fetch must return")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "200|hello from server",
+            "a granted guest's http::fetch reaches the server and reads the body"
+        );
+
+        // Denied: a sandboxed guest's fetch is refused at the host (default-deny).
+        let (tx2, rx2) = tokio::sync::oneshot::channel();
+        let collector2 = rt.spawn(move |mut ctx| async move {
+            let _ = tx2.send(ctx.recv().await.message().unwrap());
+        });
+        let sandboxed =
+            wr.spawn_component_with(&prepared, CapabilityProfile::Sandboxed.capabilities());
+        rt.send(sandboxed.pid(), url.into_bytes());
+        rt.send(
+            sandboxed.pid(),
+            collector2.pid().raw().to_string().into_bytes(),
+        );
+        let denied = String::from_utf8(
+            tokio::time::timeout(std::time::Duration::from_secs(10), rx2)
+                .await
+                .expect("denied fetch must return")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            denied.starts_with("ERR:"),
+            "a sandboxed guest's http::fetch is denied; got: {denied}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_go_supervisor_restarts_a_dead_child() {
         // rusm.Supervisor (one-for-one) over the host's native supervise ABI: it spawns
         // + monitors the `flaky` Go child, which announces its pid to the registered

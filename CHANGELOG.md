@@ -16,6 +16,11 @@ Closes two guest-SDK gaps that forced apps to hand-roll platform plumbing (raw w
   resident), the TS twin of Rust's `Client::connect(pid)` / Go's `Call(pid, …)`. `spawn<T>` only
   ever started a *fresh* instance, so reaching a resident from TS previously meant hand-building
   the RPC envelope; `connect` makes it `await connect<Counter>("counter").bump(1)`.
+- **`rusm-rs` `http::fetch`** — outbound HTTP for a Rust guest over raw `wasi:http`
+  (capability-gated on the network capability), reusing the shared `Request`/`Response` (+ new
+  `Request::get`/`post`/`.header` builders). A guest writes `http::fetch(&Request::post(url,
+  body).header("authorization", token))` instead of hand-rolling the wasi:http plumbing — the
+  proven fiber-parking path, not `wstd`.
 
 ## [0.4.1] — 2026-06-23
 

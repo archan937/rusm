@@ -224,6 +224,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rs-fetch"
+version = "0.0.0"
+dependencies = [
+ "rusm-rs",
+ "wit-bindgen 0.46.0",
+]
+
+[[package]]
 name = "rusm-rs"
 version = "0.4.1"
 dependencies = [
