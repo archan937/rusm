@@ -21,4 +21,4 @@ It composes [`rusm-otp`](https://crates.io/crates/rusm-otp) and
 
 Part of [RUSM](https://github.com/archan937/rusm). See the
 [repo README](https://github.com/archan937/rusm#readme) and the
-[CLI reference](https://github.com/archan937/rusm/blob/main/docs/reference-cli.md).
+[CLI reference](https://github.com/archan937/rusm/blob/main/docs/build-an-app/the-rusm-cli.md).

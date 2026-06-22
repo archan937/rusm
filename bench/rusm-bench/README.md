@@ -20,4 +20,4 @@ measured under genuine load. The standalone `examples/benchmarks/*` (registered 
 comes from [`rusm-loadtest`](../rusm-loadtest).
 
 Part of [RUSM](https://github.com/archan937/rusm). See
-[`docs/03-benchmark-dashboard.md`](https://github.com/archan937/rusm/blob/main/docs/03-benchmark-dashboard.md).
+[`docs/about/benchmark-dashboard-and-observer.md`](https://github.com/archan937/rusm/blob/main/docs/about/benchmark-dashboard-and-observer.md).

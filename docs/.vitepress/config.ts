@@ -193,6 +193,8 @@ export default defineConfig({
   // so every asset/link resolves under the /rusm/ subpath.
   base: '/rusm/',
   cleanUrls: true,
+  // README.md is a contributor doc for this directory, not a published page.
+  srcExclude: ['README.md'],
   // Four code-theme families, each a light/dark pair, all baked into every code block
   // as `--shiki-<key>` CSS variables (Shiki multi-theme via `defaultColor:false`). The
   // `light`/`dark` keys are the default (Rosé Pine — warm, matches the copper/cream

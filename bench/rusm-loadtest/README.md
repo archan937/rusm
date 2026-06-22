@@ -26,4 +26,4 @@ the source-of-truth serving numbers in the docs (the dashboard's co-resident til
 by design — they share the node's CPU).
 
 Part of [RUSM](https://github.com/archan937/rusm). See
-[`docs/03-benchmark-dashboard.md`](https://github.com/archan937/rusm/blob/main/docs/03-benchmark-dashboard.md).
+[`docs/about/benchmark-dashboard-and-observer.md`](https://github.com/archan937/rusm/blob/main/docs/about/benchmark-dashboard-and-observer.md).

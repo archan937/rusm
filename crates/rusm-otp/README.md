@@ -31,4 +31,4 @@ rt.send(pid, b"hello".to_vec());
 
 Part of [RUSM](https://github.com/archan937/rusm). See the
 [repo README](https://github.com/archan937/rusm#readme) and the
-[architecture docs](https://github.com/archan937/rusm/blob/main/docs/01-architecture.md).
+[architecture docs](https://github.com/archan937/rusm/blob/main/docs/about/architecture.md).

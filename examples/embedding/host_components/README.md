@@ -34,6 +34,6 @@ Same component, two capability profiles — sandboxed by construction.
 
 A guest written in Rust (`wit-bindgen`) or TS (Bun + rquickjs) would additionally
 import the `rusm:runtime` actor world to `spawn`/`send`/`receive`/`register` — see
-the [host ABI](../../../docs/05-host-abi.md) and the [Phase 7
+the [host ABI](../../../docs/deep-dive/host-abi-reference.md) and the [Phase 7
 doc](../../../docs/phases/phase-07-components.md). To run a whole app of components,
 see the app model: `rusm.toml [components.<name>]` + `rusm build` / `rusm dev`.

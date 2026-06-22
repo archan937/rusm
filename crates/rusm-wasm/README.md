@@ -34,4 +34,4 @@ let handle = wr.spawn_component(&bytes)?;   // a .wasm component, now a supervis
 
 Part of [RUSM](https://github.com/archan937/rusm). See the
 [repo README](https://github.com/archan937/rusm#readme) and the
-[serving docs](https://github.com/archan937/rusm/blob/main/docs/serving-http-ws-sse.md).
+[serving docs](https://github.com/archan937/rusm/blob/main/docs/deep-dive/serving-http-ws-and-sse.md).

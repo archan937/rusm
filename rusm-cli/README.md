@@ -44,5 +44,5 @@ with TinyGo) — all three share one wire and interoperate.
 
 Part of [RUSM](https://github.com/archan937/rusm). See the
 [repo README](https://github.com/archan937/rusm#readme), the
-[`rusm` CLI reference](https://github.com/archan937/rusm/blob/main/docs/reference-cli.md),
-and the [Getting Started guide](https://github.com/archan937/rusm/blob/main/docs/getting-started.md).
+[`rusm` CLI reference](https://github.com/archan937/rusm/blob/main/docs/build-an-app/the-rusm-cli.md),
+and the [Getting Started guide](https://github.com/archan937/rusm/blob/main/docs/introduction/quick-start.md).

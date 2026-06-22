@@ -18,7 +18,7 @@ Built for `wasm32-wasip2`. A component crate is a `cdylib` depending on `rusm-rs
 crate-type = ["cdylib"]
 
 [dependencies]
-rusm-rs = "0.2"
+rusm-rs = "0.4"
 wit-bindgen = "0.46"
 ```
 

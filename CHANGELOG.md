@@ -6,6 +6,50 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.4.0] — 2026-06-22
+
+A **custom-bridges** release: an app can define its own **native host functions** — typed
+WIT functions backed by host Rust — and call them from **any** guest (Rust, Go, **and**
+TypeScript) as ordinary imports. It's RUSM's compiled-in answer to a wasmCloud capability
+provider: no lattice, no broker, no RPC, default-deny and gated by name. Underneath, the
+host's own built-in capabilities were refactored into the same single-source **`bridges/`**
+layout. **One breaking change**: the `[[serve]]` `name` field is renamed to `component`. The
+whole workspace + the `rusm-ts` package move to **0.4.0** in lock-step; `rusm-go` is tagged
+`v0.4.0`.
+
+### Added
+- **Custom bridges** — an app declares `bridges/<name>/{bridge.wit, host.rs}` (its own WIT
+  package + a native `impl <iface>::Host for BridgeHost`); `rusm build` generates the host
+  glue, vendors the contract into each granted guest, and compiles a small host binary that
+  registers it. Reachable only by a component whose profile lists `bridges = ["<name>"]`
+  (default-deny). Carries the **full WIT value-type set** — records, variants, enums, lists,
+  options, results, tuples — identical for every guest.
+- **Bridges from every guest** — Rust (`#[rusm_rs::handlers(bridge = "…")]` →
+  `crate::<iface>`), Go (`wit-bindgen-go` bindings), and **TypeScript** (a per-app js-runner
+  rebuilt with the bridge compiled in + a generated `bridges.d.ts`). TS records/enums marshal
+  JS↔Rust via `serde_json` inside the QuickJS runner; the host call itself stays a typed WIT
+  call.
+- **`rusm new --bridges`** scaffolds a complete custom-bridge app — a `weather` bridge plus a
+  guest that calls it.
+- **Docs & examples** — a task-oriented *Build an app* guide rebuilt around a runnable
+  **URL-shortener** example (TypeScript/Rust/Go), an *Add your own functions* custom-bridges
+  page, and the `examples/custom-bridge` weather app.
+
+### Changed
+- **Internal `bridges/` single-source layout** — the host's built-in capabilities (`kv`,
+  `log`, `streams`, `pg`, `serve`, `actor`) were each migrated to their own WIT interface
+  under `bridges/<name>/`, single-sourced across host and guests. No guest-facing change;
+  the actor ABI is unchanged.
+
+### Breaking
+- **`[[serve]]` `name` → `component`** — a routes-less HTTP/WS/SSE listener now names its
+  single handler with `component = "…"` (was `name = "…"`). Update `rusm.toml`; unknown
+  fields are a hard config error, so a stale `name =` fails fast with a clear message.
+
+### Compatibility
+- Custom bridges and the `bridges/` refactor are **additive** — existing guests and the actor
+  ABI are unchanged. The only breaking change is the `[[serve]]` field rename above.
+
 ## [0.3.0] — 2026-06-19
 
 A **serving-maturity** release: the HTTP / SSE / WebSocket surface gains a full,
