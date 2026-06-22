@@ -324,8 +324,10 @@ mod tests {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let root = manifest.join("..");
         // (vendored under rusm-cli/, canonical source relative to the repo root)
+        // `templates/runtime-world.wit` is omitted on purpose: it's a generated rusm:runtime
+        // guest world (a TARGETS entry in bridges/assemble-wit.sh), drift-guarded by the
+        // `bridge_sync` `world_wit_in_sync` test, not by `make sync-templates`.
         let pairs = [
-            ("templates/runtime-world.wit", "crates/rusm-rs/wit/world.wit"),
             ("templates/weather/host-main.rs", "examples/custom-bridge/src/main.rs"),
             (
                 "templates/weather/bridge.wit",
