@@ -1,0 +1,21 @@
+# A tiny URL shortener in Go — routed handler actions over durable kv.
+# `rusm build` compiles components/api with TinyGo (wasm32-wasip2); `rusm serve` hosts it.
+# The companion to the docs guide "A URL shortener" (docs/build-an-app/url-shortener).
+
+[node]
+store = "links.redb"               # durable kv — the code → URL map lives here
+
+[[serve]]
+protocol = "http"
+listen   = "127.0.0.1:8080"
+
+[serve.routes]                     # map each request to a handler action
+"POST /shorten" = "api#shorten"    # save a URL, return a short code
+"GET  /:code"   = "api#expand"     # look the code up, redirect to the URL
+
+[capabilities.stateful]
+inherits      = "sandboxed"        # default-deny base
+allow-storage = true               # + the kv store
+
+[components.api]
+capability = "stateful"

@@ -1,0 +1,8 @@
+{
+  "name": "url-shortener",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "rusm-ts": "^0.3.0"
+  }
+}

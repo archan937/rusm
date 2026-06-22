@@ -1,0 +1,20 @@
+# Standalone ([workspace]) so it builds for wasm32-wasip2 on its own, with published
+# dependency versions — copy this directory anywhere and `rusm build` just works.
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rusm-rs = "0.3.0"
+wit-bindgen = "0.46"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[workspace]

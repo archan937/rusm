@@ -5,10 +5,24 @@ Three kinds of example, by what you're here for: **build an app** (start here),
 
 ## Apps — start here
 
-A complete **collaborative todo board**, one per guest language — the same app, idiomatic
-to each. HTTP CRUD + a live SSE feed + WebSocket chat + a service driven by a worker, each
-an isolated, supervised WASM process, unified by process-group tags (no broker). Build and
-serve, then open `http://localhost:8080`:
+### Smallest — a [URL shortener](./url-shortener/)
+
+One handler over durable `kv` — `POST` a URL, get a short code; visit the code, get
+redirected. The minimal complete app, in **TypeScript, Rust, and Go**, and the runnable
+companion to the docs guide *A URL shortener*. Each variant uses published dependency specs,
+so you can copy any one directory out of the repo and it still builds.
+
+```sh
+cd examples/url-shortener/<lang>     # typescript | rust | go
+rusm build && rusm serve
+curl -X POST 127.0.0.1:8080/shorten -d 'https://rusm.dev/docs'   # → /1
+```
+
+### Full — a collaborative [todo board](./typescript/)
+
+The same app in each guest language — HTTP CRUD + a live SSE feed + WebSocket chat + a
+service driven by a worker, each an isolated, supervised WASM process, unified by
+process-group tags (no broker). Build and serve, then open `http://localhost:8080`:
 
 ```sh
 cd examples/<lang>          # typescript | rust | go
@@ -24,6 +38,13 @@ rusm build && rusm serve
 Each app's README has the full tour (the five components, the web page, the composition).
 They're the on-ramp: write normal code in your language, get a supervised multi-protocol
 server.
+
+### Native functions — a [weather custom bridge](./custom-bridge/)
+
+Give every guest a typed function backed by host Rust. A `weather` bridge
+(`bridges/weather/{bridge.wit,host.rs}`) is called from Rust, Go, **and** TypeScript guests as
+an ordinary import — RUSM's answer to a capability provider, compiled-in and typed. Scaffold
+your own with `rusm new <name> --bridges`.
 
 ## [Embedding](./embedding/) — use RUSM as a Rust library
 

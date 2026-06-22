@@ -1,0 +1,18 @@
+# A tiny URL shortener in TypeScript — one self-routing HTTP handler over durable kv.
+# `rusm build` bundles components/api/index.ts; `rusm serve` hosts it. The companion to
+# the docs guide "A URL shortener" (docs/build-an-app/url-shortener).
+
+[node]
+store = "links.redb"               # durable kv — the code → URL map lives here
+
+[[serve]]
+protocol  = "http"
+listen    = "127.0.0.1:8080"
+component = "api"                  # one self-routing fetch handler → ./wasm/api.js
+
+[capabilities.stateful]
+inherits      = "sandboxed"        # default-deny base
+allow-storage = true               # + the kv store
+
+[components.api]
+capability = "stateful"
