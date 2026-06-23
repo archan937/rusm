@@ -46,8 +46,8 @@ Three callbacks — `open`, `message`, `close`:
 
 **One handler instance per connection** — its state is private to that client.
 
-Here's a minimal chat room — client sends `{"join":"<room>"}` then `{"say":"<text>"}`;
-peers' relays arrive as `{"from":"<pid>","text":"..."}`:
+Here's a minimal chat room — client sends `{"join":"general"}` then `{"say":"hello"}`;
+peers' relays arrive as `{"from":"<pid>","text":"hello"}`:
 
 ::: code-group
 
@@ -121,7 +121,7 @@ impl Handler for Chat {
         if let Some(room) = frame.join {
             // Client wants to join a room: tag this process so broadcasts reach it.
             rusm_rs::register_tag(&Self::tag(&room));
-            Self::reply(conn, &format!("welcome to #{room}"));
+            Self::reply(conn, &format!("welcome to #{room}")); // e.g. "welcome to #general"
             self.room = Some(room);
             return;
         }
