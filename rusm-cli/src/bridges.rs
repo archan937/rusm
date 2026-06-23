@@ -507,14 +507,12 @@ fn delegate_fn_impl(f: &crate::witmap::Func, bridge_name: &str, runner_name: &st
          \x20           args_json, self.pid(), call_id,\n\
          \x20       ).into_bytes();\n\
          \x20       self.runtime().send(pid, req);\n\
-         \x20       let raw = match self.recv_bridge_reply(&call_id).await {{\n\
+         \x20       let tag = ::std::format!(\"{{}}:\", call_id);\n\
+         \x20       let raw = match self.recv_bridge_reply(&tag).await {{\n\
          \x20           Some(b) => b,\n\
          \x20           None => return {ret_default},\n\
          \x20       }};\n\
-         \x20       let payload = raw\n\
-         \x20           .strip_prefix(call_id.as_bytes())\n\
-         \x20           .and_then(|b| b.strip_prefix(b\":\"))\n\
-         \x20           .unwrap_or(&raw);\n\
+         \x20       let payload = raw.strip_prefix(tag.as_bytes()).unwrap_or(&raw);\n\
          \x20       {parse_reply}\n\
          \x20   }}\n\n",
         fn_name = f.name,
@@ -1082,7 +1080,11 @@ mod tests {
         // Function body: call_id, whereis runner, send request, recv_bridge_reply.
         assert!(shim.contains("CALL_CTR"), "counter: {shim}");
         assert!(shim.contains("\"bridge:weather\""), "runner name: {shim}");
-        assert!(shim.contains("recv_bridge_reply"), "selective recv: {shim}");
+        // The selective receive tag includes the `:` separator so that call_id
+        // `rusm-bridge:weather-42-1` does not falsely match `rusm-bridge:weather-42-10:…`.
+        assert!(shim.contains("recv_bridge_reply(&tag)"), "tagged recv: {shim}");
+        assert!(shim.contains("format!(\"{}:\", call_id)"), "tag includes separator: {shim}");
+        assert!(shim.contains("strip_prefix(tag.as_bytes())"), "strip tag prefix: {shim}");
         assert!(shim.contains("rusm_wasm::serde_json::to_string"), "arg marshal: {shim}");
         assert!(shim.contains("from_slice::<String>"), "reply deser: {shim}");
     }

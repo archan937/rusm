@@ -69,26 +69,7 @@ pub async fn serve(
     cfg: &NodeConfig,
     extend: impl Fn(&mut BridgeLinker) -> wasmtime::Result<()> + 'static,
 ) -> Result<()> {
-    let rt = Runtime::new();
-    let wasm = build_runtime(rt.clone(), cfg, extend)?;
-    let hosted = spawn_components(root, &wasm, &cfg.components, &cfg.capabilities).await?;
-    let endpoints = serve_apps(root, &wasm, &cfg.serve, &cfg.components, &cfg.capabilities).await?;
-    if endpoints.is_empty() && hosted.is_empty() {
-        println!("no [[serve]] entries or [components] in rusm.toml — nothing to do");
-        return Ok(());
-    }
-    if !hosted.is_empty() {
-        print_hosted(&hosted);
-    }
-    println!("serving {} endpoint(s):", endpoints.len());
-    for ep in &endpoints {
-        let scheme = if ep.protocol.is_http() { "http" } else { "ws" };
-        println!("  {:<16} {scheme}://{}", ep.name, ep.addr);
-    }
-    println!("press Ctrl-C to stop");
-    tokio::signal::ctrl_c().await?;
-    println!("\nstopping {} process(es)…", rt.shutdown());
-    Ok(())
+    serve_with_init(root, cfg, extend, |_| Ok(())).await
 }
 
 /// Like [`serve`] but runs `init(&wasm)` between runtime construction and component spawn —
@@ -166,22 +147,20 @@ mod tests {
         );
     }
 
-    /// `serve_with_init` runs `init` after `build_runtime` and before the component spawn;
-    /// the `init` closure receives the freshly constructed runtime.
+    /// `serve_with_init` runs `init` after `build_runtime` and before the component spawn.
+    /// An empty `NodeConfig` (no `[[serve]]` entries, no `[components]`) causes the function
+    /// to return immediately (the "nothing to do" path) — making it directly testable without
+    /// blocking on Ctrl-C.
     #[tokio::test]
-    async fn serve_with_init_runs_init_after_build() {
+    async fn serve_with_init_calls_init_before_spawn() {
         let called = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&called);
-        // We don't actually start serving — build_runtime + init is what we test here.
-        // Simulate by calling build_runtime and then the init closure directly.
-        let rt = Runtime::new();
-        let wasm = build_runtime(rt, &NodeConfig::default(), |_| Ok(())).unwrap();
-        let result: anyhow::Result<()> = {
+        serve_with_init(Path::new("."), &NodeConfig::default(), |_| Ok(()), move |_wasm| {
             flag.store(true, Ordering::SeqCst);
             Ok(())
-        };
-        result.unwrap();
-        let _ = wasm; // runtime built successfully
+        })
+        .await
+        .unwrap();
         assert!(called.load(Ordering::SeqCst), "init must be called");
     }
 
