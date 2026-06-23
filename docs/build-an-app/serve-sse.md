@@ -21,19 +21,32 @@ capability = "sandboxed"
 
 ## 2. Write the handler
 
-An SSE handler has three callbacks:
+Two things to be clear about before looking at the code:
 
-- **`open`** — called once when the connection is established. This is where you
-  **subscribe**: `registerTag("todos")` joins this process to the `"todos"` group. Any
-  process in the system can broadcast to that tag; every subscriber receives the message
-  in its mailbox.
-- **`message`** — called each time a message arrives in the mailbox. `stream.data(event)`
-  writes the raw bytes as a `data: …\n\n` SSE event on the wire to the client.
-- **`close`** — called when the client disconnects. The tag subscription is released
-  automatically; this is optional cleanup.
+**`stream` is the outbound SSE connection to the browser** — the HTTP response body you
+write `data:` events into. It has nothing to do with the actor message stream; it's just
+the open pipe to the client.
 
-There are no inbound frames from the client — the only input is messages that land in
-this process's mailbox, delivered by whoever publishes to the tag.
+**SSE is strictly server→client.** The browser never sends messages back over this
+connection — there are no inbound frames. The only input this process ever receives is
+messages from the actor system: other processes that broadcast to a tag this process
+joined. That is what the `message` callback is for.
+
+The three callbacks:
+
+- **`open`** — the client connected. `registerTag("todos")` joins this process to the
+  `"todos"` group. From this point on, every broadcast to that tag lands as a message in
+  this process's mailbox.
+- **`message(stream, event)`** — a message arrived in the mailbox. `event` is the raw
+  payload one broadcaster sent. `stream.data(event)` frames it as a `data: …\n\n` SSE
+  event and flushes it down the wire to the browser.
+- **`close`** — the client disconnected. The tag subscription is released automatically;
+  this is optional cleanup.
+
+In this single-tag example there's nothing to route — every mailbox message is a `todos`
+broadcast and every one goes straight to the client. If you joined **multiple tags** (say
+`"todos"` and `"alerts"`) you'd inspect `event` to decide how to frame or filter each
+message — that's where an `if` or a `switch` on the payload type would appear.
 
 ::: code-group
 
@@ -43,17 +56,17 @@ import { sse, Process } from "rusm-ts";
 
 export default sse({
   open(stream) {
-    // Join the "todos" group: this process will now receive every message
-    // that any other process broadcasts to the "todos" tag.
+    // Join the "todos" broadcast group. From now on, every Process.publishTag("todos", …)
+    // call from anywhere in the system delivers a message to this process's mailbox.
     Process.registerTag("todos");
   },
   message(stream, event) {
-    // `event` is the raw bytes of one broadcast message.
-    // stream.data() frames it as a `data: …\n\n` SSE event and flushes it to the client.
+    // A broadcast landed in the mailbox. `event` is its raw payload (bytes).
+    // stream.data() frames it as a `data: …\n\n` SSE event on the wire to the browser.
     stream.data(event);
   },
   close(stream) {
-    // Client disconnected. Tag subscription is already released; nothing to do here.
+    // Browser disconnected. Tag membership is released automatically.
   },
 });
 ```
@@ -65,11 +78,11 @@ use rusm_rs::sse::{self, Handler, Stream};
 struct Feed;
 impl Handler for Feed {
     fn open(&mut self, _s: &Stream) {
-        // Join the "todos" group: receive every message broadcast to this tag.
+        // Join the "todos" broadcast group.
         rusm_rs::register_tag("todos");
     }
     fn message(&mut self, s: &Stream, event: Vec<u8>) {
-        // `event` is one broadcast payload. Write it as a `data: …` SSE event.
+        // A broadcast arrived in the mailbox. Forward it as a `data: …` SSE event.
         s.data(&event);
     }
     fn close(&mut self, _s: &Stream) {}
@@ -95,9 +108,9 @@ func main() {}
 
 func run() {
 	web.Sse{
-		// Join the "todos" group: receive every message broadcast to this tag.
+		// Join the "todos" broadcast group.
 		Open: func(s web.Stream) { rusm.RegisterTag("todos") },
-		// ev is one broadcast payload. s.Data() sends it as a `data: …` SSE event.
+		// A broadcast arrived in the mailbox. Forward it as a `data: …` SSE event.
 		Message: func(s web.Stream, ev []byte) { s.Data(ev) },
 		Close:   func(s web.Stream) {},
 	}.Serve()
@@ -106,8 +119,8 @@ func run() {
 
 :::
 
-The other half is **publishing**: any process broadcasts to the `"todos"` tag and every
-connected feed's `message` fires with the payload. See
+The other half is **publishing**: any process broadcasts to `"todos"` and every connected
+feed's `message` fires with the payload — see
 [Broadcast to many](/build-an-app/broadcast-to-many). A resident
 [service](/build-an-app/build-a-stateful-service) or an HTTP handler is the usual publisher.
 
