@@ -54,7 +54,12 @@ const sections = [
       {
         text: 'Processes & messaging',
         items: [
-          { text: 'Processes & messaging', link: '/build-an-app/processes-and-messaging' },
+          { text: 'What is a process?', link: '/build-an-app/what-is-a-process' },
+          { text: 'Pid & self', link: '/build-an-app/pid-and-self' },
+          { text: 'Send & receive', link: '/build-an-app/send-and-receive' },
+          { text: 'register & whereis', link: '/build-an-app/register-and-whereis' },
+          { text: 'Tags & groups', link: '/build-an-app/tags-and-groups' },
+          { text: 'kill & killTag', link: '/build-an-app/kill-and-killtag' },
         ],
       },
       {
