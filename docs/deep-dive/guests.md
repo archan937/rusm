@@ -176,9 +176,13 @@ All guests get more than `send`/`receive`, all over the same capability-gated AB
   [SSE serving](/deep-dive/serving-http-ws-and-sse): a per-request SSE action subscribes to a
   topic and live-tails it via `Sse::run`, and the monitor prunes the subscriber when the
   request process exits on disconnect.
-- **Outbound `fetch` + Web Crypto** (TS): a capability-gated streaming `fetch`, and
-  a native **`crypto.subtle`** (RustCrypto: SHA digest, HMAC sign/verify, AES-GCM) —
-  so the Anthropic SDK and JWT/signing libraries work inside the sandbox.
+- **Outbound HTTP** — `rusm_rs::http::fetch` (RS) / the `fetch` global (TS): a
+  capability-gated request over `wasi:http`, gated by the **network** capability (TS's is
+  streaming) — so JWT/signing and LLM calls reach out from the sandbox. Both reuse the
+  shared `Request`/`Response`; the Rust path parks the fiber (no busy-poll), not `wstd`.
+  (Go: not yet wrapped in the SDK.)
+- **Web Crypto** (TS): a native **`crypto.subtle`** (RustCrypto: SHA digest, HMAC
+  sign/verify, AES-GCM) — so JWT/signing libraries work inside the sandbox.
 
 ## Logging from a component
 

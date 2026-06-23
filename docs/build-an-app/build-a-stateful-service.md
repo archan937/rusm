@@ -100,14 +100,23 @@ pid, _ := rusm.Whereis("counter")
 total, _ := rusm.Call[int](pid, "bump", 1)
 ```
 
+```ts [TypeScript]
+// Service: export your functions; claim a name in the entry (the runner runs the loop).
+Process.register("counter");
+
+// Caller: reach the running instance by name (or pid) — a typed call, with the reply.
+const c = connect<Counter>("counter");
+const total = await c.bump(1);
+```
+
 :::
 
-**TypeScript** has no typed call to an *existing* pid yet — `spawn<T>(name)` only starts a fresh
-instance, a parity gap with Rust's `Client::connect(pid)` and Go's `Call(pid, …)`. So from TS,
-share a resident's state through [`kv`](/build-an-app/url-shortener), the cross-language answer
-the example apps use. (Dropping to a raw `Process.send` with a hand-built request envelope does
-reach a resident, but that's the platform's internal wire protocol, not application code —
-prefer `kv`.)
+All three languages reach a resident the same way — `connect`/`Client::connect`/`Call` give a
+**typed call to an existing instance** by name or pid, distinct from `spawn`, which starts a
+fresh one. (`connect(name)` looks the name up for you; pass a pid to skip the lookup.) Reach for
+**[`kv`](/build-an-app/url-shortener)** instead when the state must *survive a restart* or be
+shared with *ephemeral* instances (serving handlers, workers) that have no resident to call —
+that's the durable, cross-language answer, and what the example apps use.
 
 ## What you need to know
 

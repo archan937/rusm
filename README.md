@@ -73,7 +73,7 @@ cross-process round-trip reads like a local call — fully typed, even across la
 import { spawn } from "rusm-ts";
 import type { Calc } from "../calc";
 
-const calc = spawn<Calc>("calc");        // spawn (or attach to) a process by name
+const calc = spawn<Calc>("calc");        // start a fresh process (connect<Calc>("calc") attaches to a running one)
 console.log(await calc.add(2, 3));       // 5 — a real message round-trip, reads local
 for await (const n of calc.countTo(3))   // generator handlers stream back
   console.log(n);                        // 1, 2, 3
