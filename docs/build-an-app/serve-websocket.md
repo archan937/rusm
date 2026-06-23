@@ -58,11 +58,11 @@ import { websocket, Process, type Socket } from "rusm-ts";
 let room: string | null = null; // this connection's current room (per-connection state)
 
 const tag = (name: string) => `room:${name}`;
-const system = (s: Socket, text: string) => s.send(JSON.stringify({ system: text }));
+const reply = (s: Socket, text: string) => s.send(JSON.stringify({ reply: text }));
 
 export default websocket({
   open(socket) {
-    system(socket, 'connected — send {"join":"<room>"} to enter a room');
+    reply(socket, 'connected — send {"join":"<room>"} to enter a room');
   },
 
   message(socket, data) {
@@ -72,13 +72,13 @@ export default websocket({
       // Client wants to join a room: tag this process so broadcasts reach it.
       room = msg.join;
       Process.registerTag(tag(room));
-      system(socket, `welcome to #${room}`);
+      reply(socket, `welcome to #${room}`);
       return;
     }
 
     if (typeof msg.say === "string") {
       // Client sent a chat message: fan it out to every connection in this room.
-      if (!room) return system(socket, "join a room first");
+      if (!room) return reply(socket, "join a room first");
       const relay = JSON.stringify({ from: String(Process.self()), text: msg.say });
       for (const pid of Process.whereisTag(tag(room))) Process.send(pid, relay);
       return;
@@ -106,14 +106,14 @@ struct Frame { join: Option<String>, say: Option<String>, text: Option<String> }
 
 impl Chat {
     fn tag(room: &str) -> String { format!("room:{room}") }
-    fn system(conn: &Connection, text: &str) {
-        conn.send(json!({ "system": text }).to_string().as_bytes());
+    fn reply(conn: &Connection, text: &str) {
+        conn.send(json!({ "reply": text }).to_string().as_bytes());
     }
 }
 
 impl Handler for Chat {
     fn open(&mut self, conn: &Connection) {
-        Self::system(conn, "connected — send {\"join\":\"<room>\"} to enter a room");
+        Self::reply(conn, "connected — send {\"join\":\"<room>\"} to enter a room");
     }
     fn message(&mut self, conn: &Connection, data: Vec<u8>) {
         let Ok(frame) = serde_json::from_slice::<Frame>(&data) else { return };
@@ -121,13 +121,13 @@ impl Handler for Chat {
         if let Some(room) = frame.join {
             // Client wants to join a room: tag this process so broadcasts reach it.
             rusm_rs::register_tag(&Self::tag(&room));
-            Self::system(conn, &format!("welcome to #{room}"));
+            Self::reply(conn, &format!("welcome to #{room}"));
             self.room = Some(room);
             return;
         }
         if let Some(say) = frame.say {
             // Client sent a chat message: fan it out to every connection in this room.
-            let Some(room) = &self.room else { return Self::system(conn, "join a room first") };
+            let Some(room) = &self.room else { return Self::reply(conn, "join a room first") };
             let relay = json!({ "from": rusm_rs::me().to_string(), "text": say }).to_string();
             for pid in rusm_rs::whereis_tag(&Self::tag(room)) {
                 rusm_rs::send_bytes(pid, relay.as_bytes());
