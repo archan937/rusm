@@ -7,9 +7,9 @@ Pid is, how to get yours, and what happens when you use a pid that's no longer a
 
 ## What a Pid looks like
 
-A Pid is an opaque string — in practice a small decimal integer like `"1"`, `"42"`, or
-`"1007"`. The runtime assigns them sequentially as processes are spawned. You never
-construct one by hand; you always receive one from the runtime.
+A Pid is an opaque handle — in practice a small integer like 1, 42, or 1007. The
+runtime assigns them sequentially as processes are spawned. You never construct one by
+hand; you always receive one from the runtime.
 
 The value itself doesn't tell you anything about what the process is doing, what
 component it runs, or where it lives. It's just an address. The runtime keeps the
@@ -129,7 +129,7 @@ human-readable diagnostics or branching logic, not as a safety gate.
 
 ## setLabel — naming a process for the observer
 
-Pids like `"42"` are not helpful when you're staring at a live dashboard with hundreds
+Pids like `42` are not helpful when you're staring at a live dashboard with hundreds
 of running processes. `setLabel` attaches a human-readable name to your process — it
 shows up in the observer, the dashboard, and log lines stamped with the process identity.
 
