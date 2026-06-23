@@ -21,9 +21,31 @@ capability = "sandboxed"
 
 ## 2. Write the handler
 
-Three optional callbacks — `open`, `message`, `close`; only `message` is required. There's
-**one handler instance per connection**, so its state (a Rust `&mut self`, a TS/Go closure) is
-*this* connection's — nothing is shared with other clients.
+Unlike SSE, WebSocket is **bidirectional**: the client sends frames, the server receives
+them and can reply. This shows up directly in the handler shape.
+
+**`socket` / `conn`** is the handle to *this* client's connection — the thing you call
+`.send()` on to push a frame back to that specific browser. It is not a shared channel;
+every connection has its own.
+
+**`data`** in `message` is the raw payload of one inbound frame from the client. You
+decide what to do with it: echo it, parse it as a command, forward it to another process,
+ignore it — that's your handler logic.
+
+Three callbacks — `open`, `message`, `close`; only `message` is required:
+
+- **`open(socket)`** — the client connected. Use it to send a greeting, register the
+  connection with a service, or join a broadcast group. `socket.send()` pushes a frame
+  immediately.
+- **`message(socket, data)`** — the client sent a frame. `data` is its raw bytes.
+  `socket.send()` sends a frame back to that client. This is the core of the
+  request/reply loop — or broadcast fan-out, or whatever your protocol does.
+- **`close(socket)`** — the client disconnected (clean close or dropped socket). The
+  process is about to exit; unregister from any groups or services here.
+
+There is **one handler instance per connection** — its state (a Rust `&mut self`, a TS
+closure, a Go local variable) is private to that connection. Nothing is shared with other
+clients.
 
 ::: code-group
 
@@ -33,13 +55,16 @@ import { websocket } from "rusm-ts";
 
 export default websocket({
   open(socket) {
+    // Client connected. Push a greeting frame back to this client.
     socket.send("welcome\n");
   },
   message(socket, data) {
-    socket.send(data); // echo this connection's frame
+    // Client sent a frame. `data` is its raw bytes.
+    // socket.send() pushes a frame back to this same client — here, a plain echo.
+    socket.send(data);
   },
   close(socket) {
-    // disconnect — clean or dropped (optional)
+    // Client disconnected (clean or dropped). Process exits after this.
   },
 });
 ```
@@ -51,10 +76,12 @@ use rusm_rs::ws::{self, Connection, Handler};
 struct Echo;
 impl Handler for Echo {
     fn open(&mut self, conn: &Connection) {
+        // Push a greeting frame to this client.
         conn.send(b"welcome\n");
     }
     fn message(&mut self, conn: &Connection, data: Vec<u8>) {
-        conn.send(&data); // echo this connection's frame
+        // `data` is one inbound frame from the client. Echo it straight back.
+        conn.send(&data);
     }
     fn close(&mut self, _conn: &Connection) {}
 }
@@ -79,8 +106,10 @@ func main() {}
 
 func run() {
 	web.WebSocket{
-		Open:    func(c web.Conn) { c.Send([]byte("welcome\n")) },
-		Message: func(c web.Conn, data []byte) { c.Send(data) }, // echo
+		// Push a greeting frame to this client.
+		Open: func(c web.Conn) { c.Send([]byte("welcome\n")) },
+		// `data` is one inbound frame from the client. Echo it straight back.
+		Message: func(c web.Conn, data []byte) { c.Send(data) },
 		Close:   func(c web.Conn) {},
 	}.Serve()
 }
