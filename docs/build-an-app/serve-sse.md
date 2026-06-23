@@ -21,9 +21,19 @@ capability = "sandboxed"
 
 ## 2. Write the handler
 
-`open` subscribes (here to a **process-group tag** — the pub/sub primitive), `message` emits
-each event with `data(...)`, `close` is optional cleanup. There are no inbound frames — events
-arrive through the mailbox from whoever publishes to the tag.
+An SSE handler has three callbacks:
+
+- **`open`** — called once when the connection is established. This is where you
+  **subscribe**: `registerTag("todos")` joins this process to the `"todos"` group. Any
+  process in the system can broadcast to that tag; every subscriber receives the message
+  in its mailbox.
+- **`message`** — called each time a message arrives in the mailbox. `stream.data(event)`
+  writes the raw bytes as a `data: …\n\n` SSE event on the wire to the client.
+- **`close`** — called when the client disconnects. The tag subscription is released
+  automatically; this is optional cleanup.
+
+There are no inbound frames from the client — the only input is messages that land in
+this process's mailbox, delivered by whoever publishes to the tag.
 
 ::: code-group
 
@@ -33,12 +43,18 @@ import { sse, Process } from "rusm-ts";
 
 export default sse({
   open(stream) {
-    Process.registerTag("todos"); // subscribe to the event source
+    // Join the "todos" group: this process will now receive every message
+    // that any other process broadcasts to the "todos" tag.
+    Process.registerTag("todos");
   },
   message(stream, event) {
-    stream.data(event); // a published event → emit it as `data: …`
+    // `event` is the raw bytes of one broadcast message.
+    // stream.data() frames it as a `data: …\n\n` SSE event and flushes it to the client.
+    stream.data(event);
   },
-  close(stream) {},
+  close(stream) {
+    // Client disconnected. Tag subscription is already released; nothing to do here.
+  },
 });
 ```
 
@@ -49,10 +65,12 @@ use rusm_rs::sse::{self, Handler, Stream};
 struct Feed;
 impl Handler for Feed {
     fn open(&mut self, _s: &Stream) {
-        rusm_rs::register_tag("todos"); // subscribe
+        // Join the "todos" group: receive every message broadcast to this tag.
+        rusm_rs::register_tag("todos");
     }
     fn message(&mut self, s: &Stream, event: Vec<u8>) {
-        s.data(&event); // a published event → emit
+        // `event` is one broadcast payload. Write it as a `data: …` SSE event.
+        s.data(&event);
     }
     fn close(&mut self, _s: &Stream) {}
 }
@@ -77,8 +95,10 @@ func main() {}
 
 func run() {
 	web.Sse{
-		Open:    func(s web.Stream) { rusm.RegisterTag("todos") },  // subscribe
-		Message: func(s web.Stream, ev []byte) { s.Data(ev) },      // emit
+		// Join the "todos" group: receive every message broadcast to this tag.
+		Open: func(s web.Stream) { rusm.RegisterTag("todos") },
+		// ev is one broadcast payload. s.Data() sends it as a `data: …` SSE event.
+		Message: func(s web.Stream, ev []byte) { s.Data(ev) },
 		Close:   func(s web.Stream) {},
 	}.Serve()
 }
@@ -86,8 +106,9 @@ func run() {
 
 :::
 
-The other half is **publishing**: any process broadcasts to the `todos` tag and every open
-stream's `message` fires — see [Broadcast to many](/build-an-app/broadcast-to-many). A resident
+The other half is **publishing**: any process broadcasts to the `"todos"` tag and every
+connected feed's `message` fires with the payload. See
+[Broadcast to many](/build-an-app/broadcast-to-many). A resident
 [service](/build-an-app/build-a-stateful-service) or an HTTP handler is the usual publisher.
 
 ## 3. Build, serve, test
