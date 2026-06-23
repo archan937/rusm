@@ -62,7 +62,7 @@ const reply = (s: Socket, text: string) => s.send(JSON.stringify({ reply: text }
 
 export default websocket({
   open(socket) {
-    reply(socket, 'connected — send {"join":"<room>"} to enter a room');
+    reply(socket, "connected");
   },
 
   message(socket, data) {
@@ -113,7 +113,7 @@ impl Chat {
 
 impl Handler for Chat {
     fn open(&mut self, conn: &Connection) {
-        Self::reply(conn, "connected — send {\"join\":\"<room>\"} to enter a room");
+        Self::reply(conn, "connected");
     }
     fn message(&mut self, conn: &Connection, data: Vec<u8>) {
         let Ok(frame) = serde_json::from_slice::<Frame>(&data) else { return };
