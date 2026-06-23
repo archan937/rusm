@@ -7,7 +7,11 @@ GH_PAGES := gh-pages
 SCENARIO ?= connection-storm
 SECONDS ?= 5
 EX ?= host_components
-VERSION ?= 0.4.0
+# Release version — the single source of truth is the workspace package version in
+# Cargo.toml (every crate inherits it via `version.workspace = true`). Extracted here so a
+# release can never tag/publish a stale number: bump Cargo.toml and `make publish` follows.
+# Override for a one-off with `make publish VERSION=x.y.z`.
+VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
 # crates.io publish order — dependencies before dependents. Each crate is published from
 # its own directory, so the same loop works for workspace members AND the wasm-only guest
