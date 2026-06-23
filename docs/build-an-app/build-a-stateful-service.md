@@ -81,6 +81,15 @@ each side:
 
 ::: code-group
 
+```ts [TypeScript]
+// Service: export your functions; claim a name in the entry (the runner runs the loop).
+Process.register("counter");
+
+// Caller: reach the running instance by name (or pid) — a typed call, with the reply.
+const c = connect<Counter>("counter");
+const total = await c.bump(1);
+```
+
 ```rust [Rust]
 // Service entry: claim a name, then run the dispatch loop.
 rusm_rs::register("counter");
@@ -99,15 +108,6 @@ svc.Serve()
 // Caller: look it up and call by pid (Call takes any pid, returns the reply).
 pid, _ := rusm.Whereis("counter")
 total, _ := rusm.Call[int](pid, "bump", 1)
-```
-
-```ts [TypeScript]
-// Service: export your functions; claim a name in the entry (the runner runs the loop).
-Process.register("counter");
-
-// Caller: reach the running instance by name (or pid) — a typed call, with the reply.
-const c = connect<Counter>("counter");
-const total = await c.bump(1);
 ```
 
 :::

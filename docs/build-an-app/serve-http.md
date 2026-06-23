@@ -8,14 +8,24 @@ the **listener** and how it finds a handler, and the **handler** code itself. We
 
 A `[[serve]]` block is a port. How it finds its handler depends on the language:
 
-- **Rust & Go — routed.** A `[serve.routes]` table maps `"METHOD /path"` to
-  `"component#action"`. One component, many routes; RUSM dispatches each request to the
-  right function.
 - **TypeScript — self-routing.** A TS HTTP component is one `export default { fetch }` that
   does its own routing, so it needs no routes table — just point the listener at it with
   `component = "..."`.
+- **Rust & Go — routed.** A `[serve.routes]` table maps `"METHOD /path"` to
+  `"component#action"`. One component, many routes; RUSM dispatches each request to the
+  right function.
 
 ::: code-group
+
+```toml [TypeScript]
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+component = "api"                    # one self-routing fetch handler → ./wasm/api.js
+
+[components.api]
+capability = "sandboxed"
+```
 
 ```toml [Rust / Go]
 [[serve]]
@@ -28,16 +38,6 @@ listen = "127.0.0.1:8080"
 
 [components.api]                     # the handler → ./wasm/api.{wasm,js}
 capability = "sandboxed"             # carries its own capability (spawned per request)
-```
-
-```toml [TypeScript]
-[[serve]]
-protocol = "http"
-listen = "127.0.0.1:8080"
-component = "api"                    # one self-routing fetch handler → ./wasm/api.js
-
-[components.api]
-capability = "sandboxed"
 ```
 
 :::

@@ -39,17 +39,17 @@ bundle in the node store), **`url:`/`http(s)://…`** (fetched by the node), or 
 
 ::: code-group
 
-```rust [Rust]
-// run a compiled component chosen at runtime, under the `plugin-runner` profile:
-let pid = rusm_rs::spawn_from("plugin-runner", &format!("kv:plugins/{name}"))?;
-let pid = rusm_rs::spawn_from("plugin-runner", "url:https://cdn.example/plugin.wasm")?;
-```
-
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
 Process.spawn("plugin-runner", `kv:plugins/${name}`);
 Process.spawn("plugin-runner", "url:https://cdn.example/plugin.wasm");
+```
+
+```rust [Rust]
+// run a compiled component chosen at runtime, under the `plugin-runner` profile:
+let pid = rusm_rs::spawn_from("plugin-runner", &format!("kv:plugins/{name}"))?;
+let pid = rusm_rs::spawn_from("plugin-runner", "url:https://cdn.example/plugin.wasm")?;
 ```
 
 ```go [Go]
