@@ -17,11 +17,19 @@ protocol = "http"
 listen = "127.0.0.1:8080"
 
 [serve.routes]                       # "METHOD /path/:param" = "component#action"
-"GET /" = "api#home"                 # → the `home` action in the `api` component
-"GET /users/:id" = "api#show"        # :id is a path param, read from Params
+"GET /"           = "api#home"       # → the `home` action in the `api` component
+"GET /users/:id"  = "users#show"     # routed to a different component entirely
+"POST /users"     = "users#create"   # same component, different action
+"POST /webhooks"  = "hooks#receive"  # yet another component — one table, any mix
 
-[components.api]                     # the handler → ./wasm/api.{wasm,js}
-capability = "sandboxed"             # each request gets its own sandbox
+[components.api]
+capability = "sandboxed"
+
+[components.users]
+capability = "sandboxed"
+
+[components.hooks]
+capability = "network-client"        # components carry their own capability profile
 ```
 
 A path param is `:name`; a trailing `*` is a wildcard. Specificity wins (literal > param >
