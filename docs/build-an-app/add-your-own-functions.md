@@ -2,19 +2,52 @@
 
 Need your guests to call something the platform doesn't provide — a database client, an
 internal API, a signing routine? Add a **custom bridge**: a native function *your app*
-defines once (in Rust, the host language) and calls from **any** guest — TypeScript, Rust, or
-Go — as an ordinary typed import. It's RUSM's answer to a wasmCloud **capability provider**,
-but compiled-in and typed: no lattice, no broker, no RPC, no JSON dispatcher, and the same
-cost as a built-in. The example below — a `weather` function — is live in all three guest
-languages.
+defines once and calls from **any** guest — TypeScript, Rust, or Go — as an ordinary typed
+import. It's RUSM's answer to a wasmCloud **capability provider**, but compiled-in and typed:
+no lattice, no broker, no RPC, no JSON dispatcher.
 
 ## 1 — Define the bridge
 
-A bridge is a directory `bridges/<name>/` with two files: the **contract** (`bridge.wit`, the
-app's own WIT package) and the **host impl** (`host.rs`):
+A bridge is a directory `bridges/<name>/` with the **contract** (`bridge.wit`) and a **host
+impl** — either Rust (`host.rs`) or TypeScript (`host.ts`). Both choices are first-class;
+pick based on what the bridge needs to do:
+
+| | `host.rs` | `host.ts` |
+|---|---|---|
+| Who authors it | Rust developer | Any developer |
+| Call overhead | ~few hundred ns (native ABI) | ~1–10 µs (actor round-trip + JSON) |
+| Best for | CPU-critical, tight-loop callers | I/O-bound work, 3rd-party SDKs, webhooks |
+
+`rusm build` generates all surrounding glue for both — the host crate, the WIT world, the
+delegation shim, the TS runner. A Rust bridge compiles in; a TS bridge runs as a resident
+actor (`bridge:<name>`) and the generated shim dispatches to it.
+
+### TypeScript host
 
 ```wit
-// bridges/weather/bridge.wit — the app's own WIT package
+// bridges/weather/bridge.wit
+package weather:bridge@0.1.0;
+
+interface forecast {
+    lookup: func(city: string) -> string;
+}
+```
+
+```ts
+// bridges/weather/host.ts — the ONLY file you write. rusm build generates
+// the Rust delegation shim, the TS dispatch runner, and all host glue.
+export async function lookup(city: string): Promise<string> {
+  // Full Node/Bun ecosystem available — call a 3rd-party weather SDK, a
+  // database, an internal HTTP API, whatever you need.
+  const res = await fetch(`https://wttr.in/${city}?format=3`);
+  return res.ok ? await res.text() : `unknown weather in ${city}`;
+}
+```
+
+### Rust host
+
+```wit
+// bridges/weather/bridge.wit — same contract, different host impl
 package weather:bridge@0.1.0;
 
 interface forecast {
@@ -23,9 +56,8 @@ interface forecast {
 ```
 
 ```rust
-// bridges/weather/host.rs — the native impl. The ONLY Rust an app must add for a
-// native capability; its guests stay in any language. `rusm build` generates the
-// surrounding glue (src/bindings.rs, src/bridges.rs, wit/).
+// bridges/weather/host.rs — the ONLY Rust an app must add for a Rust bridge;
+// its guests stay in any language. rusm build generates the surrounding glue.
 use crate::bindings::weather::bridge::forecast;
 use rusm_wasm::wasmtime::component::HasSelf;
 use rusm_wasm::{wasmtime, BridgeHost, BridgeLinker};
@@ -131,14 +163,26 @@ typed WIT call*, never a generic dispatcher.
 
 ## How it builds
 
-`rusm build` discovers `bridges/`, generates the host glue + the per-guest bindings, vendors
-the contract into each granted component, and compiles the components **plus a small host
-binary** that registers the bridges. `rusm serve` runs that host binary — the same serve loop
-as a pure-guest app, with your bridges wired in.
+`rusm build` discovers `bridges/`, generates all host glue + per-guest bindings, vendors the
+contract into each granted component, and compiles the components **plus a small host binary**
+that registers the bridges. `rusm serve` runs that host binary — same serve loop as a
+pure-guest app, with your bridges wired in.
+
+For a **Rust bridge** (`host.rs`), `rusm build` writes `src/bindings.rs`, `src/bridges.rs`,
+`wit/`, and the synthesized bindgen world. You author `host.rs`; everything else is generated.
+
+For a **TS bridge** (`host.ts`), `rusm build` additionally writes:
+- `src/bridge_<name>_delegate.rs` — the Rust delegation shim (sends JSON over the actor wire)
+- `bridges/<name>/_runner.ts` — the resident TS actor (`bridge:<name>`) that dispatches to your `host.ts`
+- `src/main.rs` — a generated host entry point calling `serve_with_init` (only if you have no
+  existing `main.rs`)
+
+The runner is bundled into `wasm/bridge-<name>.js` by Bun, registered as a resident actor at
+startup, and booted under a supervisor — it stays alive for the node's lifetime.
 
 **Scaffold a working one in seconds** — `rusm new <name> --template weather --lang ts|rust|go`
-(or the equivalent `--bridges` flag) generates the whole thing: the host crate, the example
-`weather` bridge, and a guest that calls it in your language. It's the runnable
+generates the whole thing: the host crate, the example `weather` bridge, and a guest that
+calls it in your language. It's the runnable
 [`custom-bridge`](https://github.com/archan937/rusm/tree/main/examples/custom-bridge) example
 (the `weather` bridge, called from Rust, Go, **and** TypeScript guests):
 
@@ -149,8 +193,9 @@ cd forecast && rusm build && rusm serve
 
 ## The platform / application split
 
-The host impl is Rust because the host **is** Rust (`rusm-wasm` / Wasmtime) — there is no
-other language a host function can be. That one file is the only Rust an app adds for a native
-capability; its **guests stay in any language**, calling the bridge as an ordinary typed
-import. That is the whole point: a wasmCloud-style provider, minus the lattice, the RPC, and
-the marshaling — just a compiled-in, capability-gated, typed host call.
+A Rust host impl is the zero-overhead choice: the host **is** Rust, so `host.rs` compiles
+directly into the binary — no delegation, no marshaling, just the WIT ABI boundary. A
+TypeScript host impl trades a few microseconds per call for zero Rust: you write one `host.ts`
+and the platform builds the delegation shim + actor runner for you. Both paths are
+capability-gated and default-deny: guests call the bridge as an ordinary typed import, and
+the operator decides which component profiles may reach it.

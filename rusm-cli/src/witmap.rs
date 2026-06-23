@@ -53,6 +53,9 @@ pub struct Func {
     pub params: Vec<Param>,
     /// `None` for a `-> ()` function (the JS wrapper returns `undefined`).
     pub result_ts: Option<String>,
+    /// The owned Rust type for the result (e.g. `String`, `Vec<u8>`). `None` for `-> ()`.
+    /// Used by generated TS/Go delegation shims to `serde_json::from_slice` the reply.
+    pub result_rust: Option<String>,
 }
 
 /// A bridge's full TS-callable surface: its functions + the TS type declarations (interfaces /
@@ -90,9 +93,12 @@ pub fn bridge_api(wit: &Path) -> Result<Api> {
                     ts: ty.ts,
                 });
             }
-            let result_ts = match &function.result {
-                None => None,
-                Some(t) => Some(lower(&resolve, t, &ns, &pkg_name, &mut ts_decls)?.ts),
+            let (result_ts, result_rust) = match &function.result {
+                None => (None, None),
+                Some(t) => {
+                    let lowered = lower(&resolve, t, &ns, &pkg_name, &mut ts_decls)?;
+                    (Some(lowered.ts), Some(lowered.rust))
+                }
             };
             functions.push(Func {
                 call_path: format!(
@@ -103,6 +109,7 @@ pub fn bridge_api(wit: &Path) -> Result<Api> {
                 name: fn_name.clone(),
                 params,
                 result_ts,
+                result_rust,
             });
         }
     }

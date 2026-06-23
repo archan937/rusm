@@ -15,12 +15,26 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use wit_parser::Resolve;
 
+/// How the host-side of a custom bridge is implemented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostImpl {
+    /// A Rust `host.rs` — compiled directly into the host binary (zero delegation
+    /// overhead beyond the WIT ABI boundary crossing).
+    Rust(PathBuf),
+    /// A TypeScript `host.ts` — `rusm build` generates a Rust delegation shim and a TS
+    /// dispatch runner; the runner runs as a resident actor (`bridge:<name>`). Each call
+    /// is ~1–10µs from the actor round-trip + JSON marshaling.
+    TypeScript(PathBuf),
+}
+
 /// A discovered custom bridge: its `name` (the directory name, which is also the bridge
-/// name used in the capability whitelist) and the `dir` holding `bridge.wit` + `host.rs`.
+/// name used in the capability whitelist), the `dir` holding `bridge.wit` and the host
+/// implementation, and the [`HostImpl`] variant describing how the host side is authored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BridgeSpec {
     pub name: String,
     pub dir: PathBuf,
+    pub host_impl: HostImpl,
 }
 
 impl BridgeSpec {
@@ -30,18 +44,35 @@ impl BridgeSpec {
         self.dir.join("bridge.wit")
     }
 
-    /// The native host impl (`bridges/<name>/host.rs`) — `impl <iface>::Host for BridgeHost`
-    /// plus a `pub fn add_to_linker`, compiled into the generated host crate.
+    /// The host implementation file (`host.rs` or `host.ts`).
     pub fn host(&self) -> PathBuf {
-        self.dir.join("host.rs")
+        match &self.host_impl {
+            HostImpl::Rust(p) | HostImpl::TypeScript(p) => p.clone(),
+        }
+    }
+
+    /// Whether this bridge uses a Rust host impl (compiled directly into the host binary).
+    pub fn is_rust_host(&self) -> bool {
+        matches!(self.host_impl, HostImpl::Rust(_))
+    }
+
+    /// The component name the generated bridge runner registers as (`"bridge:<name>"`).
+    pub fn runner_name(&self) -> String {
+        format!("bridge:{}", self.name)
     }
 }
 
 /// Discover the custom bridges under `<root>/bridges/`. Returns them sorted by name (a
 /// stable order, so generated code is deterministic). No `bridges/` directory → no custom
 /// bridges (an empty list, not an error — most apps have none). A `bridges/<name>/` that is
-/// missing `bridge.wit` or `host.rs` is a **malformed** bridge and fails loudly, rather
-/// than being silently skipped — a half-authored bridge is a mistake, not a non-bridge.
+/// missing `bridge.wit` or a host implementation is **malformed** and fails loudly.
+///
+/// Supported host implementations (exactly one must be present):
+/// - `host.rs` — Rust: compiled directly into the host binary, zero delegation overhead.
+/// - `host.ts` — TypeScript: `rusm build` generates a delegation shim + resident runner.
+///
+/// Note: `host.go` is reserved for a future Go-hosted bridge path and currently fails with
+/// a clear "not yet supported" message rather than being silently ignored.
 pub fn discover(root: &Path) -> Result<Vec<BridgeSpec>> {
     let dir = root.join("bridges");
     if !dir.is_dir() {
@@ -57,17 +88,29 @@ pub fn discover(root: &Path) -> Result<Vec<BridgeSpec>> {
             Some(n) => n.to_string(),
             None => continue,
         };
-        let spec = BridgeSpec {
-            name: name.clone(),
-            dir: path,
-        };
-        if !spec.wit().is_file() {
+        if !path.join("bridge.wit").is_file() {
             bail!("custom bridge `{name}` is missing bridges/{name}/bridge.wit");
         }
-        if !spec.host().is_file() {
-            bail!("custom bridge `{name}` is missing bridges/{name}/host.rs");
-        }
-        bridges.push(spec);
+        let rs = path.join("host.rs");
+        let ts = path.join("host.ts");
+        let go = path.join("host.go");
+        let host_impl = match (rs.is_file(), ts.is_file(), go.is_file()) {
+            (true, false, false) => HostImpl::Rust(rs),
+            (false, true, false) => HostImpl::TypeScript(ts),
+            (false, false, true) => bail!(
+                "custom bridge `{name}`: Go-hosted bridges (`host.go`) are not yet supported \
+                 — use `host.ts` for a TS-hosted bridge, or `host.rs` for a Rust-hosted bridge"
+            ),
+            (false, false, false) => bail!(
+                "custom bridge `{name}` needs a host implementation — \
+                 add bridges/{name}/host.rs (Rust) or bridges/{name}/host.ts (TypeScript)"
+            ),
+            _ => bail!(
+                "custom bridge `{name}` has multiple host implementation files — \
+                 keep exactly one of host.rs or host.ts"
+            ),
+        };
+        bridges.push(BridgeSpec { name, dir: path, host_impl });
     }
     bridges.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(bridges)
@@ -342,11 +385,200 @@ pub fn gen_bridge_dts(bridges: &[BridgeSpec]) -> Result<String> {
     Ok(out)
 }
 
+/// Generate the Rust **delegation shim** for a TS-hosted bridge: each WIT function
+/// JSON-encodes its arguments, sends a tagged request to the resident `bridge:<name>`
+/// actor, and awaits the tagged reply via [`rusm_wasm::BridgeHost::recv_bridge_reply`]
+/// (selective receive — unrelated mailbox messages are parked in the save queue and
+/// replayed by the next `receive`). Written to `src/bridge_<ident>_delegate.rs` and
+/// mounted from `src/bridges.rs` via a `#[path]` attribute.
+pub fn gen_ts_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<String> {
+    let api = crate::witmap::bridge_api(&bridge.wit())?;
+    let runner_name = bridge.runner_name();
+
+    let mut linker_calls = String::new();
+    let mut host_impls = String::new();
+
+    for iface_name in &contract.interfaces {
+        let iface_mod = module_ident(iface_name);
+        let ns_mod = module_ident(&contract.namespace);
+        let pkg_mod = module_ident(&contract.name);
+        let iface_path = format!("crate::bindings::{ns_mod}::{pkg_mod}::{iface_mod}");
+
+        linker_calls.push_str(&format!(
+            "    {iface_path}::add_to_linker::\
+             <_, ::rusm_wasm::wasmtime::component::HasSelf<::rusm_wasm::BridgeHost>>\
+             (linker, |host| host)?;\n"
+        ));
+
+        let prefix = format!("{ns_mod}::{pkg_mod}::{iface_mod}::");
+        let iface_funcs: Vec<&crate::witmap::Func> =
+            api.functions.iter().filter(|f| f.call_path.starts_with(&prefix)).collect();
+
+        host_impls.push_str(&format!(
+            "impl {iface_path}::Host for ::rusm_wasm::BridgeHost {{\n"
+        ));
+        for f in iface_funcs {
+            host_impls.push_str(&delegate_fn_impl(f, &bridge.name, &runner_name));
+        }
+        host_impls.push_str("}\n\n");
+    }
+
+    Ok(format!(
+        "//! GENERATED by `rusm build` — do not edit. Delegation shim for \
+         `bridges/{name}/host.ts`: each function JSON-encodes its arguments, sends a tagged\n\
+         //! request to the resident `{runner_name}` actor, and awaits the tagged reply via\n\
+         //! selective receive. Overhead: ~1–10µs/call (actor round-trip + JSON). Regenerated\n\
+         //! each build.\n\
+         \n\
+         pub fn add_to_linker(\n\
+         \x20   linker: &mut ::rusm_wasm::BridgeLinker,\n\
+         ) -> ::rusm_wasm::wasmtime::Result<()> {{\n\
+         {linker_calls}\
+         \x20   Ok(())\n\
+         }}\n\n\
+         {host_impls}",
+        name = bridge.name,
+    ))
+}
+
+/// Generate one async function body for the delegation shim.
+fn delegate_fn_impl(f: &crate::witmap::Func, bridge_name: &str, runner_name: &str) -> String {
+    let params = f
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, p.owned_rust))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ret = f.result_rust.as_deref().unwrap_or("()");
+    let ret_default = if f.result_rust.is_some() {
+        "::std::default::Default::default()"
+    } else {
+        "()"
+    };
+
+    // args JSON array: `[<json0>, <json1>, …]`.
+    let args_json = if f.params.is_empty() {
+        "\"[]\".to_string()".to_string()
+    } else {
+        let parts: Vec<String> = f
+            .params
+            .iter()
+            .map(|p| {
+                format!(
+                    "::rusm_wasm::serde_json::to_string(&{}).expect(\"serialize bridge arg\")",
+                    p.name
+                )
+            })
+            .collect();
+        format!(
+            "::std::format!(\"[{{}}]\", [{}].join(\",\"))",
+            parts.join(", ")
+        )
+    };
+
+    let parse_reply = if f.result_rust.is_some() {
+        format!(
+            "::rusm_wasm::serde_json::from_slice::<{ret}>(payload).unwrap_or_default()"
+        )
+    } else {
+        "()".to_string()
+    };
+    let comma_params = if params.is_empty() {
+        String::new()
+    } else {
+        format!(", {params}")
+    };
+
+    format!(
+        "    async fn {fn_name}(&mut self{comma_params}) -> {ret} {{\n\
+         \x20       static CALL_CTR: ::std::sync::atomic::AtomicU64 =\n\
+         \x20           ::std::sync::atomic::AtomicU64::new(0);\n\
+         \x20       let call_id = ::std::format!(\n\
+         \x20           \"rusm-bridge:{bridge_name}-{{}}-{{}}\",\n\
+         \x20           self.pid(),\n\
+         \x20           CALL_CTR.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed),\n\
+         \x20       );\n\
+         \x20       let Some(pid) = self.runtime().whereis(\"{runner_name}\") else {{\n\
+         \x20           return {ret_default};\n\
+         \x20       }};\n\
+         \x20       let args_json = {args_json};\n\
+         \x20       let req = ::std::format!(\n\
+         \x20           \"{{\\\"fn\\\":\\\"{fn_name}\\\",\\\"args\\\":{{}},\\\"replyTo\\\":{{\\\"pid\\\":\\\"{{}}\\\",\\\"callId\\\":\\\"{{}}\\\"}}}}\",\n\
+         \x20           args_json, self.pid(), call_id,\n\
+         \x20       ).into_bytes();\n\
+         \x20       self.runtime().send(pid, req);\n\
+         \x20       let raw = match self.recv_bridge_reply(&call_id).await {{\n\
+         \x20           Some(b) => b,\n\
+         \x20           None => return {ret_default},\n\
+         \x20       }};\n\
+         \x20       let payload = raw\n\
+         \x20           .strip_prefix(call_id.as_bytes())\n\
+         \x20           .and_then(|b| b.strip_prefix(b\":\"))\n\
+         \x20           .unwrap_or(&raw);\n\
+         \x20       {parse_reply}\n\
+         \x20   }}\n\n",
+        fn_name = f.name,
+        comma_params = comma_params,
+        ret = ret,
+        ret_default = ret_default,
+        args_json = args_json,
+        parse_reply = parse_reply,
+        bridge_name = bridge_name,
+        runner_name = runner_name,
+    )
+}
+
+/// Generate the TypeScript **dispatch runner** for a TS-hosted bridge: a long-lived
+/// actor that registers as `bridge:<name>`, receives tagged JSON requests, calls the
+/// corresponding export from the user's `host.ts`, and sends back a tagged reply.
+/// Written to `bridges/<name>/_runner.ts`; bundled by `rusm build` into
+/// `wasm/bridge-<name>.js`.
+pub fn gen_ts_bridge_runner(bridge: &BridgeSpec) -> String {
+    let runner_name = bridge.runner_name();
+    format!(
+        "// GENERATED by `rusm build` — do not edit.\n\
+         // Dispatch runner for the `{name}` bridge. Receives tagged JSON requests\n\
+         // from the Rust delegation shim, calls the matching export from host.ts, and\n\
+         // sends back a tagged reply. Runs as a resident actor: \"{runner_name}\".\n\
+         import type * as UserBridge from \"./host\";\n\
+         import {{ Process }} from \"rusm-ts\";\n\
+         \n\
+         // CommonJS require so host.ts top-level imports resolve through the Bun bundler.\n\
+         const bridge = require(\"./host\") as typeof UserBridge;\n\
+         \n\
+         Process.register(\"{runner_name}\");\n\
+         Process.setLabel(\"{runner_name}\");\n\
+         \n\
+         while (true) {{\n\
+         \x20 const raw = await Process.receiveText();\n\
+         \x20 let msg: {{ fn: string; args: unknown[]; replyTo: {{ pid: string; callId: string }} }};\n\
+         \x20 try {{\n\
+         \x20   msg = JSON.parse(raw);\n\
+         \x20 }} catch {{\n\
+         \x20   continue; // malformed request — skip\n\
+         \x20 }}\n\
+         \x20 const {{ fn: fnName, args, replyTo: {{ pid: replyPid, callId }} }} = msg;\n\
+         \x20 let result: unknown = null;\n\
+         \x20 try {{\n\
+         \x20   result =\n\
+         \x20     (await (bridge as Record<string, (...a: unknown[]) => unknown>)\n\
+         \x20       [fnName]?.(...(args ?? []))) ?? null;\n\
+         \x20 }} catch {{\n\
+         \x20   result = null;\n\
+         \x20 }}\n\
+         \x20 // Reply prefix = callId so the shim's selective receive matches it.\n\
+         \x20 Process.send(replyPid, `${{callId}}:${{JSON.stringify(result)}}`);\n\
+         }}\n",
+        name = bridge.name,
+        runner_name = runner_name,
+    )
+}
+
 /// The static `src/bindings.rs` of a generated host crate: one `bindgen!` over the
 /// synthesized `wit/` world, producing the typed `Host` traits a bridge's `host.rs`
 /// implements over [`rusm_wasm::BridgeHost`]. Identical for every app (the variation is in
 /// the `wit/` world), so it's a constant — emitted as a file only so the layout reads like
-/// the platform's own `crate::bindings`.
+/// the platform's own `crate::bindings`. Used for pure-Rust-bridge apps.
 pub const BINDINGS_RS: &str = "\
 //! GENERATED by `rusm build` — do not edit. Typed bindings for the app's custom bridges,
 //! from the synthesized `wit/` world. Each bridge's `host.rs` implements these `Host`
@@ -357,6 +589,41 @@ wasmtime::component::bindgen!({
     world: \"host\",
     imports: { default: async },
 });
+";
+
+/// Like [`BINDINGS_RS`] but adds serde derives to all generated value types — required
+/// for TS-bridge delegation shims that JSON-marshal WIT record/enum/variant params.
+pub const BINDINGS_RS_SERDE: &str = "\
+//! GENERATED by `rusm build` — do not edit. Typed bindings for the app's custom bridges,
+//! from the synthesized `wit/` world, with serde derives so TS delegation shims can
+//! JSON-marshal WIT value types. `wasmtime` is the runtime's exact version (pinned in
+//! Cargo.toml), so the generated types are identical to the ones the runtime links.
+wasmtime::component::bindgen!({
+    path: \"wit\",
+    world: \"host\",
+    imports: { default: async },
+    additional_derives: [serde::Serialize, serde::Deserialize],
+});
+";
+
+/// The generated `src/main.rs` for a TS-bridge app (no `host.rs` — `rusm build` writes
+/// all Rust). Builds the runtime, calls `bridges::init` to register the runner components,
+/// then hands off to `rusm_cli::host::serve_with_init`. Only written if `src/main.rs`
+/// does not already exist (Rust-bridge apps author their own `main.rs`).
+pub const MAIN_RS_TS_BRIDGES: &str = "\
+//! GENERATED by `rusm build` — do not edit. Host binary entry point for this TS-bridge
+//! app: wires the delegation shims, registers the runner components as resident actors,
+//! then hands off to `rusm_cli::host::serve_with_init`.
+mod bindings;
+mod bridges;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let root = ::std::path::Path::new(\".\");
+    let cfg = rusm_node::NodeConfig::load(root.join(\"rusm.toml\"), false)
+        .map_err(anyhow::Error::msg)?;
+    rusm_cli::host::serve_with_init(root, &cfg, bridges::extend, bridges::init).await
+}
 ";
 
 /// Synthesize the host crate's `wit/world.wit`: a `rusm:host` world that `import`s every
@@ -377,32 +644,70 @@ pub fn synth_world(contracts: &[Contract]) -> String {
     out
 }
 
-/// Synthesize the host crate's `src/bridges.rs`: it mounts each bridge's `host.rs` as a
-/// module (`#[path]` to the app's `bridges/<name>/host.rs` — the source of truth stays in
-/// the app, never copied) and exposes [`extend`], which registers every bridge's
-/// `add_to_linker`. `extend` is what `main.rs` hands to `rusm_cli::host::serve`.
-pub fn gen_bridges_module(names: &[&str]) -> String {
+/// Synthesize the host crate's `src/bridges.rs`: mounts each bridge — Rust bridges via
+/// `#[path]` to the author's `host.rs`, TS bridges via their generated delegate shim
+/// (`src/bridge_<name>_delegate.rs`) — and exposes [`extend`] (registers all bridges
+/// into the linker) and, when there are TS bridges, [`init`] (registers the runner
+/// components as resident actors and boots them under a supervisor).
+pub fn gen_bridges_module(bridges: &[&BridgeSpec]) -> String {
     let mut out = String::from(
         "//! GENERATED by `rusm build` — do not edit. Mounts each custom bridge's host impl\n\
-         //! and registers them all. Pass `extend` to `rusm_cli::host::serve`.\n\n",
+         //! and registers them all. For pure-Rust-bridge apps pass `extend` to\n\
+         //! `rusm_cli::host::serve`; for TS-bridge apps call `init` first via\n\
+         //! `rusm_cli::host::serve_with_init`.\n\n",
     );
-    for name in names {
-        let ident = module_ident(name);
-        out.push_str(&format!(
-            "#[path = \"../bridges/{name}/host.rs\"]\npub mod {ident};\n\n"
-        ));
+    for bridge in bridges {
+        let mod_ident = module_ident(&bridge.name);
+        if bridge.is_rust_host() {
+            out.push_str(&format!(
+                "#[path = \"../bridges/{}/host.rs\"]\npub mod {mod_ident};\n\n",
+                bridge.name
+            ));
+        } else {
+            out.push_str(&format!(
+                "#[path = \"bridge_{mod_ident}_delegate.rs\"]\npub mod {mod_ident};\n\n"
+            ));
+        }
     }
     out.push_str(
         "/// Register every custom application bridge into the component linker.\n\
          pub fn extend(linker: &mut rusm_wasm::BridgeLinker) -> rusm_wasm::wasmtime::Result<()> {\n",
     );
-    for name in names {
+    for bridge in bridges {
         out.push_str(&format!(
             "    {}::add_to_linker(linker)?;\n",
-            module_ident(name)
+            module_ident(&bridge.name)
         ));
     }
     out.push_str("    Ok(())\n}\n");
+
+    // `init` is only emitted when there are TS bridges to register.
+    let ts_bridges: Vec<&&BridgeSpec> = bridges.iter().filter(|b| !b.is_rust_host()).collect();
+    if !ts_bridges.is_empty() {
+        out.push_str(
+            "\n/// Register and boot TS bridge runners as resident actors. Call this once\n\
+             /// after [`rusm_cli::host::build_runtime`] and before the component spawn —\n\
+             /// the generated `src/main.rs` does this via `serve_with_init`.\n\
+             pub fn init(wasm: &rusm_wasm::WasmRuntime) -> anyhow::Result<()> {\n",
+        );
+        for bridge in &ts_bridges {
+            let runner_name = bridge.runner_name();
+            let js_file = format!("wasm/bridge-{}.js", bridge.name);
+            out.push_str(&format!(
+                "    wasm.register_js_component_with(\n\
+                 \x20       \"{runner_name}\".to_string(),\n\
+                 \x20       std::fs::read(\"{js_file}\")\n\
+                 \x20           .map_err(|e| anyhow::anyhow!(\"{js_file}: {{}}\", e))?,\n\
+                 \x20       rusm_wasm::CapabilityProfile::Trusted.capabilities(),\n\
+                 \x20   );\n\
+                 \x20   // Drop the handle — Tokio detaches a dropped JoinHandle, so the\n\
+                 \x20   // supervisor process keeps running for the node's lifetime.\n\
+                 \x20   wasm.supervise(&[\"{runner_name}\".to_string()]);\n"
+            ));
+        }
+        out.push_str("    Ok(())\n}\n");
+    }
+
     out
 }
 
@@ -433,7 +738,6 @@ pub fn generate_host_files(root: &Path) -> Result<Vec<BridgeSpec>> {
         .iter()
         .map(|b| parse_contract(&b.wit()))
         .collect::<Result<Vec<_>>>()?;
-    let names: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
 
     let wit = root.join("wit");
     std::fs::create_dir_all(wit.join("deps"))
@@ -448,8 +752,30 @@ pub fn generate_host_files(root: &Path) -> Result<Vec<BridgeSpec>> {
 
     let src = root.join("src");
     std::fs::create_dir_all(&src).with_context(|| format!("creating {}", src.display()))?;
-    std::fs::write(src.join("bindings.rs"), BINDINGS_RS)?;
-    std::fs::write(src.join("bridges.rs"), gen_bridges_module(&names))?;
+
+    let has_ts = bridges.iter().any(|b| !b.is_rust_host());
+
+    // TS bridges need serde derives on all generated WIT value types for JSON marshaling.
+    std::fs::write(src.join("bindings.rs"), if has_ts { BINDINGS_RS_SERDE } else { BINDINGS_RS })?;
+
+    // Write the generated delegation shim and TS runner for each TS-hosted bridge.
+    for (bridge, contract) in bridges.iter().zip(contracts.iter()) {
+        if !bridge.is_rust_host() {
+            let shim = gen_ts_delegate_host(bridge, contract)?;
+            let id = module_ident(&bridge.name);
+            std::fs::write(src.join(format!("bridge_{id}_delegate.rs")), shim)?;
+            std::fs::write(bridge.dir.join("_runner.ts"), gen_ts_bridge_runner(bridge))?;
+        }
+    }
+
+    let bridge_refs: Vec<&BridgeSpec> = bridges.iter().collect();
+    std::fs::write(src.join("bridges.rs"), gen_bridges_module(&bridge_refs))?;
+
+    // For TS-bridge apps there is no author-written main.rs — write the generated one.
+    if has_ts && !src.join("main.rs").exists() {
+        std::fs::write(src.join("main.rs"), MAIN_RS_TS_BRIDGES)?;
+    }
+
     Ok(bridges)
 }
 
@@ -665,7 +991,10 @@ mod tests {
         let root = app_dir("malformed-host");
         write_bridge(&root, "weather", true, false); // no host.rs
         let err = discover(&root).unwrap_err().to_string();
-        assert!(err.contains("host.rs"), "names the missing file: {err}");
+        assert!(
+            err.contains("host implementation"),
+            "explains the missing impl: {err}"
+        );
     }
 
     /// The canonical custom-bridge WIT already used by the rusm-wasm end-to-end test —
@@ -685,9 +1014,20 @@ mod tests {
 
     /// The example's weather bridge spec, for the TS-codegen tests.
     fn weather_bridge() -> BridgeSpec {
+        let dir = PathBuf::from("../examples/custom-bridge/bridges/weather");
         BridgeSpec {
             name: "weather".into(),
-            dir: PathBuf::from("../examples/custom-bridge/bridges/weather"),
+            host_impl: HostImpl::Rust(dir.join("host.rs")),
+            dir,
+        }
+    }
+
+    fn ts_bridge(root: &Path, name: &str) -> BridgeSpec {
+        let dir = root.join("bridges").join(name);
+        BridgeSpec {
+            name: name.into(),
+            host_impl: HostImpl::TypeScript(dir.join("host.ts")),
+            dir,
         }
     }
 
@@ -713,6 +1053,55 @@ mod tests {
         ));
         // Shape matches the committed empty module (register + BRIDGE_JS).
         assert!(gen.contains("pub fn register<'js>(ctx: &Ctx<'js>, globals: &Object<'js>)"));
+    }
+
+    #[test]
+    fn gen_ts_delegate_host_generates_delegation_shim() {
+        // Use the weather bridge (weather:bridge/forecast, `lookup(city: string) -> string`).
+        let bridge = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::TypeScript(PathBuf::from("bridges/weather/host.ts")),
+            dir: PathBuf::from("../examples/custom-bridge/bridges/weather"),
+        };
+        let contract = parse_contract(&bridge.wit()).unwrap();
+        let shim = gen_ts_delegate_host(&bridge, &contract).unwrap();
+        // Header comment explains the mechanism and overhead.
+        assert!(shim.contains("GENERATED"), "header present: {shim}");
+        assert!(shim.contains("~1–10µs"), "overhead disclosed: {shim}");
+        // add_to_linker wires the WIT interface via the typed bindgen path.
+        assert!(shim.contains("pub fn add_to_linker("), "linker fn: {shim}");
+        assert!(
+            shim.contains("add_to_linker::<_, ::rusm_wasm::wasmtime::component::HasSelf"),
+            "linker call: {shim}"
+        );
+        // impl block for the forecast interface.
+        assert!(
+            shim.contains("impl crate::bindings::weather::bridge::forecast::Host"),
+            "impl: {shim}"
+        );
+        // Function body: call_id, whereis runner, send request, recv_bridge_reply.
+        assert!(shim.contains("CALL_CTR"), "counter: {shim}");
+        assert!(shim.contains("\"bridge:weather\""), "runner name: {shim}");
+        assert!(shim.contains("recv_bridge_reply"), "selective recv: {shim}");
+        assert!(shim.contains("rusm_wasm::serde_json::to_string"), "arg marshal: {shim}");
+        assert!(shim.contains("from_slice::<String>"), "reply deser: {shim}");
+    }
+
+    #[test]
+    fn gen_ts_bridge_runner_generates_dispatch_loop() {
+        let bridge = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::TypeScript(PathBuf::from("bridges/weather/host.ts")),
+            dir: PathBuf::from("bridges/weather"),
+        };
+        let runner = gen_ts_bridge_runner(&bridge);
+        assert!(runner.contains("GENERATED"), "header: {runner}");
+        assert!(runner.contains("Process.register(\"bridge:weather\")"), "self-register: {runner}");
+        assert!(runner.contains("Process.receiveText()"), "receive loop: {runner}");
+        assert!(runner.contains("JSON.parse(raw)"), "parse request: {runner}");
+        assert!(runner.contains("require(\"./host\")"), "loads user bridge: {runner}");
+        assert!(runner.contains("JSON.stringify(result)"), "serialize reply: {runner}");
+        assert!(runner.contains("callId}:"), "reply tagged with callId: {runner}");
     }
 
     #[test]
@@ -784,7 +1173,18 @@ mod tests {
     #[test]
     fn generates_the_bridges_module_mounting_each_host_impl() {
         // A kebab-case dir name becomes a snake_case module, but `#[path]` keeps the real dir.
-        let module = gen_bridges_module(&["weather", "json-codec"]);
+        let root = app_dir("bridges-mod");
+        let w = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::Rust(root.join("bridges/weather/host.rs")),
+            dir: root.join("bridges/weather"),
+        };
+        let j = BridgeSpec {
+            name: "json-codec".into(),
+            host_impl: HostImpl::Rust(root.join("bridges/json-codec/host.rs")),
+            dir: root.join("bridges/json-codec"),
+        };
+        let module = gen_bridges_module(&[&w, &j]);
         assert!(module.contains("#[path = \"../bridges/weather/host.rs\"]"));
         assert!(module.contains("pub mod weather;"));
         assert!(module.contains("#[path = \"../bridges/json-codec/host.rs\"]"));
@@ -795,6 +1195,76 @@ mod tests {
         assert!(module.contains("weather::add_to_linker(linker)?;"));
         assert!(module.contains("json_codec::add_to_linker(linker)?;"));
         assert!(module.contains("pub fn extend(linker: &mut rusm_wasm::BridgeLinker)"));
+        // Pure-Rust bridges: no `init` function.
+        assert!(!module.contains("pub fn init("), "no init for Rust-only: {module}");
+    }
+
+    #[test]
+    fn generates_bridges_module_with_init_for_ts_bridges() {
+        let root = app_dir("bridges-mod-ts");
+        let rs = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::Rust(root.join("bridges/weather/host.rs")),
+            dir: root.join("bridges/weather"),
+        };
+        let ts = BridgeSpec {
+            name: "notifier".into(),
+            host_impl: HostImpl::TypeScript(root.join("bridges/notifier/host.ts")),
+            dir: root.join("bridges/notifier"),
+        };
+        let module = gen_bridges_module(&[&rs, &ts]);
+        // Rust bridge still mounted via #[path] to the author's file.
+        assert!(module.contains("#[path = \"../bridges/weather/host.rs\"]"));
+        // TS bridge mounted via the generated delegate shim.
+        assert!(module.contains("#[path = \"bridge_notifier_delegate.rs\"]"));
+        assert!(module.contains("pub mod notifier;"));
+        // `init` function emitted (registers + boots the TS runner).
+        assert!(module.contains("pub fn init(wasm: &rusm_wasm::WasmRuntime)"));
+        assert!(module.contains("\"bridge:notifier\""));
+        assert!(module.contains("wasm/bridge-notifier.js"));
+        assert!(module.contains("wasm.supervise("));
+    }
+
+    #[test]
+    fn discovers_ts_bridge() {
+        let root = app_dir("ts-bridge");
+        let dir = root.join("bridges/notifier");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bridge.wit"), "package notifier:bridge@0.1.0;\n").unwrap();
+        std::fs::write(dir.join("host.ts"), "export async function ping() { return 'pong'; }\n")
+            .unwrap();
+        let found = discover(&root).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "notifier");
+        assert!(
+            matches!(found[0].host_impl, HostImpl::TypeScript(_)),
+            "host.ts → TypeScript variant"
+        );
+        assert!(!found[0].is_rust_host());
+        assert_eq!(found[0].runner_name(), "bridge:notifier");
+    }
+
+    #[test]
+    fn multiple_host_files_fails_loudly() {
+        let root = app_dir("multi-host");
+        let dir = root.join("bridges/weather");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bridge.wit"), "package weather:bridge@0.1.0;\n").unwrap();
+        std::fs::write(dir.join("host.rs"), "// rs\n").unwrap();
+        std::fs::write(dir.join("host.ts"), "// ts\n").unwrap();
+        let err = discover(&root).unwrap_err().to_string();
+        assert!(err.contains("multiple"), "names the conflict: {err}");
+    }
+
+    #[test]
+    fn go_host_not_yet_supported() {
+        let root = app_dir("go-host");
+        let dir = root.join("bridges/weather");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bridge.wit"), "package weather:bridge@0.1.0;\n").unwrap();
+        std::fs::write(dir.join("host.go"), "// go\n").unwrap();
+        let err = discover(&root).unwrap_err().to_string();
+        assert!(err.contains("not yet supported"), "clear message: {err}");
     }
 
     #[test]
@@ -1005,7 +1475,7 @@ mod tests {
             "examples/custom-bridge/wit/world.wit is not what synth_world emits",
         );
         assert_eq!(
-            gen_bridges_module(&["weather"]),
+            gen_bridges_module(&[&weather_bridge()]),
             include_str!("../../examples/custom-bridge/src/bridges.rs"),
             "examples/custom-bridge/src/bridges.rs is not what gen_bridges_module emits",
         );

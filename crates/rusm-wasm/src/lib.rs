@@ -53,6 +53,10 @@ pub use bridges::WasiHost as BridgeHost;
 /// than depending on Wasmtime directly (a version skew would fail to type-check).
 pub use wasmtime;
 
+/// Re-exported for **generated TS/Go bridge delegation shims**: the host crate only
+/// needs `rusm_wasm` as a dep, not a separate `serde_json` in its `Cargo.toml`.
+pub use serde_json;
+
 /// The component linker a custom bridge extends inside [`WasmRuntime::with_bridges`].
 /// A bridge calls its generated `add_to_linker(linker, |h| h)` against it.
 pub type BridgeLinker = wasmtime::component::Linker<BridgeHost>;

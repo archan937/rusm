@@ -120,6 +120,26 @@ impl WasiHost {
     pub fn caps(&self) -> &Capabilities {
         &self.caps
     }
+
+    /// Selective receive for a **bridge round-trip**: waits for a message whose bytes
+    /// start with `tag` (a per-call unique prefix), parking unrelated messages in the
+    /// save queue for later receives. Used by generated delegation shims for TS-hosted
+    /// bridges — unrelated messages arriving in flight are saved and replayed by the
+    /// next `receive`, so the process mailbox is never silently drained.
+    ///
+    /// Coverage: `recv_match` is tested by `rusm-otp`; the delegation path is exercised
+    /// by the custom-bridge e2e tests.
+    pub async fn recv_bridge_reply(&mut self, tag: &str) -> Option<Vec<u8>> {
+        use rusm_otp::Received;
+        let ctx = self.ctx.as_mut()?;
+        let got = ctx
+            .recv_match(|m| matches!(m, Received::Message(b) if b.starts_with(tag.as_bytes())))
+            .await;
+        match got {
+            Received::Message(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
 }
 
 impl WasiView for WasiHost {

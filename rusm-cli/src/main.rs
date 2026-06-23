@@ -133,8 +133,38 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     }
     if !bridges.is_empty() {
         build_js_runner_if_ts_uses_bridges(root, &bridges)?;
+        build_ts_bridge_runners(root, &bridges)?;
         build_host_crate(root)?;
         println!("built host binary (custom bridges compiled in)");
+    }
+    Ok(())
+}
+
+/// Bundle each TS-hosted bridge runner (`bridges/<name>/_runner.ts`) into
+/// `wasm/bridge-<name>.js` with Bun. Skipped for Rust-only bridge apps.
+fn build_ts_bridge_runners(
+    root: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<()> {
+    let wasm_dir = root.join("wasm");
+    std::fs::create_dir_all(&wasm_dir)?;
+    for bridge in bridges.iter().filter(|b| !b.is_rust_host()) {
+        let runner_ts = bridge.dir.join("_runner.ts");
+        let bundle_name = format!("bridge-{}.js", bridge.name);
+        let dest = wasm_dir.join(&bundle_name);
+        let status = Command::new("bun")
+            .args(["build", "--target=browser", "--format=cjs", "--minify", "--outfile"])
+            .arg(&dest)
+            .arg(&runner_ts)
+            .status()
+            .with_context(|| format!("bundling TS bridge runner `{}`", bridge.name))?;
+        if !status.success() {
+            return Err(anyhow!(
+                "`bun build` failed for bridge runner `{}`",
+                bridge.name
+            ));
+        }
+        println!("built bridge runner -> {}", dest.display());
     }
     Ok(())
 }
