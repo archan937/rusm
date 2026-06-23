@@ -98,7 +98,7 @@ it). `connect` takes a registered **name** (looked up for you) or a **pid**.
 import { connect } from "rusm-ts";
 import type { Calc } from "../calc"; // same contract as spawn — type-only
 
-const calc = connect<Calc>("calc");   // attach by name (or pass a pid); throws if not running
+const calc = connect<Calc>("calc");   // attach by name (or pass a pid)
 console.log(await calc.add(2, 3));     // → 5 — a real round-trip to the existing instance
 ```
 
@@ -114,6 +114,17 @@ pid, _ := rusm.Whereis("calc")
 sum, _ := rusm.Call[int](pid, "add", 2, 3) // → 5
 ```
 
+:::
+
+::: warning `connect` resolves a name — it does not verify a live service
+`connect(name)` throws only when the **name isn't registered** (the `whereis` is empty). It does
+**not** check that the target is alive or actually runs a dispatch loop — and a typed `call`
+currently has **no timeout** (it blocks until the reply arrives). So if you `connect` to a pid that
+has died, or to a process that isn't a service (a worker never replies), the **call hangs**, it
+doesn't error. This is why you `connect` to a **`resident` by name**: a resident is *supervised*
+(restarted on crash) and *re-registers its name*, so the name always resolves to a live instance.
+Don't hold a client across a target's crash — re-`connect` (re-resolve the name) instead. (Same
+caveat applies to a `spawn`ed client whose instance dies mid-call.)
 :::
 
 ## `spawn` or `connect`?
