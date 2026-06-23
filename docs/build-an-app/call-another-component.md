@@ -129,29 +129,33 @@ caveat applies to a `spawn`ed client whose instance dies mid-call.)
 
 ## `spawn` or `connect`?
 
-A common mix-up: this is **not** service-vs-worker. The axis is **a fresh instance vs an existing
-one**:
+These are **two separate questions**, and the first one gates the second:
 
-- **`spawn`** starts a **new** instance and hands you a client you **own** — use it, `.stop()` it,
-  or (for a worker) let it exit when its one job is done. Two `spawn("calc")` calls make **two**
-  isolated `calc` processes.
-- **`connect`** attaches to an instance **already running** (typically the one shared `resident`)
-  and hands you a client you **don't own** — many components can `connect` to the *same* instance
-  and talk to its shared, supervised state.
+**1. Is the callee a service or a worker?** This decides whether it's *callable* at all.
+- A **service** runs a dispatch loop and replies — so it's the **only** valid target of a typed
+  call, whether you reach it with `spawn<T>` or `connect<T>`.
+- A **worker** is one-shot: it reads its input, does the job, and exits. You `spawn` it and `send`
+  it work (see [Run one-off work](/build-an-app/run-one-off-work)) — it never dispatches, so it is
+  **never** a `connect`/typed-call target. A typed call to a worker would hang, waiting for a reply
+  it never sends.
 
-So the component's *kind* doesn't pick the verb — what you want from it does:
+**2. For a service: a fresh instance, or an existing one?** This is where `spawn` vs `connect`
+actually differ — both give you the same typed client, against a service:
+- **`spawn<T>`** starts a **new** instance you **own** — `.stop()` it when done. Two
+  `spawn("calc")` calls make **two** isolated processes. (Note `spawn` is also how you start a
+  *worker* — but then you message it directly, you don't hold a typed call-client to it.)
+- **`connect<T>`** attaches to one **already running** — typically the single `resident` the node
+  boot-spawns and supervises — and hands you a client you **don't own**. Many components can
+  `connect` to the *same* instance and share its supervised state.
 
-- A **worker** is always `spawn`ed: it's one-shot and ephemeral, so there's no shared instance to
-  attach to.
-- A **service** can be **either** — `spawn` a fresh private instance you own and stop, **or**
-  `connect` to the one long-lived `resident` the node supervises (the usual case for a registry,
-  counter, cache, or broker that the whole app shares).
+So the verb isn't worker-vs-service; it's fresh-vs-existing **within services**. (And `connect`
+only makes sense against a service for exactly that reason — point 1.)
 
-| You want | Use | Instance | You own its lifecycle? |
-| --- | --- | --- | --- |
-| a one-shot job, then gone | `spawn` | fresh | yes — it exits on return |
-| your own private service instance | `spawn` | fresh | yes — `.stop()` it |
-| to reach the shared, long-lived service | `connect` | existing (`resident`) | no — you didn't start it |
+| You want | Callee | Use | Instance | You own it? |
+| --- | --- | --- | --- | --- |
+| a one-shot job, then gone | worker | `spawn` + `send` | fresh | yes — exits on return |
+| your own private instance | service | `spawn<T>` | fresh | yes — `.stop()` it |
+| the shared, long-lived instance | service (`resident`) | `connect<T>` | existing | no — you didn't start it |
 
 ## What you need to know
 
