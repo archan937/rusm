@@ -52,6 +52,12 @@ const sections = [
         ],
       },
       {
+        text: 'Processes & messaging',
+        items: [
+          { text: 'Processes & messaging', link: '/build-an-app/processes-and-messaging' },
+        ],
+      },
+      {
         text: 'Common patterns',
         items: [
           { text: 'Call another component', link: '/build-an-app/call-another-component' },
