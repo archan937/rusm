@@ -297,18 +297,23 @@ and as the handlers a `[[serve]]` listener names. See [the app model](/deep-dive
 Every entry is **spawnable by name**. The `resident` flag decides whether the node also
 boots an instance:
 
-- **`resident = true`** — a long-lived service: boot-spawned at startup **and
-  supervised** (auto-restarted on crash, bounded by the runtime's restart-intensity so
-  a crash-loop is capped). Use it for stateful services reached over the actor API.
-- **default (no `resident`)** — registered for **spawn-by-name only**: a route or a
-  sibling spawns it on demand (a per-request HTTP handler, an on-demand worker). It is
-  **not** boot-spawned — no idle parked instance.
+The name says it: a **resident** component *resides* in the node — one instance, always
+up, like a daemon — whereas the default component exists only while something is using it.
+
+- **`resident = true`** — a long-lived service that's **always present**: boot-spawned at
+  node startup **and supervised** (auto-restarted on crash, bounded by the runtime's
+  restart-intensity so a crash-loop is capped). It's there from boot, so siblings can
+  `whereis`/`connect` to the *same* instance and share its in-memory state. Use it for a
+  registry, counter, cache, broker, or any stateful service reached over the actor API.
+- **default (no `resident`)** — **spawn-by-name only**: nothing is running until a route or
+  a sibling `spawn`s it on demand (a per-request HTTP handler, an on-demand worker), and it's
+  gone when that work ends. **Not** boot-spawned — no idle parked instance.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | _(table key)_ | string | — (required) | The component **name** (`[components.<name>]`) → `./wasm/<name>.*`; registered so a route or sibling can `spawn` it by name. |
 | `capability` | string | `"sandboxed"` | A built-in profile or a `[capabilities.<name>]` id. |
-| `resident` | bool | `false` | `true` = boot-spawned at startup and supervised (auto-restarted on crash). Default = registered for spawn-by-name only, not boot-spawned. |
+| `resident` | bool | `false` | `true` = the component *resides* in the node (one always-up instance): boot-spawned at startup and supervised (auto-restarted on crash). Default = spawn-by-name only — nothing runs until something spawns it. |
 | `source` | string? | none | Load the bundle from a `url:`/`http(s)://` URL or `kv:<bucket>/<key>` instead of the local `./wasm/<name>` artifact — deploy a JS bundle **or a compiled `.wasm` component** (told apart by the WASM magic) live, no node rebuild (re-fetched on each spawn / `rusm dev` reload). See [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
 | `dynamic` | string? | none | Marks a **dynamic runner template** — a capability profile with no fixed bundle: `"js"` runs a runtime-chosen JS bundle, `"wasm"` a runtime-chosen (compile-cached) WASM component. A guest can't `spawn` it; it runs only via `spawn-from(name, source)`, which loads the chosen bundle and runs it under this profile. Mutually exclusive with `source`; can't be `resident`. See [dynamic JS](/build-an-app/dynamic-js) / [dynamic WASM](/build-an-app/dynamic-wasm). |
 

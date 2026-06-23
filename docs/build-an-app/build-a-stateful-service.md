@@ -2,9 +2,10 @@
 
 Serving instances are ephemeral — they forget everything between requests. When you need
 state that **survives and is shared** (a counter, a cache, a registry, a pub/sub broker, the
-"current value" of something), put it in a **resident service**: one long-lived component
-that the node boot-spawns and supervises, holding its state in memory and answering callers
-over messages.
+"current value" of something), put it in a **resident service** — "resident" because it
+*resides* in the node: one instance that's always up (like a daemon), rather than spawned
+fresh per use and gone when done. The node boot-spawns and supervises it, and it holds its
+state in memory while answering callers over messages.
 
 It's the same "export functions" shape as any service — the difference is one line in the
 manifest (`resident = true`) and that **module/struct scope is now this instance's live,
