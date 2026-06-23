@@ -134,21 +134,26 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     if !bridges.is_empty() {
         build_js_runner_if_ts_uses_bridges(root, &bridges)?;
         build_ts_bridge_runners(root, &bridges)?;
+        build_go_bridge_runners(root, &bridges)?;
         build_host_crate(root)?;
         println!("built host binary (custom bridges compiled in)");
     }
     Ok(())
 }
 
-/// Bundle each TS-hosted bridge runner (`bridges/<name>/_runner.ts`) into
-/// `wasm/bridge-<name>.js` with Bun. Skipped for Rust-only bridge apps.
+/// Bundle each **TS-hosted** bridge runner (`bridges/<name>/_runner.ts`) into
+/// `wasm/bridge-<name>.js` with Bun. Skipped for Rust-only and Go-only bridge apps.
 fn build_ts_bridge_runners(
     root: &Path,
     bridges: &[rusm_cli::bridges::BridgeSpec],
 ) -> anyhow::Result<()> {
+    use rusm_cli::bridges::HostImpl;
     let wasm_dir = root.join("wasm");
     std::fs::create_dir_all(&wasm_dir)?;
-    for bridge in bridges.iter().filter(|b| !b.is_rust_host()) {
+    for bridge in bridges
+        .iter()
+        .filter(|b| matches!(b.host_impl, HostImpl::TypeScript(_)))
+    {
         let runner_ts = bridge.dir.join("_runner.ts");
         let bundle_name = format!("bridge-{}.js", bridge.name);
         let dest = wasm_dir.join(&bundle_name);
@@ -163,6 +168,61 @@ fn build_ts_bridge_runners(
                 "`bun build` failed for bridge runner `{}`",
                 bridge.name
             ));
+        }
+        println!("built bridge runner -> {}", dest.display());
+    }
+    Ok(())
+}
+
+/// Compile each **Go-hosted** bridge runner (`bridges/<name>/_runner.go` + `host.go`) to
+/// `wasm/bridge-<name>.wasm` with TinyGo. The runner + user's host.go share `package main` in
+/// the same directory, so TinyGo sees both. Skipped for Rust/TS bridge apps.
+fn build_go_bridge_runners(
+    root: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<()> {
+    use rusm_cli::bridges::HostImpl;
+    let wasm_dir = root.join("wasm");
+    std::fs::create_dir_all(&wasm_dir)?;
+    for bridge in bridges
+        .iter()
+        .filter(|b| matches!(b.host_impl, HostImpl::Go(_)))
+    {
+        let bridge_dir = &bridge.dir;
+        let name = &bridge.name;
+        // go mod tidy to fetch the rusm-go SDK into the module cache.
+        let status = Command::new("go")
+            .args(["mod", "tidy"])
+            .current_dir(bridge_dir)
+            .status()
+            .with_context(|| format!("running `go mod tidy` for bridge `{name}`"))?;
+        if !status.success() {
+            return Err(anyhow!("`go mod tidy` failed for bridge `{name}`"));
+        }
+        // Locate the rusm-go SDK's `wit/` (TinyGo needs -wit-package for the actor ABI).
+        let sdk_wit = go_sdk_wit(bridge_dir)
+            .with_context(|| format!("locating rusm-go SDK for bridge `{name}`"))?;
+        let dest = std::fs::canonicalize(&wasm_dir)
+            .with_context(|| format!("resolving {}", wasm_dir.display()))?
+            .join(format!("bridge-{name}.wasm"));
+        let status = Command::new("tinygo")
+            .args([
+                "build",
+                "-target=wasip2",
+                "-no-debug",
+                "-panic=trap",
+                "-opt=z",
+            ])
+            .arg("-wit-package")
+            .arg(&sdk_wit)
+            .args(["-wit-world", "component", "-o"])
+            .arg(&dest)
+            .arg(".")
+            .current_dir(bridge_dir)
+            .status()
+            .with_context(|| format!("running tinygo for bridge `{name}`"))?;
+        if !status.success() {
+            return Err(anyhow!("`tinygo build` failed for bridge `{name}`"));
         }
         println!("built bridge runner -> {}", dest.display());
     }

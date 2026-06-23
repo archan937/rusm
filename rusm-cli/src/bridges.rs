@@ -9,6 +9,12 @@
 //! not parse WIT. A bridge's `host.rs` encapsulates its own `bindgen!` + `add_to_linker`
 //! (dogfooding the platform-bridge convention), so the toolchain never needs to understand
 //! the contract, only to find it and hand it to the guest build + the generated host crate.
+//!
+//! Supported host implementations (exactly one must be present):
+//! - `host.rs` — Rust: compiled directly into the host binary, zero delegation overhead.
+//! - `host.ts` — TypeScript: generates a Rust delegation shim + a resident TS actor runner.
+//! - `host.go` — Go: same delegation pattern as TS; the runner is TinyGo-compiled to
+//!   `wasm/bridge-<name>.wasm` and registered as a resident Wasm component.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +31,10 @@ pub enum HostImpl {
     /// dispatch runner; the runner runs as a resident actor (`bridge:<name>`). Each call
     /// is ~1–10µs from the actor round-trip + JSON marshaling.
     TypeScript(PathBuf),
+    /// A Go `host.go` — same delegation pattern as TS: `rusm build` generates a Rust
+    /// delegation shim and a Go dispatch runner (`_runner.go`). The runner is compiled by
+    /// TinyGo to `wasm/bridge-<name>.wasm` and registered as a resident Wasm component.
+    Go(PathBuf),
 }
 
 /// A discovered custom bridge: its `name` (the directory name, which is also the bridge
@@ -44,10 +54,10 @@ impl BridgeSpec {
         self.dir.join("bridge.wit")
     }
 
-    /// The host implementation file (`host.rs` or `host.ts`).
+    /// The host implementation file (`host.rs`, `host.ts`, or `host.go`).
     pub fn host(&self) -> PathBuf {
         match &self.host_impl {
-            HostImpl::Rust(p) | HostImpl::TypeScript(p) => p.clone(),
+            HostImpl::Rust(p) | HostImpl::TypeScript(p) | HostImpl::Go(p) => p.clone(),
         }
     }
 
@@ -69,10 +79,8 @@ impl BridgeSpec {
 ///
 /// Supported host implementations (exactly one must be present):
 /// - `host.rs` — Rust: compiled directly into the host binary, zero delegation overhead.
-/// - `host.ts` — TypeScript: `rusm build` generates a delegation shim + resident runner.
-///
-/// Note: `host.go` is reserved for a future Go-hosted bridge path and currently fails with
-/// a clear "not yet supported" message rather than being silently ignored.
+/// - `host.ts` — TypeScript: `rusm build` generates a delegation shim + resident TS runner.
+/// - `host.go` — Go: same delegation pattern; TinyGo compiles the runner to a Wasm component.
 pub fn discover(root: &Path) -> Result<Vec<BridgeSpec>> {
     let dir = root.join("bridges");
     if !dir.is_dir() {
@@ -97,17 +105,15 @@ pub fn discover(root: &Path) -> Result<Vec<BridgeSpec>> {
         let host_impl = match (rs.is_file(), ts.is_file(), go.is_file()) {
             (true, false, false) => HostImpl::Rust(rs),
             (false, true, false) => HostImpl::TypeScript(ts),
-            (false, false, true) => bail!(
-                "custom bridge `{name}`: Go-hosted bridges (`host.go`) are not yet supported \
-                 — use `host.ts` for a TS-hosted bridge, or `host.rs` for a Rust-hosted bridge"
-            ),
+            (false, false, true) => HostImpl::Go(go),
             (false, false, false) => bail!(
                 "custom bridge `{name}` needs a host implementation — \
-                 add bridges/{name}/host.rs (Rust) or bridges/{name}/host.ts (TypeScript)"
+                 add bridges/{name}/host.rs (Rust), bridges/{name}/host.ts (TypeScript), \
+                 or bridges/{name}/host.go (Go)"
             ),
             _ => bail!(
                 "custom bridge `{name}` has multiple host implementation files — \
-                 keep exactly one of host.rs or host.ts"
+                 keep exactly one of host.rs, host.ts, or host.go"
             ),
         };
         bridges.push(BridgeSpec { name, dir: path, host_impl });
@@ -385,13 +391,15 @@ pub fn gen_bridge_dts(bridges: &[BridgeSpec]) -> Result<String> {
     Ok(out)
 }
 
-/// Generate the Rust **delegation shim** for a TS-hosted bridge: each WIT function
+/// Generate the Rust **delegation shim** for a TS- or Go-hosted bridge: each WIT function
 /// JSON-encodes its arguments, sends a tagged request to the resident `bridge:<name>`
 /// actor, and awaits the tagged reply via [`rusm_wasm::BridgeHost::recv_bridge_reply`]
 /// (selective receive — unrelated mailbox messages are parked in the save queue and
-/// replayed by the next `receive`). Written to `src/bridge_<ident>_delegate.rs` and
+/// replayed by the next `receive`). The wire protocol is identical for TS and Go runners;
+/// only the runner language differs. Written to `src/bridge_<ident>_delegate.rs` and
 /// mounted from `src/bridges.rs` via a `#[path]` attribute.
-pub fn gen_ts_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<String> {
+pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<String> {
+    let name = &bridge.name;
     let api = crate::witmap::bridge_api(&bridge.wit())?;
     let runner_name = bridge.runner_name();
 
@@ -423,9 +431,15 @@ pub fn gen_ts_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<
         host_impls.push_str("}\n\n");
     }
 
+    let bridge_name = &bridge.name;
+    let impl_file = match &bridge.host_impl {
+        HostImpl::TypeScript(_) => format!("bridges/{bridge_name}/host.ts"),
+        HostImpl::Go(_) => format!("bridges/{bridge_name}/host.go"),
+        HostImpl::Rust(_) => unreachable!(),
+    };
     Ok(format!(
         "//! GENERATED by `rusm build` — do not edit. Delegation shim for \
-         `bridges/{name}/host.ts`: each function JSON-encodes its arguments, sends a tagged\n\
+         `{impl_file}`: each function JSON-encodes its arguments, sends a tagged\n\
          //! request to the resident `{runner_name}` actor, and awaits the tagged reply via\n\
          //! selective receive. Overhead: ~1–10µs/call (actor round-trip + JSON). Regenerated\n\
          //! each build.\n\
@@ -437,7 +451,6 @@ pub fn gen_ts_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<
          \x20   Ok(())\n\
          }}\n\n\
          {host_impls}",
-        name = bridge.name,
     ))
 }
 
@@ -531,7 +544,7 @@ fn delegate_fn_impl(f: &crate::witmap::Func, bridge_name: &str, runner_name: &st
 /// corresponding export from the user's `host.ts`, and sends back a tagged reply.
 /// Written to `bridges/<name>/_runner.ts`; bundled by `rusm build` into
 /// `wasm/bridge-<name>.js`.
-pub fn gen_ts_bridge_runner(bridge: &BridgeSpec) -> String {
+pub fn gen_ts_runner(bridge: &BridgeSpec) -> String {
     let runner_name = bridge.runner_name();
     format!(
         "// GENERATED by `rusm build` — do not edit.\n\
@@ -572,6 +585,120 @@ pub fn gen_ts_bridge_runner(bridge: &BridgeSpec) -> String {
     )
 }
 
+/// Generate the Go **dispatch runner** for a Go-hosted bridge: a TinyGo/rusm-go actor that
+/// registers as `bridge:<name>`, receives JSON requests from the Rust delegation shim, calls
+/// the matching exported function from the user's `host.go` (same `package main`, so the call
+/// is direct — no import), and sends back a tagged reply. Written to `bridges/<name>/_runner.go`;
+/// TinyGo compiles the whole `bridges/<name>/` package to `wasm/bridge-<name>.wasm`.
+pub fn gen_go_bridge_runner(bridge: &BridgeSpec) -> Result<String> {
+    let api = crate::witmap::bridge_api(&bridge.wit())?;
+    let runner_name = bridge.runner_name();
+    let mut dispatch_cases = String::new();
+    for f in &api.functions {
+        dispatch_cases.push_str(&go_dispatch_case(f));
+    }
+    Ok(format!(
+        "// GENERATED by `rusm build` — do not edit.\n\
+         // Dispatch runner for the `{name}` bridge: receives JSON requests from the Rust\n\
+         // delegation shim, calls the matching export from host.go (same package, direct call),\n\
+         // and sends back a tagged reply. Runs as a resident actor: \"{runner_name}\".\n\
+         package main\n\n\
+         import (\n\
+         \t\"encoding/json\"\n\n\
+         \trusm \"github.com/archan937/rusm/packages/rusm-go\"\n\
+         )\n\n\
+         type bridgeRequest struct {{\n\
+         \tFn      string            `json:\"fn\"`\n\
+         \tArgs    []json.RawMessage `json:\"args\"`\n\
+         \tReplyTo struct {{\n\
+         \t\tPid    string `json:\"pid\"`\n\
+         \t\tCallID string `json:\"callId\"`\n\
+         \t}} `json:\"replyTo\"`\n\
+         }}\n\n\
+         func main() {{\n\
+         \trusm.Register(\"{runner_name}\")\n\
+         \trusm.SetLabel(\"{runner_name}\")\n\
+         \tfor {{\n\
+         \t\traw := rusm.Receive()\n\
+         \t\tvar req bridgeRequest\n\
+         \t\tif err := json.Unmarshal(raw, &req); err != nil {{\n\
+         \t\t\tcontinue\n\
+         \t\t}}\n\
+         \t\tresult := dispatch(req.Fn, req.Args)\n\
+         \t\tresultBytes, _ := json.Marshal(result)\n\
+         \t\treply := append([]byte(req.ReplyTo.CallID+\":\"), resultBytes...)\n\
+         \t\trusm.Send(req.ReplyTo.Pid, reply)\n\
+         \t}}\n\
+         }}\n\n\
+         func dispatch(fn string, args []json.RawMessage) interface{{}} {{\n\
+         \tswitch fn {{\n\
+         {dispatch_cases}\
+         \t}}\n\
+         \treturn nil\n\
+         }}\n",
+        name = bridge.name,
+        runner_name = runner_name,
+    ))
+}
+
+/// One function's case in the Go dispatch switch: deserializes each argument, calls the
+/// user's exported Go function (PascalCase of the WIT name — same package, no import), and
+/// returns the result as `interface{}` for JSON marshaling.
+fn go_dispatch_case(f: &crate::witmap::Func) -> String {
+    let guard = if !f.params.is_empty() {
+        format!("\t\tif len(args) < {} {{ return nil }}\n", f.params.len())
+    } else {
+        String::new()
+    };
+    let mut deser = String::new();
+    let mut call_args: Vec<String> = Vec::new();
+    for (i, p) in f.params.iter().enumerate() {
+        let var_name = format!("arg{i}");
+        deser.push_str(&format!(
+            "\t\tvar {var_name} {go_type}\n\
+             \t\tif err := json.Unmarshal(args[{i}], &{var_name}); err != nil {{ return nil }}\n",
+            go_type = p.go,
+        ));
+        call_args.push(var_name);
+    }
+    format!(
+        "\tcase \"{fn_name}\":\n\
+         {guard}\
+         {deser}\
+         \t\treturn {go_fn}({args})\n",
+        fn_name = f.name,
+        go_fn = pascal_go(&f.name),
+        args = call_args.join(", "),
+    )
+}
+
+/// WIT function name (kebab-case) to Go exported function name (PascalCase):
+/// `get-weather` → `GetWeather`, `lookup` → `Lookup`.
+fn pascal_go(name: &str) -> String {
+    name.split('-')
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Generate the `go.mod` for a Go bridge runner directory — created only if none exists, so
+/// the user can manage it manually once they need additional dependencies. Uses the same
+/// [`crate::scaffold::SDK_VERSION`] as scaffolded Go components (single source of truth).
+pub fn gen_go_bridge_gomod(name: &str) -> String {
+    format!(
+        "module bridge-{name}\n\
+         \n\
+         go 1.24\n\
+         \n\
+         require github.com/archan937/rusm/packages/rusm-go v{}\n",
+        crate::scaffold::SDK_VERSION
+    )
+}
+
 /// The static `src/bindings.rs` of a generated host crate: one `bindgen!` over the
 /// synthesized `wit/` world, producing the typed `Host` traits a bridge's `host.rs`
 /// implements over [`rusm_wasm::BridgeHost`]. Identical for every app (the variation is in
@@ -590,10 +717,10 @@ wasmtime::component::bindgen!({
 ";
 
 /// Like [`BINDINGS_RS`] but adds serde derives to all generated value types — required
-/// for TS-bridge delegation shims that JSON-marshal WIT record/enum/variant params.
+/// for TS/Go-bridge delegation shims that JSON-marshal WIT record/enum/variant params.
 pub const BINDINGS_RS_SERDE: &str = "\
 //! GENERATED by `rusm build` — do not edit. Typed bindings for the app's custom bridges,
-//! from the synthesized `wit/` world, with serde derives so TS delegation shims can
+//! from the synthesized `wit/` world, with serde derives so TS/Go delegation shims can
 //! JSON-marshal WIT value types. `wasmtime` is the runtime's exact version (pinned in
 //! Cargo.toml), so the generated types are identical to the ones the runtime links.
 wasmtime::component::bindgen!({
@@ -604,12 +731,12 @@ wasmtime::component::bindgen!({
 });
 ";
 
-/// The generated `src/main.rs` for a TS-bridge app (no `host.rs` — `rusm build` writes
+/// The generated `src/main.rs` for a TS/Go-bridge app (no `host.rs` — `rusm build` writes
 /// all Rust). Builds the runtime, calls `bridges::init` to register the runner components,
 /// then hands off to `rusm_cli::host::serve_with_init`. Only written if `src/main.rs`
 /// does not already exist (Rust-bridge apps author their own `main.rs`).
-pub const MAIN_RS_TS_BRIDGES: &str = "\
-//! GENERATED by `rusm build` — do not edit. Host binary entry point for this TS-bridge
+pub const MAIN_RS_BRIDGE_RUNNERS: &str = "\
+//! GENERATED by `rusm build` — do not edit. Host binary entry point for this TS/Go-bridge
 //! app: wires the delegation shims, registers the runner components as resident actors,
 //! then hands off to `rusm_cli::host::serve_with_init`.
 mod bindings;
@@ -643,15 +770,15 @@ pub fn synth_world(contracts: &[Contract]) -> String {
 }
 
 /// Synthesize the host crate's `src/bridges.rs`: mounts each bridge — Rust bridges via
-/// `#[path]` to the author's `host.rs`, TS bridges via their generated delegate shim
-/// (`src/bridge_<name>_delegate.rs`) — and exposes [`extend`] (registers all bridges
-/// into the linker) and, when there are TS bridges, [`init`] (registers the runner
-/// components as resident actors and boots them under a supervisor).
+/// `#[path]` to the author's `host.rs`, TS/Go bridges via their generated delegate shim
+/// (`src/bridge_<name>_delegate.rs`) — and exposes [`extend`] (registers all bridges into
+/// the linker) and, when there are TS/Go bridges, [`init`] (registers and boots the runner
+/// components as resident actors).
 pub fn gen_bridges_module(bridges: &[&BridgeSpec]) -> String {
     let mut out = String::from(
         "//! GENERATED by `rusm build` — do not edit. Mounts each custom bridge's host impl\n\
          //! and registers them all. For pure-Rust-bridge apps pass `extend` to\n\
-         //! `rusm_cli::host::serve`; for TS-bridge apps call `init` first via\n\
+         //! `rusm_cli::host::serve`; for TS/Go-bridge apps call `init` first via\n\
          //! `rusm_cli::host::serve_with_init`.\n\n",
     );
     for bridge in bridges {
@@ -679,29 +806,47 @@ pub fn gen_bridges_module(bridges: &[&BridgeSpec]) -> String {
     }
     out.push_str("    Ok(())\n}\n");
 
-    // `init` is only emitted when there are TS bridges to register.
-    let ts_bridges: Vec<&&BridgeSpec> = bridges.iter().filter(|b| !b.is_rust_host()).collect();
-    if !ts_bridges.is_empty() {
+    // `init` is only emitted when there are TS/Go bridges whose runners must be registered.
+    let non_rust: Vec<&&BridgeSpec> = bridges.iter().filter(|b| !b.is_rust_host()).collect();
+    if !non_rust.is_empty() {
         out.push_str(
-            "\n/// Register and boot TS bridge runners as resident actors. Call this once\n\
-             /// after [`rusm_cli::host::build_runtime`] and before the component spawn —\n\
+            "\n/// Register and boot TS/Go bridge runners as resident actors. Call once after\n\
+             /// `rusm_cli::host::build_runtime` and before the first component spawn —\n\
              /// the generated `src/main.rs` does this via `serve_with_init`.\n\
              pub fn init(wasm: &rusm_wasm::WasmRuntime) -> anyhow::Result<()> {\n",
         );
-        for bridge in &ts_bridges {
+        for bridge in &non_rust {
             let runner_name = bridge.runner_name();
-            let js_file = format!("wasm/bridge-{}.js", bridge.name);
-            out.push_str(&format!(
-                "    wasm.register_js_component_with(\n\
-                 \x20       \"{runner_name}\".to_string(),\n\
-                 \x20       std::fs::read(\"{js_file}\")\n\
-                 \x20           .map_err(|e| anyhow::anyhow!(\"{js_file}: {{}}\", e))?,\n\
-                 \x20       rusm_wasm::CapabilityProfile::Trusted.capabilities(),\n\
-                 \x20   );\n\
-                 \x20   // Drop the handle — Tokio detaches a dropped JoinHandle, so the\n\
-                 \x20   // supervisor process keeps running for the node's lifetime.\n\
-                 \x20   wasm.supervise(&[\"{runner_name}\".to_string()]);\n"
-            ));
+            if matches!(bridge.host_impl, HostImpl::TypeScript(_)) {
+                let js_file = format!("wasm/bridge-{}.js", bridge.name);
+                out.push_str(&format!(
+                    "    wasm.register_js_component_with(\n\
+                     \x20       \"{runner_name}\".to_string(),\n\
+                     \x20       std::fs::read(\"{js_file}\")\n\
+                     \x20           .map_err(|e| anyhow::anyhow!(\"{js_file}: {{}}\", e))?,\n\
+                     \x20       rusm_wasm::CapabilityProfile::Trusted.capabilities(),\n\
+                     \x20   );\n\
+                     \x20   // Drop the handle — Tokio detaches a dropped JoinHandle, so the\n\
+                     \x20   // supervisor process keeps running for the node's lifetime.\n\
+                     \x20   wasm.supervise(&[\"{runner_name}\".to_string()]);\n"
+                ));
+            } else {
+                // Go bridge: wasm bytes compiled by TinyGo.
+                let wasm_file = format!("wasm/bridge-{}.wasm", bridge.name);
+                out.push_str(&format!(
+                    "    wasm.register_component_with(\n\
+                     \x20       \"{runner_name}\".to_string(),\n\
+                     \x20       wasm.prepare_component_bytes(\n\
+                     \x20           &std::fs::read(\"{wasm_file}\")\n\
+                     \x20               .map_err(|e| anyhow::anyhow!(\"{wasm_file}: {{}}\", e))?,\n\
+                     \x20       ).map_err(|e| anyhow::anyhow!(\"compiling {runner_name}: {{}}\", e))?,\n\
+                     \x20       rusm_wasm::CapabilityProfile::Trusted.capabilities(),\n\
+                     \x20   );\n\
+                     \x20   // Drop the handle — Tokio detaches a dropped JoinHandle, so the\n\
+                     \x20   // supervisor process keeps running for the node's lifetime.\n\
+                     \x20   wasm.supervise(&[\"{runner_name}\".to_string()]);\n"
+                ));
+            }
         }
         out.push_str("    Ok(())\n}\n");
     }
@@ -751,27 +896,43 @@ pub fn generate_host_files(root: &Path) -> Result<Vec<BridgeSpec>> {
     let src = root.join("src");
     std::fs::create_dir_all(&src).with_context(|| format!("creating {}", src.display()))?;
 
-    let has_ts = bridges.iter().any(|b| !b.is_rust_host());
+    // TS/Go bridges need serde derives on all generated WIT value types for JSON marshaling.
+    let needs_delegation = bridges.iter().any(|b| !b.is_rust_host());
+    std::fs::write(
+        src.join("bindings.rs"),
+        if needs_delegation { BINDINGS_RS_SERDE } else { BINDINGS_RS },
+    )?;
 
-    // TS bridges need serde derives on all generated WIT value types for JSON marshaling.
-    std::fs::write(src.join("bindings.rs"), if has_ts { BINDINGS_RS_SERDE } else { BINDINGS_RS })?;
-
-    // Write the generated delegation shim and TS runner for each TS-hosted bridge.
+    // Write the generated delegation shim and language-specific runner for each non-Rust bridge.
     for (bridge, contract) in bridges.iter().zip(contracts.iter()) {
-        if !bridge.is_rust_host() {
-            let shim = gen_ts_delegate_host(bridge, contract)?;
-            let id = module_ident(&bridge.name);
-            std::fs::write(src.join(format!("bridge_{id}_delegate.rs")), shim)?;
-            std::fs::write(bridge.dir.join("_runner.ts"), gen_ts_bridge_runner(bridge))?;
+        if bridge.is_rust_host() {
+            continue;
+        }
+        let shim = gen_delegate_host(bridge, contract)?;
+        let id = module_ident(&bridge.name);
+        std::fs::write(src.join(format!("bridge_{id}_delegate.rs")), shim)?;
+        match &bridge.host_impl {
+            HostImpl::TypeScript(_) => {
+                std::fs::write(bridge.dir.join("_runner.ts"), gen_ts_runner(bridge))?;
+            }
+            HostImpl::Go(_) => {
+                std::fs::write(bridge.dir.join("_runner.go"), gen_go_bridge_runner(bridge)?)?;
+                // Only write go.mod if absent — preserves user customisations (extra deps).
+                let gomod = bridge.dir.join("go.mod");
+                if !gomod.is_file() {
+                    std::fs::write(&gomod, gen_go_bridge_gomod(&bridge.name))?;
+                }
+            }
+            HostImpl::Rust(_) => unreachable!(),
         }
     }
 
     let bridge_refs: Vec<&BridgeSpec> = bridges.iter().collect();
     std::fs::write(src.join("bridges.rs"), gen_bridges_module(&bridge_refs))?;
 
-    // For TS-bridge apps there is no author-written main.rs — write the generated one.
-    if has_ts && !src.join("main.rs").exists() {
-        std::fs::write(src.join("main.rs"), MAIN_RS_TS_BRIDGES)?;
+    // For TS/Go-bridge apps there is no author-written main.rs — write the generated one.
+    if needs_delegation && !src.join("main.rs").exists() {
+        std::fs::write(src.join("main.rs"), MAIN_RS_BRIDGE_RUNNERS)?;
     }
 
     Ok(bridges)
@@ -993,6 +1154,8 @@ mod tests {
             err.contains("host implementation"),
             "explains the missing impl: {err}"
         );
+        // The error message names all three options.
+        assert!(err.contains("host.go"), "mentions Go option: {err}");
     }
 
     /// The canonical custom-bridge WIT already used by the rusm-wasm end-to-end test —
@@ -1054,7 +1217,7 @@ mod tests {
     }
 
     #[test]
-    fn gen_ts_delegate_host_generates_delegation_shim() {
+    fn gen_delegate_host_generates_delegation_shim() {
         // Use the weather bridge (weather:bridge/forecast, `lookup(city: string) -> string`).
         let bridge = BridgeSpec {
             name: "weather".into(),
@@ -1062,9 +1225,10 @@ mod tests {
             dir: PathBuf::from("../examples/custom-bridge/bridges/weather"),
         };
         let contract = parse_contract(&bridge.wit()).unwrap();
-        let shim = gen_ts_delegate_host(&bridge, &contract).unwrap();
-        // Header comment explains the mechanism and overhead.
+        let shim = gen_delegate_host(&bridge, &contract).unwrap();
+        // Header comment names the host file (language-specific) and explains the mechanism.
         assert!(shim.contains("GENERATED"), "header present: {shim}");
+        assert!(shim.contains("bridges/weather/host.ts"), "TS host file in header: {shim}");
         assert!(shim.contains("~1–10µs"), "overhead disclosed: {shim}");
         // add_to_linker wires the WIT interface via the typed bindgen path.
         assert!(shim.contains("pub fn add_to_linker("), "linker fn: {shim}");
@@ -1090,13 +1254,31 @@ mod tests {
     }
 
     #[test]
-    fn gen_ts_bridge_runner_generates_dispatch_loop() {
+    fn gen_delegate_host_go_names_host_go_in_header() {
+        // The delegation shim is identical for TS and Go; only the header comment differs —
+        // it names `host.go` for a Go bridge so the reader can find the implementation.
+        let bridge = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::Go(PathBuf::from("bridges/weather/host.go")),
+            dir: PathBuf::from("../examples/custom-bridge/bridges/weather"),
+        };
+        let contract = parse_contract(&bridge.wit()).unwrap();
+        let shim = gen_delegate_host(&bridge, &contract).unwrap();
+        assert!(shim.contains("bridges/weather/host.go"), "Go host file in header: {shim}");
+        assert!(!shim.contains("host.ts"), "no TS mention in Go shim: {shim}");
+        // Functional content is the same as the TS shim.
+        assert!(shim.contains("pub fn add_to_linker("), "linker fn: {shim}");
+        assert!(shim.contains("\"bridge:weather\""), "runner name: {shim}");
+    }
+
+    #[test]
+    fn gen_ts_runner_generates_dispatch_loop() {
         let bridge = BridgeSpec {
             name: "weather".into(),
             host_impl: HostImpl::TypeScript(PathBuf::from("bridges/weather/host.ts")),
             dir: PathBuf::from("bridges/weather"),
         };
-        let runner = gen_ts_bridge_runner(&bridge);
+        let runner = gen_ts_runner(&bridge);
         assert!(runner.contains("GENERATED"), "header: {runner}");
         assert!(runner.contains("Process.register(\"bridge:weather\")"), "self-register: {runner}");
         assert!(runner.contains("Process.receiveText()"), "receive loop: {runner}");
@@ -1225,6 +1407,38 @@ mod tests {
         assert!(module.contains("\"bridge:notifier\""));
         assert!(module.contains("wasm/bridge-notifier.js"));
         assert!(module.contains("wasm.supervise("));
+        // TS path uses register_js_component_with (not compile_component_bytes).
+        assert!(module.contains("register_js_component_with"), "TS uses JS registration: {module}");
+    }
+
+    #[test]
+    fn generates_bridges_module_with_init_for_go_bridges() {
+        let root = app_dir("bridges-mod-go");
+        let rs = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::Rust(root.join("bridges/weather/host.rs")),
+            dir: root.join("bridges/weather"),
+        };
+        let go = BridgeSpec {
+            name: "signer".into(),
+            host_impl: HostImpl::Go(root.join("bridges/signer/host.go")),
+            dir: root.join("bridges/signer"),
+        };
+        let module = gen_bridges_module(&[&rs, &go]);
+        // Rust bridge via #[path].
+        assert!(module.contains("#[path = \"../bridges/weather/host.rs\"]"));
+        // Go bridge via the generated delegate shim.
+        assert!(module.contains("#[path = \"bridge_signer_delegate.rs\"]"));
+        assert!(module.contains("pub mod signer;"));
+        // `init` uses prepare_component_bytes + register_component_with (not JS).
+        assert!(module.contains("pub fn init(wasm: &rusm_wasm::WasmRuntime)"));
+        assert!(module.contains("\"bridge:signer\""));
+        assert!(module.contains("wasm/bridge-signer.wasm"), "Go uses .wasm: {module}");
+        assert!(module.contains("prepare_component_bytes"), "Go compiles wasm: {module}");
+        assert!(module.contains("register_component_with"), "Go registers as component: {module}");
+        assert!(module.contains("wasm.supervise("));
+        // Go path must NOT use register_js_component_with.
+        assert!(!module.contains("register_js_component_with"), "Go doesn't use JS registration: {module}");
     }
 
     #[test]
@@ -1256,17 +1470,71 @@ mod tests {
         std::fs::write(dir.join("host.ts"), "// ts\n").unwrap();
         let err = discover(&root).unwrap_err().to_string();
         assert!(err.contains("multiple"), "names the conflict: {err}");
+        // Covers the Go variant too.
+        let root2 = app_dir("multi-host-go");
+        let dir2 = root2.join("bridges/weather");
+        std::fs::create_dir_all(&dir2).unwrap();
+        std::fs::write(dir2.join("bridge.wit"), "package weather:bridge@0.1.0;\n").unwrap();
+        std::fs::write(dir2.join("host.go"), "// go\n").unwrap();
+        std::fs::write(dir2.join("host.ts"), "// ts\n").unwrap();
+        let err2 = discover(&root2).unwrap_err().to_string();
+        assert!(err2.contains("multiple"), "go+ts conflict: {err2}");
     }
 
     #[test]
-    fn go_host_not_yet_supported() {
+    fn discovers_go_bridge() {
         let root = app_dir("go-host");
         let dir = root.join("bridges/weather");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("bridge.wit"), "package weather:bridge@0.1.0;\n").unwrap();
-        std::fs::write(dir.join("host.go"), "// go\n").unwrap();
-        let err = discover(&root).unwrap_err().to_string();
-        assert!(err.contains("not yet supported"), "clear message: {err}");
+        std::fs::write(dir.join("host.go"), "package main\nfunc Lookup(city string) string { return city }\n").unwrap();
+        let found = discover(&root).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "weather");
+        assert!(
+            matches!(found[0].host_impl, HostImpl::Go(_)),
+            "host.go → Go variant"
+        );
+        assert!(!found[0].is_rust_host());
+        assert_eq!(found[0].runner_name(), "bridge:weather");
+        assert_eq!(found[0].host(), dir.join("host.go"));
+    }
+
+    #[test]
+    fn gen_go_bridge_runner_generates_dispatch_loop() {
+        let bridge = BridgeSpec {
+            name: "weather".into(),
+            host_impl: HostImpl::Go(PathBuf::from("bridges/weather/host.go")),
+            dir: PathBuf::from("../examples/custom-bridge/bridges/weather"),
+        };
+        let runner = gen_go_bridge_runner(&bridge).unwrap();
+        assert!(runner.contains("GENERATED"), "header: {runner}");
+        assert!(runner.contains("package main"), "package: {runner}");
+        assert!(runner.contains("\"encoding/json\""), "json import: {runner}");
+        assert!(runner.contains("rusm \"github.com/archan937/rusm/packages/rusm-go\""), "sdk import: {runner}");
+        assert!(runner.contains("rusm.Register(\"bridge:weather\")"), "self-register: {runner}");
+        assert!(runner.contains("rusm.Receive()"), "receive loop: {runner}");
+        assert!(runner.contains("json.Unmarshal(raw, &req)"), "parse request: {runner}");
+        assert!(runner.contains("case \"lookup\":"), "dispatch case: {runner}");
+        assert!(runner.contains("var arg0 string"), "deser arg: {runner}");
+        assert!(runner.contains("return Lookup(arg0)"), "calls user fn: {runner}");
+        assert!(runner.contains("json.Marshal(result)"), "serialize reply: {runner}");
+        assert!(runner.contains("req.ReplyTo.CallID+\":\""), "reply tagged with callId: {runner}");
+        assert!(runner.contains("rusm.Send(req.ReplyTo.Pid, reply)"), "sends reply: {runner}");
+    }
+
+    #[test]
+    fn gen_go_bridge_gomod_uses_sdk_version() {
+        let gomod = gen_go_bridge_gomod("weather");
+        assert!(gomod.contains("module bridge-weather"), "module name: {gomod}");
+        assert!(gomod.contains("go 1.24"), "go version: {gomod}");
+        assert!(
+            gomod.contains(&format!(
+                "require github.com/archan937/rusm/packages/rusm-go v{}",
+                crate::scaffold::SDK_VERSION
+            )),
+            "sdk dep: {gomod}"
+        );
     }
 
     #[test]

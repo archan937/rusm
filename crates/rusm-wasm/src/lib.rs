@@ -865,6 +865,16 @@ impl WasmRuntime {
         Ok(Module::new(&self.spawner.engine, wasm)?)
     }
 
+    /// Compile a **component** from raw bytes and prepare it for fast repeated spawning.
+    /// Equivalent to `Component::new` + [`prepare_component`](Self::prepare_component) with the
+    /// `"run"` entry (all RUSM actor components export `run`). Used by generated `bridges::init`
+    /// to register Go bridge runners compiled by TinyGo.
+    pub fn prepare_component_bytes(&self, wasm: &[u8]) -> Result<PreparedComponent> {
+        use wasmtime::component::Component;
+        let component = Component::new(&self.spawner.engine, wasm)?;
+        self.prepare_component(&component, "run")
+    }
+
     /// Total `notify` calls made by all guests so far — guest-reported progress.
     pub fn notifications(&self) -> u64 {
         self.shared.notifications.load(Ordering::Relaxed)

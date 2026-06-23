@@ -73,9 +73,9 @@ pub async fn serve(
 }
 
 /// Like [`serve`] but runs `init(&wasm)` between runtime construction and component spawn —
-/// so a TS-bridge app can register its runner components as resident actors before any guest
-/// tries to call them. The generated `src/main.rs` for a TS-bridge app calls this; a
-/// pure-Rust-bridge app calls `serve` with `bridges::extend` directly.
+/// so a TS/Go-bridge app can register its runner components as resident actors before any
+/// guest tries to call them. The generated `src/main.rs` for a TS/Go-bridge app calls this;
+/// a pure-Rust-bridge app calls `serve` with `bridges::extend` directly.
 pub async fn serve_with_init(
     root: &Path,
     cfg: &NodeConfig,

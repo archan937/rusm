@@ -40,6 +40,10 @@ pub struct Param {
     pub borrow: Borrow,
     /// The TypeScript type for the `.d.ts`.
     pub ts: String,
+    /// The Go type for this parameter — used in the generated `_runner.go` dispatch switch.
+    /// Primitives map to their Go equivalents; complex types (records, variants, enums) map to
+    /// `interface{}` (JSON round-trip; the user's host.go function accepts the matching type).
+    pub go: String,
 }
 
 /// One custom bridge function the TS guest can call.
@@ -56,6 +60,8 @@ pub struct Func {
     /// The owned Rust type for the result (e.g. `String`, `Vec<u8>`). `None` for `-> ()`.
     /// Used by generated TS/Go delegation shims to `serde_json::from_slice` the reply.
     pub result_rust: Option<String>,
+    /// The Go return type for the `_runner.go` dispatch. `None` for `-> ()`.
+    pub result_go: Option<String>,
 }
 
 /// A bridge's full TS-callable surface: its functions + the TS type declarations (interfaces /
@@ -86,18 +92,20 @@ pub fn bridge_api(wit: &Path) -> Result<Api> {
             for p in &function.params {
                 let ty = lower(&resolve, &p.ty, &ns, &pkg_name, &mut ts_decls)?;
                 let borrow = param_borrow(&resolve, &p.ty)?;
+                let go = go_type(&resolve, &p.ty);
                 params.push(Param {
                     name: ident(&p.name),
                     owned_rust: ty.rust,
                     borrow,
                     ts: ty.ts,
+                    go,
                 });
             }
-            let (result_ts, result_rust) = match &function.result {
-                None => (None, None),
+            let (result_ts, result_rust, result_go) = match &function.result {
+                None => (None, None, None),
                 Some(t) => {
                     let lowered = lower(&resolve, t, &ns, &pkg_name, &mut ts_decls)?;
-                    (Some(lowered.ts), Some(lowered.rust))
+                    (Some(lowered.ts), Some(lowered.rust), Some(go_type(&resolve, t)))
                 }
             };
             functions.push(Func {
@@ -110,6 +118,7 @@ pub fn bridge_api(wit: &Path) -> Result<Api> {
                 params,
                 result_ts,
                 result_rust,
+                result_go,
             });
         }
     }
@@ -373,6 +382,52 @@ fn ts_paren(ts: &str) -> String {
         format!("({ts})")
     } else {
         ts.to_string()
+    }
+}
+
+/// Map a WIT value type to its Go form for `_runner.go` dispatch deserialization.
+/// Primitives map exactly; complex types (records, enums, variants, results, tuples) map to
+/// `interface{}` — the user's `host.go` function accepts the JSON-decoded value and may
+/// type-assert as needed. Lists recurse; options become Go pointers for primitive-containing
+/// options (matching Go's idiomatic nil pointer as "absent").
+pub(crate) fn go_type(resolve: &Resolve, ty: &Type) -> String {
+    match ty {
+        Type::Bool => "bool".into(),
+        Type::U8 => "uint8".into(),
+        Type::U16 => "uint16".into(),
+        Type::U32 => "uint32".into(),
+        Type::U64 => "uint64".into(),
+        Type::S8 => "int8".into(),
+        Type::S16 => "int16".into(),
+        Type::S32 => "int32".into(),
+        Type::S64 => "int64".into(),
+        Type::F32 => "float32".into(),
+        Type::F64 => "float64".into(),
+        Type::Char => "rune".into(),
+        Type::String => "string".into(),
+        Type::Id(id) => go_type_def(resolve, *id),
+        _ => "interface{}".into(),
+    }
+}
+
+fn go_type_def(resolve: &Resolve, id: TypeId) -> String {
+    match &resolve.types[id].kind {
+        TypeDefKind::Type(t) => go_type(resolve, t),
+        TypeDefKind::List(t) => format!("[]{}", go_type(resolve, t)),
+        TypeDefKind::Option(inner) => {
+            // Pointer-ify primitive and string options (Go idiom for optional scalar);
+            // complex inner types use interface{} (pointer-to-complex is rare in JSON Go).
+            match inner {
+                Type::Bool | Type::U8 | Type::U16 | Type::U32 | Type::U64
+                | Type::S8 | Type::S16 | Type::S32 | Type::S64
+                | Type::F32 | Type::F64 | Type::Char | Type::String => {
+                    format!("*{}", go_type(resolve, inner))
+                }
+                _ => "interface{}".into(),
+            }
+        }
+        // Records, enums, variants, results, tuples → interface{} (JSON round-trip).
+        _ => "interface{}".into(),
     }
 }
 

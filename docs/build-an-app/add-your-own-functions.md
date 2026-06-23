@@ -9,18 +9,18 @@ no lattice, no broker, no RPC, no JSON dispatcher.
 ## 1 — Define the bridge
 
 A bridge is a directory `bridges/<name>/` with the **contract** (`bridge.wit`) and a **host
-impl** — either Rust (`host.rs`) or TypeScript (`host.ts`). Both choices are first-class;
-pick based on what the bridge needs to do:
+impl** — Rust (`host.rs`), TypeScript (`host.ts`), or Go (`host.go`). All three are
+first-class; pick based on what the bridge needs to do:
 
-| | `host.rs` | `host.ts` |
-|---|---|---|
-| Who authors it | Rust developer | Any developer |
-| Call overhead | ~few hundred ns (native ABI) | ~1–10 µs (actor round-trip + JSON) |
-| Best for | CPU-critical, tight-loop callers | I/O-bound work, 3rd-party SDKs, webhooks |
+| | `host.rs` | `host.ts` | `host.go` |
+|---|---|---|---|
+| Who authors it | Rust developer | Any developer | Go developer |
+| Call overhead | ~few hundred ns (native ABI) | ~1–10 µs (actor round-trip + JSON) | ~1–10 µs (actor round-trip + JSON) |
+| Best for | CPU-critical, tight-loop callers | I/O-bound work, 3rd-party SDKs | I/O-bound work, existing Go libs |
 
-`rusm build` generates all surrounding glue for both — the host crate, the WIT world, the
-delegation shim, the TS runner. A Rust bridge compiles in; a TS bridge runs as a resident
-actor (`bridge:<name>`) and the generated shim dispatches to it.
+`rusm build` generates all surrounding glue for all three — the host crate, the WIT world,
+the delegation shim, and the language-specific runner. A Rust bridge compiles in; a TS or Go
+bridge runs as a resident actor (`bridge:<name>`) and the generated shim dispatches to it.
 
 ### TypeScript host
 
@@ -44,10 +44,36 @@ export async function lookup(city: string): Promise<string> {
 }
 ```
 
+### Go host
+
+```wit
+// bridges/weather/bridge.wit — same contract, any host impl
+package weather:bridge@0.1.0;
+
+interface forecast {
+    lookup: func(city: string) -> string;
+}
+```
+
+```go
+// bridges/weather/host.go — the ONLY file you write. rusm build generates
+// the Rust delegation shim, the Go dispatch runner, and all host glue.
+package main
+
+import "fmt"
+
+// Lookup is called when a guest invokes `weather.lookup(city)`.
+// The function name must be PascalCase of the WIT function name.
+func Lookup(city string) string {
+    // Full Go stdlib available — call a 3rd-party SDK, a database, an internal API.
+    return fmt.Sprintf("sunny in %s", city)
+}
+```
+
 ### Rust host
 
 ```wit
-// bridges/weather/bridge.wit — same contract, different host impl
+// bridges/weather/bridge.wit — same contract, any host impl
 package weather:bridge@0.1.0;
 
 interface forecast {
@@ -177,25 +203,41 @@ For a **TS bridge** (`host.ts`), `rusm build` additionally writes:
 - `src/main.rs` — a generated host entry point calling `serve_with_init` (only if you have no
   existing `main.rs`)
 
-The runner is bundled into `wasm/bridge-<name>.js` by Bun, registered as a resident actor at
-startup, and booted under a supervisor — it stays alive for the node's lifetime.
+The TS runner is bundled into `wasm/bridge-<name>.js` by Bun, registered as a resident actor
+at startup, and booted under a supervisor — it stays alive for the node's lifetime.
+
+For a **Go bridge** (`host.go`), `rusm build` additionally writes:
+- `src/bridge_<name>_delegate.rs` — the same Rust delegation shim as TS (wire protocol is identical)
+- `bridges/<name>/_runner.go` — the resident Go actor (`bridge:<name>`) that dispatches to your `host.go`
+- `bridges/<name>/go.mod` — a minimal `go.mod` referencing the rusm-go SDK (only if none exists)
+- `src/main.rs` — a generated host entry point (only if you have no existing `main.rs`)
+
+The Go runner is compiled with TinyGo into `wasm/bridge-<name>.wasm` — a full Wasm component.
+It registers as a resident actor at startup and runs under a supervisor for the node's lifetime.
 
 **Scaffold a working one in seconds** — `rusm new <name> --template weather --lang ts|rust|go`
 generates the whole thing: the host crate, the example `weather` bridge, and a guest that
 calls it in your language. It's the runnable
 [`custom-bridge`](https://github.com/archan937/rusm/tree/main/examples/custom-bridge) example
-(the `weather` bridge, called from Rust, Go, **and** TypeScript guests):
+(the `weather` bridge, called from Rust, Go, **and** TypeScript guests).
 
 ```sh
+# TypeScript host bridge:
 rusm new forecast --template weather --lang ts
 cd forecast && rusm build && rusm serve
+
+# Go host bridge:
+rusm new forecast-go --template weather --lang go
+cd forecast-go && rusm build && rusm serve
 ```
 
 ## The platform / application split
 
 A Rust host impl is the zero-overhead choice: the host **is** Rust, so `host.rs` compiles
 directly into the binary — no delegation, no marshaling, just the WIT ABI boundary. A
-TypeScript host impl trades a few microseconds per call for zero Rust: you write one `host.ts`
-and the platform builds the delegation shim + actor runner for you. Both paths are
-capability-gated and default-deny: guests call the bridge as an ordinary typed import, and
-the operator decides which component profiles may reach it.
+TypeScript or Go host impl trades a few microseconds per call for zero Rust: you write one
+`host.ts` or `host.go` and the platform builds the delegation shim, the dispatch runner, and
+all wiring for you. The TS and Go delegation paths share the same JSON wire protocol — the Rust
+shim is identical for both; only the runner language differs. All three paths are
+capability-gated and default-deny: guests call the bridge as an ordinary typed import, and the
+operator decides which component profiles may reach it.
