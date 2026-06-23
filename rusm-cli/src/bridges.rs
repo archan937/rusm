@@ -641,9 +641,14 @@ pub fn gen_go_bridge_runner(bridge: &BridgeSpec) -> Result<String> {
     ))
 }
 
-/// One function's case in the Go dispatch switch: deserializes each argument, calls the
+/// One function's case in the Go dispatch switch: deserialises each argument, calls the
 /// user's exported Go function (PascalCase of the WIT name — same package, no import), and
 /// returns the result as `interface{}` for JSON marshaling.
+///
+/// Primitive params (`string`, `uint32`, `bool`, …) are unmarshalled into the target type.
+/// Complex params (`json.RawMessage` — records, enums, variants) are passed as-is: `args[i]`
+/// is already `json.RawMessage`, so no intermediate unmarshal is needed; the user's function
+/// calls `json.Unmarshal` directly into its own struct.
 fn go_dispatch_case(f: &crate::witmap::Func) -> String {
     let guard = if !f.params.is_empty() {
         format!("\t\tif len(args) < {} {{ return nil }}\n", f.params.len())
@@ -654,11 +659,16 @@ fn go_dispatch_case(f: &crate::witmap::Func) -> String {
     let mut call_args: Vec<String> = Vec::new();
     for (i, p) in f.params.iter().enumerate() {
         let var_name = format!("arg{i}");
-        deser.push_str(&format!(
-            "\t\tvar {var_name} {go_type}\n\
-             \t\tif err := json.Unmarshal(args[{i}], &{var_name}); err != nil {{ return nil }}\n",
-            go_type = p.go,
-        ));
+        if p.go == "json.RawMessage" {
+            // Pass the raw JSON bytes directly — the user's function unmarshals into its own type.
+            deser.push_str(&format!("\t\t{var_name} := args[{i}]\n"));
+        } else {
+            deser.push_str(&format!(
+                "\t\tvar {var_name} {go_type}\n\
+                 \t\tif err := json.Unmarshal(args[{i}], &{var_name}); err != nil {{ return nil }}\n",
+                go_type = p.go,
+            ));
+        }
         call_args.push(var_name);
     }
     format!(
@@ -1535,6 +1545,36 @@ mod tests {
             )),
             "sdk dep: {gomod}"
         );
+    }
+
+    #[test]
+    fn go_dispatch_case_for_record_param_uses_raw_message() {
+        // A WIT record param must emit `arg0 := args[0]` (pass-through) in the dispatch
+        // switch — no intermediate Unmarshal — so the user's host.go function receives
+        // `json.RawMessage` and can unmarshal into its own struct.
+        let dir = app_dir("go-record-dispatch");
+        let wit = dir.join("bridge.wit");
+        std::fs::write(
+            &wit,
+            "package app:mailer@0.1.0;\n\
+             interface smtp {\n\
+             \x20   record message { to: string, subject: string }\n\
+             \x20   send: func(msg: message) -> bool;\n\
+             }\n",
+        )
+        .unwrap();
+        let bridge = BridgeSpec {
+            name: "mailer".into(),
+            host_impl: HostImpl::Go(dir.join("host.go")),
+            dir: dir.clone(),
+        };
+        let runner = gen_go_bridge_runner(&bridge).unwrap();
+        // Record param → pass-through assignment, NOT json.Unmarshal.
+        assert!(runner.contains("arg0 := args[0]"), "record → pass-through: {runner}");
+        assert!(!runner.contains("json.Unmarshal(args[0]"), "no Unmarshal for record: {runner}");
+        // The dispatch case still calls the user's PascalCase function.
+        assert!(runner.contains("case \"send\":"), "dispatch case: {runner}");
+        assert!(runner.contains("return Send(arg0)"), "calls Send: {runner}");
     }
 
     #[test]

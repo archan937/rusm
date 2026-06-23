@@ -41,8 +41,9 @@ pub struct Param {
     /// The TypeScript type for the `.d.ts`.
     pub ts: String,
     /// The Go type for this parameter — used in the generated `_runner.go` dispatch switch.
-    /// Primitives map to their Go equivalents; complex types (records, variants, enums) map to
-    /// `interface{}` (JSON round-trip; the user's host.go function accepts the matching type).
+    /// Primitives map to their Go equivalents; complex types (records, enums, variants, results,
+    /// tuples) map to `json.RawMessage` — the dispatch passes the raw JSON slice directly and the
+    /// user's `host.go` function unmarshals into its own struct.
     pub go: String,
 }
 
@@ -386,10 +387,12 @@ fn ts_paren(ts: &str) -> String {
 }
 
 /// Map a WIT value type to its Go form for `_runner.go` dispatch deserialization.
-/// Primitives map exactly; complex types (records, enums, variants, results, tuples) map to
-/// `interface{}` — the user's `host.go` function accepts the JSON-decoded value and may
-/// type-assert as needed. Lists recurse; options become Go pointers for primitive-containing
-/// options (matching Go's idiomatic nil pointer as "absent").
+/// Primitives map exactly to Go's native types. Complex types (records, enums, variants,
+/// results, tuples) map to `json.RawMessage` — the dispatch passes the raw JSON bytes
+/// directly; the user's `host.go` function unmarshals into its own struct, giving full
+/// control over field naming and zero intermediate allocations.
+/// Lists recurse; options become Go pointers for primitive-containing options (idiomatic
+/// nil-as-absent); option-of-complex becomes `json.RawMessage` (null JSON round-trips).
 pub(crate) fn go_type(resolve: &Resolve, ty: &Type) -> String {
     match ty {
         Type::Bool => "bool".into(),
@@ -406,7 +409,7 @@ pub(crate) fn go_type(resolve: &Resolve, ty: &Type) -> String {
         Type::Char => "rune".into(),
         Type::String => "string".into(),
         Type::Id(id) => go_type_def(resolve, *id),
-        _ => "interface{}".into(),
+        _ => "json.RawMessage".into(),
     }
 }
 
@@ -416,18 +419,18 @@ fn go_type_def(resolve: &Resolve, id: TypeId) -> String {
         TypeDefKind::List(t) => format!("[]{}", go_type(resolve, t)),
         TypeDefKind::Option(inner) => {
             // Pointer-ify primitive and string options (Go idiom for optional scalar);
-            // complex inner types use interface{} (pointer-to-complex is rare in JSON Go).
+            // complex inner types use json.RawMessage (null JSON round-trips cleanly).
             match inner {
                 Type::Bool | Type::U8 | Type::U16 | Type::U32 | Type::U64
                 | Type::S8 | Type::S16 | Type::S32 | Type::S64
                 | Type::F32 | Type::F64 | Type::Char | Type::String => {
                     format!("*{}", go_type(resolve, inner))
                 }
-                _ => "interface{}".into(),
+                _ => "json.RawMessage".into(),
             }
         }
-        // Records, enums, variants, results, tuples → interface{} (JSON round-trip).
-        _ => "interface{}".into(),
+        // Records, enums, variants, results, tuples → json.RawMessage (user unmarshals).
+        _ => "json.RawMessage".into(),
     }
 }
 
