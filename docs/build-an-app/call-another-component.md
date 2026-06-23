@@ -83,17 +83,76 @@ func run() {
 
 :::
 
+## 3. Reach a *running* instance — `connect`
+
+`spawn` always starts a **fresh** instance. To talk to one that is **already running** — a
+[stateful service](/build-an-app/build-a-stateful-service) declared `resident = true`, which the
+node boot-spawns, supervises, and registers under its name — use `connect` (Rust/TS) or call its
+pid directly (Go). You get the **same typed client**, but it **attaches** to the existing instance
+instead of starting a new one, so you don't own its lifecycle (no `.stop()` — you didn't start
+it). `connect` takes a registered **name** (looked up for you) or a **pid**.
+
+::: code-group
+
+```ts [TypeScript]
+import { connect } from "rusm-ts";
+import type { Calc } from "../calc"; // same contract as spawn — type-only
+
+const calc = connect<Calc>("calc");   // attach by name (or pass a pid); throws if not running
+console.log(await calc.add(2, 3));     // → 5 — a real round-trip to the existing instance
+```
+
+```rust [Rust]
+// Look the name up, then attach to that pid (Client::connect, not Client::spawn).
+let calc = calc::Client::connect(rusm_rs::whereis("calc").unwrap());
+assert_eq!(calc.add(2, 3).unwrap(), 5);
+```
+
+```go [Go]
+// Go has no separate connect — look up the pid and Call it directly (Call takes any pid).
+pid, _ := rusm.Whereis("calc")
+sum, _ := rusm.Call[int](pid, "add", 2, 3) // → 5
+```
+
+:::
+
+## `spawn` or `connect`?
+
+A common mix-up: this is **not** service-vs-worker. The axis is **a fresh instance vs an existing
+one**:
+
+- **`spawn`** starts a **new** instance and hands you a client you **own** — use it, `.stop()` it,
+  or (for a worker) let it exit when its one job is done. Two `spawn("calc")` calls make **two**
+  isolated `calc` processes.
+- **`connect`** attaches to an instance **already running** (typically the one shared `resident`)
+  and hands you a client you **don't own** — many components can `connect` to the *same* instance
+  and talk to its shared, supervised state.
+
+So the component's *kind* doesn't pick the verb — what you want from it does:
+
+- A **worker** is always `spawn`ed: it's one-shot and ephemeral, so there's no shared instance to
+  attach to.
+- A **service** can be **either** — `spawn` a fresh private instance you own and stop, **or**
+  `connect` to the one long-lived `resident` the node supervises (the usual case for a registry,
+  counter, cache, or broker that the whole app shares).
+
+| You want | Use | Instance | You own its lifecycle? |
+| --- | --- | --- | --- |
+| a one-shot job, then gone | `spawn` | fresh | yes — it exits on return |
+| your own private service instance | `spawn` | fresh | yes — `.stop()` it |
+| to reach the shared, long-lived service | `connect` | existing (`resident`) | no — you didn't start it |
+
 ## What you need to know
 
 - **Capability-gated.** Spawning is the `allow-spawn` capability — grant it on the caller's
   profile (see [Grant capabilities](/build-an-app/grant-capabilities)). A node-registered component
   runs under **its own** declared profile, whoever spawns it, so its secrets stay scoped to
   it.
-- **Per-call vs long-lived.** `spawn` gives you a **fresh** instance each call. For a *single
-  long-lived* instance many callers share, make it a
-  [stateful service](/build-an-app/build-a-stateful-service) (`resident = true`) that registers a
-  name — then reach it by pid (Rust/Go) or share its state through `kv`. For a fire-and-forget
-  one-shot, see [Run one-off work](/build-an-app/run-one-off-work).
+- **Per-call vs long-lived.** `spawn` gives you a **fresh** instance each call; `connect`
+  attaches to one **already running** (see [`spawn` or `connect`?](#spawn-or-connect) above). For a
+  *single long-lived* instance many callers share, make it a
+  [stateful service](/build-an-app/build-a-stateful-service) (`resident = true`) and `connect` to it
+  by name. For a fire-and-forget one-shot, see [Run one-off work](/build-an-app/run-one-off-work).
 - **It's just messages.** The typed client is sugar over `send`/`receive`
   ([process management](/build-an-app/coordinate-and-supervise)); a Rust client and a TS
   service interoperate over the same JSON wire.
