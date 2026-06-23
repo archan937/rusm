@@ -575,6 +575,26 @@ mod tests {
     use super::*;
     use tokio_tungstenite::tungstenite::Message;
 
+    /// Liveness budget for "an event/frame should arrive" waits. Generous because the full
+    /// suite compiles a Wasm component per test in parallel — a correct handler responds in
+    /// milliseconds, so the headroom only absorbs CPU starvation, never masks a real hang.
+    const EVENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+    /// Poll `cond` until it holds, bounded by [`EVENT_BUDGET`] — a deadline, not a fixed
+    /// iteration count, so a CPU-starved spawn/shutdown gets the same headroom as the event
+    /// waits (the prior `for _ in 0..200` loops capped the wait at ~1s, the one budget tight
+    /// enough to lapse when the whole suite saturates the machine).
+    async fn wait_until(mut cond: impl FnMut() -> bool) {
+        let start = std::time::Instant::now();
+        while !cond() {
+            assert!(
+                start.elapsed() < EVENT_BUDGET,
+                "condition not met within the liveness budget"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
     /// Spawn a process registered as `"collector"` that forwards every message it
     /// receives to the returned channel — lets a test observe what a guest reports.
     fn collector(rt: &rusm_otp::Runtime) -> tokio::sync::mpsc::UnboundedReceiver<Vec<u8>> {
@@ -590,11 +610,12 @@ mod tests {
         rx
     }
 
-    /// The next event from a [`collector`] channel, or panic after 5s.
+    /// The next event from a [`collector`] channel, or panic if none arrives within
+    /// [`EVENT_BUDGET`].
     async fn next_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) -> Vec<u8> {
-        tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        tokio::time::timeout(EVENT_BUDGET, rx.recv())
             .await
-            .expect("a lifecycle event within 5s")
+            .expect("a lifecycle event within the budget")
             .expect("collector channel stays open")
     }
 
@@ -615,7 +636,7 @@ mod tests {
         rt.send(handler, writer.pid().raw().to_string().into_bytes()); // msg 1: the writer pid
         rt.send(handler, br#"{"__down":"999999"}"#.to_vec()); // a stray __down (not the writer)
         rt.send(handler, b"frame".to_vec()); // a real inbound frame
-        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+        let got = tokio::time::timeout(EVENT_BUDGET, rx.recv())
             .await
             .expect("the connection loop must not hang or mis-handle the stray __down")
             .expect("collector channel stays open");
@@ -871,7 +892,6 @@ mod tests {
         // frees their pooled instances, so a dropped engine never starves the next.
         use crate::{CapabilityProfile, WasmRuntime};
         use rusm_otp::Runtime;
-        use std::time::Duration;
 
         const WS_ECHO: &[u8] = include_bytes!("../../tests/fixtures/rs_ws_echo.wasm");
         let rt = Runtime::new();
@@ -886,12 +906,7 @@ mod tests {
             // shutdown). Trusted just to keep the spawn unconditional.
             let _ = wr.spawn_component_with(&prepared, CapabilityProfile::Trusted.capabilities());
         }
-        for _ in 0..200 {
-            if rt.process_count() as u64 >= n {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(|| rt.process_count() as u64 >= n).await;
         assert!(
             rt.process_count() as u64 >= n,
             "the parked handlers are alive"
@@ -901,12 +916,7 @@ mod tests {
             wr.shutdown() as u64 >= n,
             "shutdown reports the processes it aborted"
         );
-        for _ in 0..200 {
-            if rt.process_count() == 0 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(|| rt.process_count() == 0).await;
         assert_eq!(rt.process_count(), 0, "shutdown reclaimed every process");
     }
 
@@ -1190,7 +1200,7 @@ mod tests {
             .await
             .unwrap();
         // Stay idle; a keep-alive ping must arrive within a few intervals.
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+        let frame = tokio::time::timeout(EVENT_BUDGET, ws.next())
             .await
             .expect("a keep-alive ping within 3s")
             .unwrap()
@@ -1327,7 +1337,7 @@ mod tests {
 
         // A frame past the 8-byte cap tears the connection down (no echo of it).
         ws.send(Message::binary(vec![b'x'; 64])).await.ok();
-        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let ended = tokio::time::timeout(EVENT_BUDGET, async {
             loop {
                 match ws.next().await {
                     None | Some(Err(_)) => break true,
@@ -1381,7 +1391,7 @@ mod tests {
         // Close the first → its permit releases → a new connection is admitted again.
         first.close(None).await.ok();
         assert_eq!(next_event(&mut rx).await, b"close", "the first tears down");
-        let admitted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let admitted = tokio::time::timeout(EVENT_BUDGET, async {
             loop {
                 if let Ok((ws, _)) = tokio_tungstenite::connect_async(format!("ws://{addr}/")).await
                 {

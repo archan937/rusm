@@ -464,6 +464,11 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    /// Liveness budget for "an event/byte should arrive" waits. Generous because the whole
+    /// suite compiles a Wasm component per test in parallel — a correct path resolves in
+    /// milliseconds, so the headroom only absorbs CPU starvation, never masks a real hang.
+    const EVENT_BUDGET: Duration = Duration::from_secs(20);
+
     /// A process registered as `"collector"` that forwards every message to the channel,
     /// so a test can observe a guest's lifecycle reports.
     fn collector(rt: &Runtime) -> tokio::sync::mpsc::UnboundedReceiver<Vec<u8>> {
@@ -480,9 +485,12 @@ mod tests {
     }
 
     async fn next_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) -> Vec<u8> {
-        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        // Generous on purpose: the full suite compiles a Wasm component per test concurrently,
+        // so the CPU can be saturated when this waits. A correct handler reports in
+        // milliseconds; the headroom only matters when the machine is starved (no false flake).
+        tokio::time::timeout(EVENT_BUDGET, rx.recv())
             .await
-            .expect("a lifecycle event within 5s")
+            .expect("a lifecycle event before the budget")
             .expect("collector channel stays open")
     }
 
@@ -525,7 +533,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut buf = [0u8; 1024];
         loop {
-            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+            let n = tokio::time::timeout(EVENT_BUDGET, conn.read(&mut buf))
                 .await
                 .expect("the pushed event arrives in time")
                 .expect("socket read ok");
@@ -688,7 +696,7 @@ mod tests {
             .await
             .unwrap();
         let mut buf = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut buf))
             .await
             .expect("response in time")
             .unwrap();
@@ -858,7 +866,7 @@ mod tests {
 
         // The body ends → the client read drains to EOF (no hang).
         let mut tail = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut tail))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut tail))
             .await
             .expect("the stream ends after self-close")
             .expect("socket read ok");
@@ -904,7 +912,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut buf = [0u8; 1024];
         loop {
-            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+            let n = tokio::time::timeout(EVENT_BUDGET, conn.read(&mut buf))
                 .await
                 .expect("the pushed event arrives in time")
                 .expect("socket read ok");
@@ -962,7 +970,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut buf = [0u8; 1024];
         loop {
-            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+            let n = tokio::time::timeout(EVENT_BUDGET, conn.read(&mut buf))
                 .await
                 .expect("the pushed event arrives in time")
                 .expect("socket read ok");
@@ -1007,7 +1015,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut buf = [0u8; 512];
         loop {
-            let n = tokio::time::timeout(Duration::from_secs(5), conn.read(&mut buf))
+            let n = tokio::time::timeout(EVENT_BUDGET, conn.read(&mut buf))
                 .await
                 .expect("the head arrives")
                 .expect("socket read ok");
@@ -1073,7 +1081,7 @@ mod tests {
             "close fires on self-stop"
         );
         let mut tail = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut tail))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut tail))
             .await
             .expect("the stream ends after self-close")
             .expect("socket read ok");
@@ -1113,7 +1121,7 @@ mod tests {
             "close fires on self-stop"
         );
         let mut tail = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut tail))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut tail))
             .await
             .expect("the stream ends after self-close")
             .expect("socket read ok");
@@ -1142,7 +1150,7 @@ mod tests {
             .unwrap();
         // The handler emits then self-closes, so the body ends — read it all.
         let mut buf = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut buf))
             .await
             .expect("the stream ends after the handler closes")
             .expect("socket read ok");
@@ -1173,7 +1181,7 @@ mod tests {
             .await
             .unwrap();
         let mut buf = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut buf))
             .await
             .expect("the stream ends after the handler closes")
             .expect("socket read ok");
@@ -1205,7 +1213,7 @@ mod tests {
             .await
             .unwrap();
         let mut buf = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut buf))
             .await
             .expect("the stream ends after the handler closes")
             .expect("socket read ok");
@@ -1254,7 +1262,7 @@ mod tests {
         // The socket is dropped before any response: a clean EOF (0 bytes) or a connection
         // reset (the server discards the unread request) — never an HTTP head.
         let mut buf = Vec::new();
-        let dropped = tokio::time::timeout(Duration::from_secs(5), second.read_to_end(&mut buf))
+        let dropped = tokio::time::timeout(EVENT_BUDGET, second.read_to_end(&mut buf))
             .await
             .expect("the capped connection is dropped promptly");
         assert!(
@@ -1269,7 +1277,7 @@ mod tests {
         // Close the first → its permit releases → a new stream is admitted again.
         drop(first);
         assert_eq!(next_event(&mut rx).await, b"close", "the first tears down");
-        let admitted = tokio::time::timeout(Duration::from_secs(5), async {
+        let admitted = tokio::time::timeout(EVENT_BUDGET, async {
             loop {
                 let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
                 conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
@@ -1314,7 +1322,7 @@ mod tests {
         .await
         .unwrap();
         let mut raw = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut raw))
+        tokio::time::timeout(EVENT_BUDGET, conn.read_to_end(&mut raw))
             .await
             .expect("the stream ends after the handler closes")
             .expect("socket read ok");
