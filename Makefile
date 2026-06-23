@@ -193,6 +193,11 @@ npm_published = [ -n "$$(npm view $(NPM_PKG)@$(VERSION) version 2>/dev/null)" ]
 npm_authed = npm whoami >/dev/null 2>&1
 npm_login_hint = run \`npm login\` (registry $$(npm config get registry)), then re-run
 
+# GitHub release for this version already exists? / authed with `gh`? (idempotent skip +
+# up-front auth check, mirroring the crates.io/npm guards so a release is resumable.)
+gh_released = gh release view "v$(VERSION)" >/dev/null 2>&1
+gh_authed = command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1
+
 .PHONY: publish-dry
 publish-dry: ## Release pre-flight: dry-run each not-yet-published crate (no side effects)
 	@for d in $(PUBLISH_ORDER); do \
@@ -232,6 +237,34 @@ publish-tags: ## Tag the release (v$(VERSION)) + the rusm-go submodule, push the
 	@git rev-parse "packages/rusm-go/v$(VERSION)" >/dev/null 2>&1 || git tag packages/rusm-go/v$(VERSION)
 	git push origin v$(VERSION) packages/rusm-go/v$(VERSION)
 
+.PHONY: publish-github
+publish-github: ## Create the GitHub release v$(VERSION), notes from the CHANGELOG (skips if it exists)
+	@if $(gh_released); then \
+		echo "↷ GitHub release v$(VERSION) already exists — skip"; \
+	else \
+		$(gh_authed) || { echo "✗ not logged in to GitHub — run \`gh auth login\`, then re-run"; exit 1; }; \
+		git rev-parse "v$(VERSION)" >/dev/null 2>&1 || { echo "✗ tag v$(VERSION) missing — run \`make publish-tags\` first"; exit 1; }; \
+		tmp=$$(mktemp); \
+		awk '/^## \[$(VERSION)\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > "$$tmp"; \
+		if [ ! -s "$$tmp" ]; then echo "✗ no CHANGELOG section for $(VERSION)"; rm -f "$$tmp"; exit 1; fi; \
+		gh release create "v$(VERSION)" --title "v$(VERSION)" --notes-file "$$tmp" || { rm -f "$$tmp"; echo "✗ gh release create failed"; exit 1; }; \
+		rm -f "$$tmp"; \
+		echo "==> GitHub release v$(VERSION) created"; \
+	fi
+
+.PHONY: release-verify
+release-verify: ## Verify v$(VERSION) is fully released: every crate on crates.io, npm, both tags pushed, GitHub release
+	@ok=1; \
+	for d in $(PUBLISH_ORDER); do \
+		if $(call crate_published,$$d); then echo "✓ crate  $$(basename $$d)@$(VERSION)"; else echo "✗ crate  $$(basename $$d)@$(VERSION) — NOT on crates.io"; ok=0; fi; \
+	done; \
+	if $(npm_published); then echo "✓ npm    $(NPM_PKG)@$(VERSION)"; else echo "✗ npm    $(NPM_PKG)@$(VERSION) — NOT on npm"; ok=0; fi; \
+	for t in v$(VERSION) packages/rusm-go/v$(VERSION); do \
+		if git ls-remote --tags origin "refs/tags/$$t" 2>/dev/null | grep -q "$$t"; then echo "✓ tag    $$t (pushed)"; else echo "✗ tag    $$t — NOT on origin"; ok=0; fi; \
+	done; \
+	if $(gh_released); then echo "✓ github release v$(VERSION)"; else echo "✗ github release v$(VERSION) — MISSING"; ok=0; fi; \
+	if [ $$ok -eq 1 ]; then echo "==> v$(VERSION) is fully released ✓"; else echo "==> v$(VERSION) NOT fully released ✗"; exit 1; fi
+
 .PHONY: publish
 publish: ## Full release v$(VERSION): dry-run, then crates.io + npm + tags (resumable — published crates are skipped)
 	@test -z "$$(git status --porcelain)" || { echo "✗ working tree not clean — commit first"; exit 1; }
@@ -244,17 +277,21 @@ publish: ## Full release v$(VERSION): dry-run, then crates.io + npm + tags (resu
 	@$(MAKE) --no-print-directory sync-templates >/dev/null
 	@test -z "$$(git status --porcelain)" || { echo "✗ templates out of sync — run \`make sync-templates\` and commit"; exit 1; }
 	@git diff --quiet origin/main..HEAD 2>/dev/null || echo "→ note: push commits to origin first so the tags point at pushed history"
-	@# Check npm login up front (unless rusm-ts is already published) — a missing login must
+	@# Check npm + GitHub login up front (unless already published) — a missing login must
 	@# abort BEFORE any crate is uploaded, not halfway through the release.
 	@if $(npm_published); then :; else $(npm_authed) || { echo "✗ not logged in to npm — $(npm_login_hint) \`make publish\`"; exit 1; }; fi
+	@if $(gh_released); then :; else $(gh_authed) || { echo "✗ not logged in to GitHub — run \`gh auth login\`, then re-run \`make publish\`"; exit 1; }; fi
 	@echo "==> verifying packaging (dry-run of not-yet-published crates)…"
 	@$(MAKE) --no-print-directory publish-dry
-	@echo "==> dry-run clean. Uploading to crates.io + npm + git tags — Ctrl-C within 5s to abort."
+	@echo "==> dry-run clean. Uploading to crates.io + npm + git tags + GitHub release — Ctrl-C within 5s to abort."
 	@sleep 5
 	@$(MAKE) --no-print-directory publish-crates
 	@$(MAKE) --no-print-directory publish-npm
 	@$(MAKE) --no-print-directory publish-tags
-	@echo "==> v$(VERSION) published. Now create the GitHub release from the CHANGELOG."
+	@$(MAKE) --no-print-directory publish-github
+	@echo "==> verifying the release is complete…"
+	@$(MAKE) --no-print-directory release-verify
+	@echo "==> v$(VERSION) fully released."
 
 .PHONY: clean
 clean: ## Remove Rust build artifacts
