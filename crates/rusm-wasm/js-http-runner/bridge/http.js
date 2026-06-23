@@ -6,6 +6,16 @@
 // Static responses come back as bytes in one call; a `ReadableStream` body is left
 // armed and the host pulls it chunk-by-chunk via `__rusm_http_pull` — true streaming
 // (SSE), since the host writes each chunk as it's produced.
+//
+// Scope, by design: a per-request `fetch` handler gets `fetch` + the **no-mailbox** actor
+// subset (`actor.js` is shared verbatim; its presence-guards expose only `Process.{self,
+// send,whereis,whereisTag}` here — enough to persist and *publish* to subscribers, e.g.
+// notify open SSE streams). It deliberately does NOT load `rpc.js` (the typed-client layer:
+// `spawn`/`connect`/services), unlike the full js-runner. That's not an omission to fill: a
+// `connect` client awaits its reply on a **mailbox**, and a request-scoped handler has none
+// (`receive`/`spawn`/`monitor` are absent by construction). Request→reply RPC to a resident
+// belongs to the actor-world serving path (a `#[handlers]`/`spawn_js` component); fire-and-
+// forget publish via `send`/`whereisTag` is already here. Not a gap.
 (() => {
   const G = globalThis;
 

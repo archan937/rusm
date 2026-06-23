@@ -95,6 +95,12 @@ fn split_url(url: &str) -> Option<(&str, String, String)> {
 /// Perform an outbound HTTP request, returning the [`Response`]. Needs the **network**
 /// capability (otherwise the host refuses with an error). Blocking — suspends the fiber under
 /// back-pressure / until the response arrives, freeing the Tokio worker meanwhile.
+///
+/// Coverage: the pure URL parsing is host-unit-tested ([`split_url`]); this body links
+/// `wasi:http`/`wasi:io` imports that only resolve under a runtime, so it can't be host-tested
+/// and is instead exercised end-to-end by the `rusm-wasm` integration test
+/// (`rs_http_fetch_reaches_a_server_when_granted_and_is_denied_when_sandboxed`) — the real
+/// dispatch path plus the capability gate, against a live server. A deliberate split, not a gap.
 #[cfg(target_arch = "wasm32")]
 pub fn fetch(req: &Request) -> Result<Response, String> {
     use wasip2::http::outgoing_handler;
