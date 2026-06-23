@@ -72,6 +72,9 @@ import { websocket } from "rusm-ts";
 export default websocket({
   message(socket, data) {
     const city = new TextDecoder().decode(data).trim();
+    // Bridge calls are synchronous from the guest's perspective — no await.
+    // The js-runner fiber-parks the Wasm instance while the host resolves,
+    // then resumes with the plain string result.
     socket.sendText(weather.lookup(city));
   },
 });
