@@ -21,98 +21,127 @@ capability = "sandboxed"
 
 ## 2. Write the handler
 
-Unlike SSE, WebSocket is **bidirectional**: the client sends frames, the server receives
-them and can reply. This shows up directly in the handler shape.
+Unlike SSE, WebSocket is **bidirectional**: the client sends frames and the server
+receives them. But a WS handler is also a full actor process — so **`message` fires for
+two distinct sources**:
 
-**`socket` / `conn`** is the handle to *this* client's connection — the thing you call
-`.send()` on to push a frame back to that specific browser. It is not a shared channel;
-every connection has its own.
+- **A frame from the client** — the browser sent something.
+- **An actor message from another process** — a peer connection relayed something via
+  `Process.send` / `rusm_rs::send_bytes` (the same tag-broadcast mechanism SSE uses).
 
-**`data`** in `message` is the raw payload of one inbound frame from the client. You
-decide what to do with it: echo it, parse it as a command, forward it to another process,
-ignore it — that's your handler logic.
+Both arrive as raw bytes. Your handler distinguishes them — typically by the shape of a
+JSON envelope. This is what makes a chat room possible with no broker: each connection
+joins a tag, clients broadcast via `whereisTag` + `send`, and peers' relays land in the
+same mailbox.
 
-Three callbacks — `open`, `message`, `close`; only `message` is required:
+Three callbacks — `open`, `message`, `close`:
 
-- **`open(socket)`** — the client connected. Use it to send a greeting, register the
-  connection with a service, or join a broadcast group. `socket.send()` pushes a frame
-  immediately.
-- **`message(socket, data)`** — the client sent a frame. `data` is its raw bytes.
-  `socket.send()` sends a frame back to that client. This is the core of the
-  request/reply loop — or broadcast fan-out, or whatever your protocol does.
-- **`close(socket)`** — the client disconnected (clean close or dropped socket). The
-  process is about to exit; unregister from any groups or services here.
+- **`open(socket)`** — the client connected. `socket.send()` pushes a frame to this
+  client. A good place to join a broadcast group with `registerTag`.
+- **`message(socket, data)`** — either a client frame or an actor message arrived. Parse
+  `data` to decide: if it's a command from the client, act on it (join a room, fan out to
+  peers); if it's a relay from a peer, forward it to the client with `socket.send()`.
+- **`close(socket)`** — the client disconnected. The tag membership releases
+  automatically; this is optional cleanup.
 
-There is **one handler instance per connection** — its state (a Rust `&mut self`, a TS
-closure, a Go local variable) is private to that connection. Nothing is shared with other
-clients.
+**One handler instance per connection** — its state is private to that client.
+
+Here's a minimal chat room — client sends `{"join":"<room>"}` then `{"say":"<text>"}`;
+peers' relays arrive as `{"from":"<pid>","text":"..."}`:
 
 ::: code-group
 
 ```ts [TypeScript]
 // components/chat/index.ts
-import { websocket } from "rusm-ts";
+import { websocket, Process, type Socket } from "rusm-ts";
+
+let room: string | null = null; // this connection's current room (per-connection state)
+
+const tag = (name: string) => `room:${name}`;
+const system = (s: Socket, text: string) => s.send(JSON.stringify({ system: text }));
 
 export default websocket({
   open(socket) {
-    // Client connected. Push a greeting frame back to this client.
-    socket.send("welcome\n");
+    system(socket, 'connected — send {"join":"<room>"} to enter a room');
   },
+
   message(socket, data) {
-    // Client sent a frame. `data` is its raw bytes.
-    // socket.send() pushes a frame back to this same client — here, a plain echo.
-    socket.send(data);
+    const msg = JSON.parse(new TextDecoder().decode(data));
+
+    if (typeof msg.join === "string") {
+      // Client wants to join a room: tag this process so broadcasts reach it.
+      room = msg.join;
+      Process.registerTag(tag(room));
+      system(socket, `welcome to #${room}`);
+      return;
+    }
+
+    if (typeof msg.say === "string") {
+      // Client sent a chat message: fan it out to every connection in this room.
+      if (!room) return system(socket, "join a room first");
+      const relay = JSON.stringify({ from: String(Process.self()), text: msg.say });
+      for (const pid of Process.whereisTag(tag(room))) Process.send(pid, relay);
+      return;
+    }
+
+    // A relay from a peer arrived in the mailbox — forward it to this client.
+    if (typeof msg.text === "string") socket.send(data);
   },
-  close(socket) {
-    // Client disconnected (clean or dropped). Process exits after this.
-  },
+
+  close() {},
 });
 ```
 
 ```rust [Rust]
 // components/chat/src/lib.rs
 use rusm_rs::ws::{self, Connection, Handler};
+use serde::Deserialize;
+use serde_json::json;
 
-struct Echo;
-impl Handler for Echo {
+#[derive(Default)]
+struct Chat { room: Option<String> }
+
+#[derive(Deserialize)]
+struct Frame { join: Option<String>, say: Option<String>, text: Option<String> }
+
+impl Chat {
+    fn tag(room: &str) -> String { format!("room:{room}") }
+    fn system(conn: &Connection, text: &str) {
+        conn.send(json!({ "system": text }).to_string().as_bytes());
+    }
+}
+
+impl Handler for Chat {
     fn open(&mut self, conn: &Connection) {
-        // Push a greeting frame to this client.
-        conn.send(b"welcome\n");
+        Self::system(conn, "connected — send {\"join\":\"<room>\"} to enter a room");
     }
     fn message(&mut self, conn: &Connection, data: Vec<u8>) {
-        // `data` is one inbound frame from the client. Echo it straight back.
-        conn.send(&data);
+        let Ok(frame) = serde_json::from_slice::<Frame>(&data) else { return };
+
+        if let Some(room) = frame.join {
+            // Client wants to join a room: tag this process so broadcasts reach it.
+            rusm_rs::register_tag(&Self::tag(&room));
+            Self::system(conn, &format!("welcome to #{room}"));
+            self.room = Some(room);
+            return;
+        }
+        if let Some(say) = frame.say {
+            // Client sent a chat message: fan it out to every connection in this room.
+            let Some(room) = &self.room else { return Self::system(conn, "join a room first") };
+            let relay = json!({ "from": rusm_rs::me().to_string(), "text": say }).to_string();
+            for pid in rusm_rs::whereis_tag(&Self::tag(room)) {
+                rusm_rs::send_bytes(pid, relay.as_bytes());
+            }
+            return;
+        }
+        // A relay from a peer arrived in the mailbox — forward it to this client.
+        if frame.text.is_some() { conn.send(&data); }
     }
     fn close(&mut self, _conn: &Connection) {}
 }
 
 #[rusm_rs::main]
-fn run() {
-    ws::serve(Echo);
-}
-```
-
-```go [Go]
-// components/chat/main.go
-package main
-
-import (
-	rusm "github.com/archan937/rusm/packages/rusm-go"
-	"github.com/archan937/rusm/packages/rusm-go/web"
-)
-
-func init() { rusm.Run(run) }
-func main() {}
-
-func run() {
-	web.WebSocket{
-		// Push a greeting frame to this client.
-		Open: func(c web.Conn) { c.Send([]byte("welcome\n")) },
-		// `data` is one inbound frame from the client. Echo it straight back.
-		Message: func(c web.Conn, data []byte) { c.Send(data) },
-		Close:   func(c web.Conn) {},
-	}.Serve()
-}
+fn run() { ws::serve(Chat::default()); }
 ```
 
 :::
