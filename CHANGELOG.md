@@ -6,32 +6,6 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
-## [0.6.0] — 2026-06-24
-
-Deadline-aware calls, two new dynamic-component flavours, and guest timer access — all three
-guest SDKs advance in lock-step.
-
-### Added
-- **`call_timeout` / `CallTimeout` / `callTimeout`** — deadline-bounded cross-process call
-  across all three guest SDKs (RS/Go/TS), returning `Err("timeout")` / throws `Error("timeout")`
-  when the deadline expires. The timeout spans the entire call, including any set-aside messages.
-  TS additionally exposes `withTimeout(ms)` on the typed client proxy, applying a per-call
-  deadline to every subsequent call on that proxy. Documented in *Call another component —
-  Call with a deadline*.
-- **`dynamic = "wasi-cli"` template** — run any stock `wasm32-wasip2` CLI component (no RUSM
-  actor world required) as a sandboxed one-shot process via `spawn-from`. Uses the same
-  content-addressed compile cache, capability profile, and `kv:`/`url:`/`inline:` source
-  resolution as `dynamic = "wasm"`. Documented in *Dynamic WASM — Stock CLI tools*.
-- **`entry =` config field** — override the entry-point export name for static and
-  `dynamic = "wasm"` components (default `"run"`). Enables components built against a
-  non-standard WIT world that exports a differently-named function. Documented in *Dynamic WASM
-  — Custom entry export*.
-- **`send_after` / `cancel_timer` in Wasm guests** — guest components can now schedule delayed
-  messages and cancel them through the `rusm:runtime` WIT world. The three SDKs already exposed
-  `sendAfter`/`cancelTimer` (TS), `send_after`/`cancel_timer` (RS), and `SendAfter`/`CancelTimer`
-  (Go); this release wires the ops into the component host bridge so they reach the runtime.
-  Documented in *Timers*.
-
 ## [0.5.0] — 2026-06-24
 
 The bridge authoring model is now three-way: **Rust**, **TypeScript**, and **Go** bridge
