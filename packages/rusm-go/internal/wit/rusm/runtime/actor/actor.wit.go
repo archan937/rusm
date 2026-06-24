@@ -312,3 +312,39 @@ func Supervise(strategy SuperviseStrategy, children cm.List[string], maxRestarts
 	wasmimport_Supervise((uint32)(strategy0), (*string)(children0), (uint32)(children1), (uint32)(maxRestarts0), (uint32)(withinMs0), &result)
 	return
 }
+
+// SendAfter represents the imported function "send-after".
+//
+// Schedule `message` to be delivered to `to` after `delay-ms` milliseconds
+// (Erlang's `erlang:send_after/3`). Returns a timer handle for [`cancel-timer`].
+// If `to` is already gone when the timer fires, the delivery is a silent no-op —
+// exactly like [`send`]. No capability gate beyond what the caller already holds:
+// a process may schedule delayed messages to any pid it could send to directly.
+//
+//	send-after: func(to: pid, delay-ms: u64, message: list<u8>) -> u64
+//
+//go:nosplit
+func SendAfter(to Pid, delayMs uint64, message cm.List[uint8]) (result uint64) {
+	to0 := (uint64)(to)
+	delayMs0 := (uint64)(delayMs)
+	message0, message1 := cm.LowerList(message)
+	result0 := wasmimport_SendAfter((uint64)(to0), (uint64)(delayMs0), (*uint8)(message0), (uint32)(message1))
+	result = (uint64)((uint64)(result0))
+	return
+}
+
+// CancelTimer represents the imported function "cancel-timer".
+//
+// Cancel a pending timer by the handle returned by [`send-after`]. Returns `true`
+// if the timer was found and aborted before it fired; `false` if the handle is
+// unknown — already fired, already cancelled, or never issued by this process.
+//
+//	cancel-timer: func(timer-ref: u64) -> bool
+//
+//go:nosplit
+func CancelTimer(timerRef uint64) (result bool) {
+	timerRef0 := (uint64)(timerRef)
+	result0 := wasmimport_CancelTimer((uint64)(timerRef0))
+	result = (bool)(cm.U32ToBool((uint32)(result0)))
+	return
+}

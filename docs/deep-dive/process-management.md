@@ -39,9 +39,9 @@ form is also RUSM's pub/sub primitive; see [broadcast to many](/build-an-app/bro
 
 ## Timers
 
-`send_after(ms, msg)` schedules a message to land in a mailbox later; `cancel` aborts a
-pending one. It's built on Tokio's timer wheel, so millions of outstanding timers cost
-almost nothing.
+`send_after(to, delay_ms, msg)` schedules a message to arrive in `to`'s mailbox after
+`delay_ms` milliseconds; `cancel_timer(handle)` aborts a pending one. Built on Tokio's
+timer wheel, so millions of outstanding timers cost almost nothing.
 
 ## Introspection
 

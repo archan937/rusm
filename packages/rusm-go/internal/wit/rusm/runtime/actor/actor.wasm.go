@@ -71,3 +71,11 @@ func wasmimport_SetLabel(label0 *uint8, label1 uint32)
 //go:wasmimport rusm:runtime/actor@0.1.0 supervise
 //go:noescape
 func wasmimport_Supervise(strategy0 uint32, children0 *string, children1 uint32, maxRestarts0 uint32, withinMs0 uint32, result *cm.Result[string, Pid, string])
+
+//go:wasmimport rusm:runtime/actor@0.1.0 send-after
+//go:noescape
+func wasmimport_SendAfter(to0 uint64, delayMs0 uint64, message0 *uint8, message1 uint32) (result0 uint64)
+
+//go:wasmimport rusm:runtime/actor@0.1.0 cancel-timer
+//go:noescape
+func wasmimport_CancelTimer(timerRef0 uint64) (result0 uint32)

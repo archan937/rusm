@@ -617,6 +617,14 @@ fn boot_bridge(ctx: Ctx<'_>) {
         };
         let _ = actor::supervise(strategy, &children, max_restarts as u32, within_ms as u32);
     });
+    // Delayed message scheduling (Erlang's erlang:send_after/3). Pid and delay cross as
+    // string/number; the handle is a JS number (u64 fits safely below 2^53).
+    def!("__send_after", |to: String, delay_ms: f64, msg: Vec<u8>| {
+        actor::send_after(to.parse().unwrap_or(0), delay_ms as u64, &msg) as f64
+    });
+    def!("__cancel_timer", |timer_ref: f64| actor::cancel_timer(
+        timer_ref as u64
+    ));
 
     // --- streams (handles are small ints carried as JS numbers) ---
     def!("__stream_open", |to: String| stream_iface::stream_open(

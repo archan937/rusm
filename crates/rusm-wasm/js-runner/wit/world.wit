@@ -88,6 +88,18 @@ interface actor {
     /// whole tree is torn down. This is the **one** restart implementation; the guest
     /// `Supervisor` SDKs delegate to it.
     supervise: func(strategy: supervise-strategy, children: list<string>, max-restarts: u32, within-ms: u32) -> result<pid, string>;
+
+    /// Schedule `message` to be delivered to `to` after `delay-ms` milliseconds
+    /// (Erlang's `erlang:send_after/3`). Returns a timer handle for [`cancel-timer`].
+    /// If `to` is already gone when the timer fires, the delivery is a silent no-op —
+    /// exactly like [`send`]. No capability gate beyond what the caller already holds:
+    /// a process may schedule delayed messages to any pid it could send to directly.
+    send-after: func(to: pid, delay-ms: u64, message: list<u8>) -> u64;
+
+    /// Cancel a pending timer by the handle returned by [`send-after`]. Returns `true`
+    /// if the timer was found and aborted before it fired; `false` if the handle is
+    /// unknown — already fired, already cancelled, or never issued by this process.
+    cancel-timer: func(timer-ref: u64) -> bool;
 }
 
 /// Durable key-value storage — a platform bridge **gated by `storage`** (default-deny).

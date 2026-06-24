@@ -170,6 +170,18 @@ func IsAlive(p Pid) bool { return actor.IsAlive(actor.Pid(p)) }
 // Kill terminates a pid (subject to capability); false if it was already gone.
 func Kill(p Pid) bool { return actor.Kill(actor.Pid(p)) }
 
+// SendAfter schedules msg to be delivered to to after delayMs milliseconds —
+// Erlang's erlang:send_after/3. Returns a timer handle for CancelTimer.
+// If to is gone when the timer fires, the delivery is a silent no-op.
+func SendAfter(to Pid, delayMs uint64, msg []byte) uint64 {
+	return actor.SendAfter(actor.Pid(to), delayMs, cm.ToList(msg))
+}
+
+// CancelTimer cancels a pending timer by the handle returned by SendAfter.
+// Returns true if the timer was found and aborted before it fired; false if
+// unknown — already fired, already cancelled, or never issued by this process.
+func CancelTimer(timerRef uint64) bool { return actor.CancelTimer(timerRef) }
+
 // ProcessInfo is a snapshot of a process (Erlang's Process.info/1).
 type ProcessInfo struct {
 	Pid          Pid

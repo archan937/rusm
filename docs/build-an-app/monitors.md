@@ -185,7 +185,7 @@ import { Process } from "rusm-ts";
 async function generateThumbnailSafe(imageUrl: string): Promise<string | null> {
   const workerPid = Process.spawn("thumbnail-generator");
   const monRef   = Process.monitor(workerPid);
-  const timer    = Process.sendAfter(5_000, Process.self(), "timeout");
+  const timer    = Process.sendAfter(Process.self(), 5_000, "timeout");
 
   Process.send(workerPid, JSON.stringify({ replyTo: String(Process.self()), url: imageUrl }));
 
@@ -208,7 +208,7 @@ async function generateThumbnailSafe(imageUrl: string): Promise<string | null> {
 fn generate_thumbnail_safe(image_url: &str) -> Option<String> {
     let worker_pid = rusm_rs::spawn("thumbnail-generator").ok()?;
     let mon_ref = rusm_rs::monitor(worker_pid);
-    let timer   = rusm_rs::send_after(5_000, rusm_rs::me(), b"timeout");
+    let timer   = rusm_rs::send_after(rusm_rs::me(), 5_000, b"timeout");
 
     let req = serde_json::json!({ "replyTo": rusm_rs::me().to_string(), "url": image_url });
     rusm_rs::send_bytes(worker_pid, req.to_string().as_bytes());
@@ -236,7 +236,7 @@ fn generate_thumbnail_safe(image_url: &str) -> Option<String> {
 func generateThumbnailSafe(imageUrl string) (string, error) {
     workerPid, _ := rusm.Spawn("thumbnail-generator")
     monRef := rusm.Monitor(workerPid)
-    timer  := rusm.SendAfter(5_000, rusm.Self(), []byte("timeout"))
+    timer  := rusm.SendAfter(rusm.Self(), 5_000, []byte("timeout"))
 
     req, _ := json.Marshal(map[string]any{"replyTo": rusm.Self(), "url": imageUrl})
     rusm.Send(workerPid, req)

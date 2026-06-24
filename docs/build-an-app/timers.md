@@ -9,9 +9,12 @@ heartbeat — each one is just a delayed send to yourself (or any other process)
 
 ## send_after
 
-`send_after(delayMs, targetPid, message)` schedules `message` to arrive in
-`targetPid`'s mailbox after `delayMs` milliseconds. It returns a **timer handle** you
-can use to cancel the timer before it fires.
+`send_after(to, delayMs, message)` schedules `message` to arrive in `to`'s mailbox
+after `delayMs` milliseconds. It returns a **timer handle** you can use to cancel the
+timer before it fires.
+
+The argument order — target pid first, delay second — is consistent with all other
+RUSM process-targeting operations (`send`, `kill`, `monitor`).
 
 The typical pattern is to schedule a timeout for yourself, then race your receive loop
 against it:
@@ -24,7 +27,7 @@ import { Process } from "rusm-ts";
 const TIMEOUT_MS = 5_000;
 
 // Schedule a "timeout" message to ourselves in 5 seconds.
-const timer = Process.sendAfter(TIMEOUT_MS, Process.self(), "timeout");
+const timer = Process.sendAfter(Process.self(), TIMEOUT_MS, "timeout");
 
 // Ask a worker to do something:
 const workerPid = Process.spawn("slow-report-generator");
@@ -44,12 +47,10 @@ if (raw === "timeout") {
 ```
 
 ```rust [Rust]
-use std::time::Duration;
-
 const TIMEOUT_MS: u64 = 5_000;
 
 // Schedule a "timeout" message to ourselves in 5 seconds.
-let timer = rusm_rs::send_after(TIMEOUT_MS, rusm_rs::me(), b"timeout");
+let timer = rusm_rs::send_after(rusm_rs::me(), TIMEOUT_MS, b"timeout");
 
 // Ask a worker to do something:
 let worker_pid = rusm_rs::spawn("slow-report-generator").unwrap();
@@ -77,7 +78,7 @@ import (
 const timeoutMs = 5_000
 
 // Schedule a "timeout" message to ourselves.
-timer := rusm.SendAfter(timeoutMs, rusm.Self(), []byte("timeout"))
+timer := rusm.SendAfter(rusm.Self(), timeoutMs, []byte("timeout"))
 
 // Ask a worker to do something:
 workerPid, _ := rusm.Spawn("slow-report-generator")
@@ -85,7 +86,7 @@ req, _ := json.Marshal(map[string]any{"replyTo": rusm.Self(), "reportId": "Q4-20
 rusm.Send(workerPid, req)
 
 // Race: reply or timeout.
-raw := rusm.Receive()
+raw := rusm.ReceiveBytes()
 if string(raw) == "timeout" {
     fmt.Println("report generation timed out after 5s")
 } else {
@@ -108,7 +109,7 @@ your receive loop and discard it.
 ::: code-group
 
 ```ts [TypeScript]
-const timer = Process.sendAfter(10_000, Process.self(), "cleanup");
+const timer = Process.sendAfter(Process.self(), 10_000, "cleanup");
 
 // ... do work that finishes early ...
 
@@ -117,7 +118,7 @@ Process.cancelTimer(timer);
 ```
 
 ```rust [Rust]
-let timer = rusm_rs::send_after(10_000, rusm_rs::me(), b"cleanup");
+let timer = rusm_rs::send_after(rusm_rs::me(), 10_000, b"cleanup");
 
 // ... work finished early ...
 
@@ -125,7 +126,7 @@ rusm_rs::cancel_timer(timer);
 ```
 
 ```go [Go]
-timer := rusm.SendAfter(10_000, rusm.Self(), []byte("cleanup"))
+timer := rusm.SendAfter(rusm.Self(), 10_000, []byte("cleanup"))
 
 // ... work finished early ...
 
@@ -150,7 +151,7 @@ const HEARTBEAT_MS = 30_000; // every 30 seconds
 Process.register("cache-service");
 
 // Kick off the first heartbeat immediately.
-Process.sendAfter(HEARTBEAT_MS, Process.self(), "heartbeat");
+Process.sendAfter(Process.self(), HEARTBEAT_MS, "heartbeat");
 
 while (true) {
   const msg = await Process.receiveText();
@@ -159,7 +160,7 @@ while (true) {
     // Do periodic work — evict stale entries, flush metrics, etc.
     evictStaleEntries();
     // Schedule the next heartbeat.
-    Process.sendAfter(HEARTBEAT_MS, Process.self(), "heartbeat");
+    Process.sendAfter(Process.self(), HEARTBEAT_MS, "heartbeat");
     continue;
   }
 
@@ -175,14 +176,14 @@ function evictStaleEntries() { /* ... */ }
 const HEARTBEAT_MS: u64 = 30_000;
 
 rusm_rs::register("cache-service");
-rusm_rs::send_after(HEARTBEAT_MS, rusm_rs::me(), b"heartbeat");
+rusm_rs::send_after(rusm_rs::me(), HEARTBEAT_MS, b"heartbeat");
 
 loop {
     let raw = rusm_rs::receive_bytes();
 
     if raw == b"heartbeat" {
         evict_stale_entries();
-        rusm_rs::send_after(HEARTBEAT_MS, rusm_rs::me(), b"heartbeat");
+        rusm_rs::send_after(rusm_rs::me(), HEARTBEAT_MS, b"heartbeat");
         continue;
     }
 
@@ -203,14 +204,14 @@ import (
 const heartbeatMs = 30_000
 
 rusm.Register("cache-service")
-rusm.SendAfter(heartbeatMs, rusm.Self(), []byte("heartbeat"))
+rusm.SendAfter(rusm.Self(), heartbeatMs, []byte("heartbeat"))
 
 for {
-    raw := rusm.Receive()
+    raw := rusm.ReceiveBytes()
 
     if string(raw) == "heartbeat" {
         evictStaleEntries()
-        rusm.SendAfter(heartbeatMs, rusm.Self(), []byte("heartbeat"))
+        rusm.SendAfter(rusm.Self(), heartbeatMs, []byte("heartbeat"))
         continue
     }
 
@@ -241,7 +242,7 @@ async function fetchWithRetry(url: string, attempt: number): Promise<string> {
     if (attempt >= 3) throw new Error(`failed after 3 attempts: ${url}`);
     const delayMs = 500 * Math.pow(2, attempt); // 500ms, 1s, 2s
     // Schedule a retry message to ourselves after the backoff delay.
-    Process.sendAfter(delayMs, Process.self(), JSON.stringify({ retry: url, attempt: attempt + 1 }));
+    Process.sendAfter(Process.self(), delayMs, JSON.stringify({ retry: url, attempt: attempt + 1 }));
     return ""; // caller will receive the retry message and call again
   }
 }
@@ -255,7 +256,7 @@ fn schedule_retry(url: &str, attempt: u32) {
     }
     let delay_ms = 500 * 2u64.pow(attempt); // 500ms, 1s, 2s
     let msg = serde_json::json!({ "retry": url, "attempt": attempt + 1 });
-    rusm_rs::send_after(delay_ms, rusm_rs::me(), msg.to_string().as_bytes());
+    rusm_rs::send_after(rusm_rs::me(), delay_ms, msg.to_string().as_bytes());
 }
 ```
 
@@ -272,7 +273,7 @@ func scheduleRetry(url string, attempt int) {
     }
     delayMs := int64(500 * math.Pow(2, float64(attempt))) // 500ms, 1s, 2s
     msg, _ := json.Marshal(map[string]any{"retry": url, "attempt": attempt + 1})
-    rusm.SendAfter(delayMs, rusm.Self(), msg)
+    rusm.SendAfter(rusm.Self(), uint64(delayMs), msg)
 }
 ```
 

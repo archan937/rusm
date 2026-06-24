@@ -59,6 +59,19 @@ export interface ProcessApi {
   isAlive(pid: bigint | string): boolean;
   kill(pid: bigint | string): boolean;
   setLabel(label: string): void;
+  /**
+   * Schedule `msg` to be delivered to `to` after `delayMs` milliseconds —
+   * Erlang's `erlang:send_after/3`. Returns a timer handle for {@link cancelTimer}.
+   * `msg` may be a `Uint8Array` (binary) or a `string` (UTF-8 encoded).
+   * If `to` is already gone when the timer fires, the delivery is a silent no-op.
+   */
+  sendAfter(to: bigint | string, delayMs: number, msg: Uint8Array | string): number;
+  /**
+   * Cancel a pending timer by the handle returned by {@link sendAfter}. Returns
+   * `true` if the timer was found and aborted; `false` if unknown — already fired,
+   * already cancelled, or never issued by this process.
+   */
+  cancelTimer(timerRef: number): boolean;
   /** Join **this** process to a process-group `tag` (Erlang's `pg`); released on exit. */
   registerTag(tag: string): void;
   /** Leave a process-group `tag` this process holds. */

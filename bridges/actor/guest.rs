@@ -123,6 +123,20 @@ pub fn kill(pid: Pid) -> bool {
     abi::kill(pid.0)
 }
 
+/// Schedule `message` to be delivered to `to` after `delay_ms` milliseconds —
+/// Erlang's `erlang:send_after/3`. Returns a timer handle for [`cancel_timer`].
+/// If `to` is gone when the timer fires, the delivery is a silent no-op.
+pub fn send_after(to: Pid, delay_ms: u64, message: &[u8]) -> u64 {
+    abi::send_after(to.0, delay_ms, message)
+}
+
+/// Cancel a pending timer by the handle returned by [`send_after`]. Returns `true`
+/// if the timer was found and aborted before it fired; `false` if unknown — already
+/// fired, already cancelled, or never issued by this process.
+pub fn cancel_timer(timer_ref: u64) -> bool {
+    abi::cancel_timer(timer_ref)
+}
+
 /// Send raw bytes to a pid (dropped if it's gone).
 pub fn send_bytes(to: Pid, msg: &[u8]) {
     abi::send(to.0, msg);

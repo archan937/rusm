@@ -79,6 +79,18 @@ if (has("__whereis"))
 if (has("__is_alive")) P.isAlive = (pid) => __is_alive(String(pid));
 if (has("__kill")) P.kill = (pid) => __kill(String(pid));
 if (has("__set_label")) P.setLabel = (label) => __set_label(label);
+// Schedule a delayed message (Erlang's erlang:send_after/3). Returns a timer handle
+// (a number) that Process.cancelTimer can abort before it fires. `msg` may be a
+// Uint8Array (binary) or a string (UTF-8 encoded). A fired or unknown handle is a
+// silent no-op on the delivery side.
+if (has("__send_after"))
+  P.sendAfter = (to, delayMs, msg) => {
+    const bytes = typeof msg === "string" ? new TextEncoder().encode(msg) : msg;
+    return __send_after(String(to), delayMs, bytes);
+  };
+// Cancel a pending timer by the handle returned by sendAfter. Returns true if the
+// timer was found and aborted; false if unknown (already fired or never issued).
+if (has("__cancel_timer")) P.cancelTimer = (timerRef) => __cancel_timer(timerRef);
 // Process-group tags (`Process.registerTag`/etc.) are the pg bridge — see bridge/pg.js,
 // eval'd after this; it augments Process with the tag ops.
 if (has("__stream_open"))

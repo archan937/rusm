@@ -347,6 +347,8 @@ fn build_store(
         out_streams: HashMap::new(),
         in_streams: HashMap::new(),
         next_stream: 0,
+        timers: HashMap::new(),
+        next_timer: 0,
     };
     let mut store = Store::new(engine, host);
     // Enforce the per-process memory ceiling (WasiHost is the ResourceLimiter).
@@ -516,6 +518,8 @@ mod tests {
             out_streams: HashMap::new(),
             in_streams: HashMap::new(),
             next_stream: 0,
+            timers: HashMap::new(),
+            next_timer: 0,
         }
     }
 

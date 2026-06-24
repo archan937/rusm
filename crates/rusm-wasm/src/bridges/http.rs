@@ -182,6 +182,8 @@ impl HttpServer {
             out_streams: Default::default(),
             in_streams: Default::default(),
             next_stream: 0,
+            timers: Default::default(),
+            next_timer: 0,
         };
         let mut store = Store::new(self.pre.engine(), host);
         store.limiter(|host| host as &mut dyn wasmtime::ResourceLimiter);

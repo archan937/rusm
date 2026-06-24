@@ -95,6 +95,12 @@ pub struct WasiHost {
     pub(crate) in_streams: HashMap<u64, StreamHandle>,
     /// Monotonic handle source for this process's streams.
     pub(crate) next_stream: u64,
+    /// Pending timers scheduled by `send-after`, keyed by the handle returned to
+    /// the guest. Cancelled via `cancel-timer`; auto-dropped when the process exits,
+    /// aborting any unfired timers (the `TimerRef` drop impl cancels the task).
+    pub(crate) timers: HashMap<u64, rusm_otp::TimerRef>,
+    /// Monotonic handle source for this process's timers.
+    pub(crate) next_timer: u64,
 }
 
 /// The curated, **public** surface a custom application bridge reaches the calling
@@ -231,6 +237,8 @@ mod tests {
             out_streams: HashMap::new(),
             in_streams: HashMap::new(),
             next_stream: 0,
+            timers: HashMap::new(),
+            next_timer: 0,
         }
     }
 

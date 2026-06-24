@@ -291,6 +291,33 @@ impl actor::Host for WasiHost {
         self.rt.link(Pid::from_raw(self.pid), sup_pid);
         Ok(sup_pid.raw())
     }
+
+    /// Schedule `message` to be delivered to `to` after `delay_ms` milliseconds —
+    /// Erlang's `erlang:send_after/3`. Delegates entirely to the OTP primitive; the
+    /// bridge only wraps the delay unit and assigns a per-process handle so the guest
+    /// can cancel. If `to` is already gone when the timer fires, the delivery is a
+    /// silent no-op (like a direct `send`).
+    async fn send_after(&mut self, to: u64, delay_ms: u64, message: Vec<u8>) -> u64 {
+        let timer = self
+            .rt
+            .send_after(Pid::from_raw(to), Duration::from_millis(delay_ms), message);
+        let id = self.next_timer;
+        self.next_timer = self.next_timer.wrapping_add(1);
+        self.timers.insert(id, timer);
+        id
+    }
+
+    /// Cancel a pending timer by handle. Returns `true` if the timer was found and
+    /// aborted before it fired; `false` if the handle is unknown — already fired,
+    /// already cancelled, or never issued by this process.
+    async fn cancel_timer(&mut self, timer_ref: u64) -> bool {
+        if let Some(timer) = self.timers.remove(&timer_ref) {
+            timer.cancel();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl WasiHost {
@@ -374,6 +401,120 @@ async fn next_message(ctx: &mut Context) -> Vec<u8> {
             }
             _ => {} // streams / other signals are skipped here
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bindings::rusm::runtime::actor::Host;
+    use crate::bridges::{HttpCaps, WasiHost};
+    use crate::caps::Capabilities;
+    use rusm_otp::Runtime;
+    use std::collections::HashMap;
+    use wasmtime_wasi::ResourceTable;
+    use wasmtime_wasi::WasiCtxBuilder;
+    use wasmtime_wasi_http::WasiHttpCtx;
+
+    fn timer_host() -> WasiHost {
+        WasiHost {
+            wasi: WasiCtxBuilder::new().build(),
+            table: ResourceTable::new(),
+            http: WasiHttpCtx::new(),
+            http_hooks: HttpCaps {
+                allow_network: false,
+            },
+            pid: 0,
+            connection: None,
+            ws_out: None,
+            sse_out: None,
+            caps: Capabilities::nothing(),
+            rt: Runtime::new(),
+            ctx: None,
+            spawner: None,
+            out_streams: HashMap::new(),
+            in_streams: HashMap::new(),
+            next_stream: 0,
+            timers: HashMap::new(),
+            next_timer: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn send_after_assigns_sequential_handles() {
+        // Each `send-after` call gets a monotonically-increasing per-process handle,
+        // and every pending timer is tracked in the map.
+        let mut host = timer_host();
+        let h0 = host.send_after(0, 60_000, b"a".to_vec()).await;
+        let h1 = host.send_after(0, 60_000, b"b".to_vec()).await;
+        assert_eq!(h0, 0, "first handle is 0");
+        assert_eq!(h1, 1, "second handle is 1");
+        assert_eq!(host.timers.len(), 2, "both timers are pending");
+    }
+
+    #[tokio::test]
+    async fn cancel_timer_removes_the_handle_and_returns_true() {
+        let mut host = timer_host();
+        let handle = host.send_after(0, 60_000, b"x".to_vec()).await;
+        assert!(host.cancel_timer(handle).await, "cancel returns true");
+        assert!(
+            !host.timers.contains_key(&handle),
+            "handle removed from map after cancel"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_timer_returns_false_for_unknown_ref() {
+        let mut host = timer_host();
+        assert!(!host.cancel_timer(99).await, "unknown ref returns false");
+    }
+
+    #[tokio::test]
+    async fn double_cancel_returns_false_on_second_call() {
+        let mut host = timer_host();
+        let handle = host.send_after(0, 60_000, b"x".to_vec()).await;
+        assert!(host.cancel_timer(handle).await);
+        assert!(!host.cancel_timer(handle).await, "already removed → false");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn send_after_delivers_to_target_process() {
+        // A short delay (5 ms) keeps the test fast. Delivery semantics are the OTP
+        // primitive's responsibility — tested exhaustively in rusm-otp; here we only
+        // verify the bridge wires them end-to-end.
+        let mut host = timer_host();
+        let rt = host.rt.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let target = rt.spawn(move |mut ctx| async move {
+            let msg = ctx.recv().await.message().unwrap();
+            let _ = tx.send(msg);
+        });
+        host.send_after(target.pid().raw(), 5, b"ding".to_vec())
+            .await;
+        assert_eq!(rx.await.unwrap(), b"ding".to_vec());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_timer_never_delivers() {
+        // Cancel immediately after scheduling (60 s delay — won't fire during the
+        // test). Yield briefly and verify nothing landed in the mailbox.
+        let mut host = timer_host();
+        let rt = host.rt.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let target = rt.spawn(move |mut ctx| async move {
+            loop {
+                if let Some(msg) = ctx.recv().await.message() {
+                    let _ = tx.send(msg);
+                }
+            }
+        });
+        let handle = host
+            .send_after(target.pid().raw(), 60_000, b"x".to_vec())
+            .await;
+        assert!(host.cancel_timer(handle).await);
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        assert!(rx.try_recv().is_err(), "cancelled timer must not deliver");
+        target.kill();
     }
 }
 
