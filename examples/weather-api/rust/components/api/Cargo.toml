@@ -17,5 +17,5 @@ opt-level = "z"
 strip = true
 
 [dependencies]
-rusm-rs = { path = "../../../../../crates/rusm-rs" }
+rusm-rs = "0.5.0"
 wit-bindgen = "0.46"

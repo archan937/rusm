@@ -46,6 +46,25 @@ constraint — Rust for zero-overhead, TS or Go for familiar toolchains and exte
 - **`SDK_VERSION` in scaffold** — `rusm new` now generates `rusm-ts@^0.5.0`,
   `rusm-rs = "0.5.0"`, `rusm-go v0.5.0` instead of the stale `0.4.0` that was pinned.
 - **`url-shortener/go` dep** — `go.mod` was on `rusm-go v0.4.0`; updated to `v0.5.0`.
+- **`call_timeout` / `CallTimeout` / `callTimeout`** — deadline-bounded cross-process call
+  across all three guest SDKs (RS/Go/TS), returning `Err("timeout")` / throws `Error("timeout")`
+  when the deadline expires. The timeout spans the entire call, including any set-aside messages.
+  TS additionally exposes `withTimeout(ms)` on the typed client proxy, applying a per-call
+  deadline to every subsequent call on that proxy. Documented in *Call another component —
+  Call with a deadline*.
+- **`dynamic = "wasi-cli"` template** — run any stock `wasm32-wasip2` CLI component (no RUSM
+  actor world required) as a sandboxed one-shot process via `spawn-from`. Uses the same
+  content-addressed compile cache, capability profile, and `kv:`/`url:`/`inline:` source
+  resolution as `dynamic = "wasm"`. Documented in *Dynamic WASM — Stock CLI tools*.
+- **`entry =` config field** — override the entry-point export name for static and
+  `dynamic = "wasm"` components (default `"run"`). Enables components built against a
+  non-standard WIT world that exports a differently-named function. Documented in *Dynamic WASM
+  — Custom entry export*.
+- **`send_after` / `cancel_timer` in Wasm guests** — guest components can now schedule delayed
+  messages and cancel them through the `rusm:runtime` WIT world. The three SDKs already exposed
+  `sendAfter`/`cancelTimer` (TS), `send_after`/`cancel_timer` (RS), and `SendAfter`/`CancelTimer`
+  (Go); this release wires the ops into the component host bridge so they reach the runtime.
+  Documented in *Timers*.
 
 ## [0.4.2] — 2026-06-23
 
