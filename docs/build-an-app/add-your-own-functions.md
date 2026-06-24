@@ -306,14 +306,20 @@ For a **Go bridge** (`host.go`), `rusm build` additionally writes:
 TinyGo compiles the whole `bridges/<name>/` package to `wasm/bridge-<name>.wasm` — a full
 Wasm component registered at startup under a supervisor.
 
-**Get a working skeleton in seconds** — the `weather` template is the runnable
-bridge example (same structure as the `mailer` above: a `bridge.wit` contract,
-a host impl, and a guest that calls it):
+**Get a working skeleton in seconds** — two ready-to-run templates cover the bridge patterns:
 
 ```sh
-rusm new myapp --template weather --lang ts    # TypeScript host bridge
-rusm new myapp --template weather --lang go    # Go host bridge
-rusm new myapp --template weather --lang rust  # Rust host bridge
+# The `mailer` template — a TS host bridge calling Resend (exactly the example above).
+# Set RESEND_API_KEY in .env, then build and serve.
+rusm new myapp --template mailer --lang ts    # TypeScript guest
+rusm new myapp --template mailer --lang go    # Go guest
+rusm new myapp --template mailer --lang rust  # Rust guest
+
+# The `weather` template — a Rust host bridge; useful as a Rust-host starting point.
+rusm new myapp --template weather --lang ts   # TypeScript guest
+rusm new myapp --template weather --lang go   # Go guest
+rusm new myapp --template weather --lang rust # Rust guest (default)
+
 cd myapp && rusm build && rusm serve
 ```
 

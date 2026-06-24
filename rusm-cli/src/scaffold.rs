@@ -86,7 +86,7 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     let name: String = args.free_from_str().map_err(|_| {
         anyhow!(
             "usage: rusm new <name> [--rust] [--lang ts|rust|go|generic] \
-             [--protocol http|sse|ws] [--template todo-board|weather] [--bridges]"
+             [--protocol http|sse|ws] [--template todo-board|weather|mailer] [--bridges]"
         )
     })?;
     validate_name(&name)?;
@@ -139,11 +139,11 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     // the bridge compiled in), so all three languages are accepted.
     if bridges && template.is_some() {
         bail!(
-            "`--bridges` can't be combined with `--template` — use `--template weather` for the \
-             weather bridge example, or `--bridges` to start a new bridge app"
+            "`--bridges` can't be combined with `--template` — use `--template weather` or \
+             `--template mailer` for a bridge example, or `--bridges` to start a new bridge app"
         );
     }
-    let bridge_app = bridges || matches!(template, Some(Template::Weather));
+    let bridge_app = bridges || matches!(template, Some(Template::Weather) | Some(Template::Mailer));
     if bridge_app && matches!(lang, Lang::Generic) {
         bail!(
             "a custom-bridge app needs a guest language to call the bridge — \
@@ -213,6 +213,10 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
     if app.template == Some(Template::Weather) {
         return bridge_files(app);
     }
+    // The `mailer` template is a TS-hosted bridge that calls the Resend API.
+    if app.template == Some(Template::Mailer) {
+        return mailer_bridge_files(app);
+    }
     // The todo-board template scaffolds the full multi-protocol app (the real `examples/<lang>`).
     if app.template.is_some() {
         return template::files(app.lang, &app.name);
@@ -280,7 +284,7 @@ fn has_routes(app: &NewApp) -> bool {
 /// guards it against drift.
 const WASMTIME_VERSION: &str = "45.0.1";
 
-// The host-side custom-bridge files are the live `examples/custom-bridge` (the single source,
+// The host-side custom-bridge files are the live `examples/weather-api` (the single source,
 // proven end to end), **vendored** into `templates/weather/` so they ship in the published
 // tarball (the workspace `../../examples/` isn't packaged) — `make sync-templates` keeps them
 // byte-identical to the example, guarded by a drift test. A scaffolded app is exactly the
@@ -294,6 +298,15 @@ const BRIDGE_RUST_GUEST: &str = include_str!("../templates/weather/rust-guest.rs
 // Verbatim from the live example; its `/// <reference path="../../bridges.d.ts" />` resolves
 // the same from `components/api/` (the scaffold) as from `components/tsweather/` (the example).
 const BRIDGE_TS_GUEST: &str = include_str!("../templates/weather/ts-guest.ts");
+
+// Mailer bridge template files — vendored from `examples/mailer/` into `templates/mailer/`
+// so they ship in the published `rusm-cli` tarball. `make sync-templates` keeps them
+// byte-identical to the example; drift is caught by `vendored_mailer_template_matches_sources`.
+const MAILER_BRIDGE_WIT: &str = include_str!("../templates/mailer/bridge.wit");
+const MAILER_HOST_TS: &str = include_str!("../templates/mailer/host.ts");
+const MAILER_RUST_GUEST: &str = include_str!("../templates/mailer/rust-guest.rs");
+const MAILER_TS_GUEST: &str = include_str!("../templates/mailer/ts-guest.ts");
+const MAILER_GO_GUEST: &str = include_str!("../templates/mailer/go-guest.go");
 
 /// `.gitignore` for a custom-bridge app: build output plus the `rusm build`-generated bridge
 /// glue (the host crate's `wit/` + `src/{bindings,bridges}.rs`, and each guest's `wit/` +
@@ -313,7 +326,7 @@ const BRIDGE_GITIGNORE: &str = "\
 
 /// The files for a **custom-bridge** app (`rusm new <name> --bridges`): a host crate that
 /// registers the app's bridges then serves, an example `weather` bridge, and a guest (Rust or
-/// Go) that calls it. Host-side files come verbatim from `examples/custom-bridge`; only the
+/// Go) that calls it. Host-side files come verbatim from `examples/weather-api`; only the
 /// dependency manifests, `rusm.toml`, `.gitignore`, and README are generated (version deps +
 /// the chosen guest language). The generated glue is `rusm build` output (git-ignored).
 fn bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
@@ -353,6 +366,48 @@ fn bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
             out.push((
                 PathBuf::from("components/api/src/lib.rs"),
                 BRIDGE_RUST_GUEST.to_string(),
+            ));
+        }
+    }
+    out
+}
+
+/// Files for a **mailer** bridge app (`rusm new <name> --template mailer`): a TS-hosted bridge
+/// that calls the Resend API, registered as a resident actor by a generated host binary. The
+/// developer authors `bridges/mailer/host.ts` and `components/api/`; `rusm build` generates
+/// the Rust delegation shim, the TS runner, and the host binary entry point.
+fn mailer_bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
+    let mut out = vec![
+        (
+            PathBuf::from("bridges/mailer/bridge.wit"),
+            MAILER_BRIDGE_WIT.to_string(),
+        ),
+        (
+            PathBuf::from("bridges/mailer/host.ts"),
+            MAILER_HOST_TS.to_string(),
+        ),
+        (PathBuf::from("rusm.toml"), mailer_rusm_toml()),
+        (PathBuf::from(".gitignore"), BRIDGE_GITIGNORE.to_string()),
+        (PathBuf::from("package.json"), package_json(&app.name)),
+        (PathBuf::from("tsconfig.json"), TSCONFIG.to_string()),
+        (PathBuf::from("README.md"), mailer_readme(app)),
+    ];
+    match app.lang {
+        Lang::TypeScript => {
+            out.push((
+                PathBuf::from("components/api/index.ts"),
+                MAILER_TS_GUEST.to_string(),
+            ));
+        }
+        Lang::Go => {
+            out.push((PathBuf::from("components/api/go.mod"), go_mod()));
+            out.push((PathBuf::from("components/api/main.go"), mailer_go_guest(app)));
+        }
+        _ => {
+            out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
+            out.push((
+                PathBuf::from("components/api/src/lib.rs"),
+                MAILER_RUST_GUEST.to_string(),
             ));
         }
     }
@@ -429,6 +484,37 @@ fn bridge_rusm_toml(lang: Lang) -> String {
 /// to the scaffold's `api` module (the only difference — the logic is identical).
 fn go_bridge_guest() -> String {
     include_str!("../templates/weather/go-guest.go").replace("go-api/internal", "api/internal")
+}
+
+/// The `rusm.toml` for a mailer bridge app: an HTTP POST /send listener routing to `api`
+/// under the `notifier` profile, which grants the `mailer` bridge (default-deny, by name).
+fn mailer_rusm_toml() -> String {
+    format!(
+        "{TOML_HEADER}\
+         [node]\n\
+         listen = \"127.0.0.1:8080\"\n\
+         \n\
+         # The handler may import the `mailer` bridge — default-deny, granted by name.\n\
+         # Set RESEND_API_KEY in your environment or .env before serving.\n\
+         [capabilities.notifier]\n\
+         inherits = \"sandboxed\"\n\
+         bridges = [\"mailer\"]\n\
+         \n\
+         [[serve]]\n\
+         protocol = \"http\"\n\
+         listen = \"127.0.0.1:8080\"\n\
+         \n\
+         [serve.routes]\n\
+         \"POST /send\" = \"api#post\"\n\
+         \n\
+         [components.api]\n\
+         capability = \"notifier\"\n"
+    )
+}
+
+/// The Go guest for a mailer bridge app — calls `smtp.Send()` from the bridge-generated binding.
+fn mailer_go_guest(app: &NewApp) -> String {
+    MAILER_GO_GUEST.replace("api/internal/wit", &format!("{}/internal/wit", app.name))
 }
 
 const TOML_HEADER: &str =
@@ -878,6 +964,51 @@ fn bridge_readme(app: &NewApp) -> String {
     )
 }
 
+/// README for a mailer bridge app.
+fn mailer_readme(app: &NewApp) -> String {
+    let name = &app.name;
+    let (guest, call) = match app.lang {
+        Lang::TypeScript => (
+            "components/api/index.ts (TypeScript)",
+            "`mailer.send({ to, subject, body })` (typed global from the generated `bridges.d.ts`)",
+        ),
+        Lang::Go => (
+            "components/api/main.go (Go)",
+            "`smtp.Send(smtp.Message{...})` (the wit-bindgen-go binding)",
+        ),
+        _ => (
+            "components/api/src/lib.rs (Rust)",
+            "`crate::smtp::send(&msg)` (re-exported by `#[handlers(bridge=…)]`)",
+        ),
+    };
+    format!(
+        "# {name}\n\n\
+         A RUSM app with a **mailer bridge** — a TypeScript host bridge that sends\n\
+         transactional email via [Resend](https://resend.com). The guest calls\n\
+         it as a plain typed import; RUSM routes the call to the resident host actor.\n\n\
+         ## Run it\n\n\
+         ```sh\n\
+         # Set your Resend API key first:\n\
+         echo 'RESEND_API_KEY=re_...' >> .env\n\n\
+         rusm build      # generates the bridge glue + compiles the guest\n\
+         rusm serve      # runs the host binary; serves http://127.0.0.1:8080\n\n\
+         curl -X POST http://127.0.0.1:8080/send \\\n\
+           -H 'Content-Type: application/json' \\\n\
+           -d '{{\"to\":\"you@example.com\",\"subject\":\"Hello\",\"body\":\"<b>It works!</b>\"}}'\n\
+         ```\n\n\
+         ## Layout\n\n\
+         - `bridges/mailer/bridge.wit` — the bridge contract (the app's own WIT package).\n\
+         - `bridges/mailer/host.ts` — the TypeScript host impl (calls the Resend API).\n\
+         - `{guest}` — the guest handler; it calls the bridge via {call}.\n\
+         - `rusm.toml` — the app manifest.\n\n\
+         `rusm build` generates all Rust glue (`src/bindings.rs`, `src/bridges.rs`,\n\
+         `src/bridge_mailer_delegate.rs`, `src/main.rs`, `wit/`, `bridges.d.ts`) and\n\
+         bundles the TS runner to `wasm/bridge-mailer.js` — all git-ignored build output.\n\n\
+         Swap `noreply@example.com` in `bridges/mailer/host.ts` with a domain you own\n\
+         and have verified with Resend.\n",
+    )
+}
+
 /// A project name must be a single safe path segment (no separators, no `..`), so
 /// scaffolding can never escape the target directory.
 fn validate_name(name: &str) -> Result<()> {
@@ -1263,11 +1394,11 @@ mod tests {
             // Host-side files are the live example verbatim (single source).
             assert_eq!(
                 std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
-                include_str!("../../examples/custom-bridge/src/main.rs"),
+                include_str!("../../examples/weather-api/src/main.rs"),
             );
             assert_eq!(
                 std::fs::read_to_string(root.join("bridges/weather/host.rs")).unwrap(),
-                include_str!("../../examples/custom-bridge/bridges/weather/host.rs"),
+                include_str!("../../examples/weather-api/bridges/weather/host.rs"),
             );
 
             // The host crate pins the runtime crates + the exact wasmtime, named after the app.
@@ -1352,5 +1483,79 @@ mod tests {
             rusm_wasm_cargo.contains(&format!("wasmtime = \"{WASMTIME_VERSION}\"")),
             "WASMTIME_VERSION ({WASMTIME_VERSION}) is stale vs crates/rusm-wasm/Cargo.toml",
         );
+    }
+
+    /// `--template mailer` scaffolds a TS-hosted mailer bridge app in any guest language.
+    #[test]
+    fn mailer_template_scaffolds_the_bridge_app() {
+        assert_eq!(
+            parse(&["app", "--template", "mailer"]).unwrap().template,
+            Some(Template::Mailer)
+        );
+        for (lang, guest_src) in [
+            (Lang::TypeScript, "components/api/index.ts"),
+            (Lang::Rust, "components/api/src/lib.rs"),
+            (Lang::Go, "components/api/main.go"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let app = NewApp {
+                name: "notifier".into(),
+                lang,
+                protocol: Protocol::Http,
+                template: Some(Template::Mailer),
+                bridges: false,
+            };
+            scaffold(dir.path(), &app).unwrap();
+            let root = dir.path().join("notifier");
+            for rel in [
+                "bridges/mailer/bridge.wit",
+                "bridges/mailer/host.ts",
+                "rusm.toml",
+                guest_src,
+            ] {
+                assert!(root.join(rel).is_file(), "{lang:?}: missing {rel}");
+            }
+            let cfg =
+                NodeConfig::from_toml(&std::fs::read_to_string(root.join("rusm.toml")).unwrap())
+                    .expect("mailer rusm.toml parses");
+            assert_eq!(cfg.capabilities["notifier"].bridges, ["mailer"]);
+            assert!(cfg.components.contains_key("api"));
+            // The generated glue is git-ignored (produced by `rusm build`).
+            let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+            assert!(ignore.contains("/src/bindings.rs") && ignore.contains("/components/*/wit/"));
+        }
+    }
+
+    /// The `mailer` template files are vendored from `examples/mailer/` — byte-identical to
+    /// the live example. Regenerate with `make sync-templates`.
+    #[test]
+    fn vendored_mailer_template_matches_sources() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.join("..");
+        let pairs = [
+            (
+                "templates/mailer/bridge.wit",
+                "examples/mailer/bridges/mailer/bridge.wit",
+            ),
+            (
+                "templates/mailer/host.ts",
+                "examples/mailer/bridges/mailer/host.ts",
+            ),
+            (
+                "templates/mailer/ts-guest.ts",
+                "examples/mailer/components/api/index.ts",
+            ),
+        ];
+        for (vendored, source) in pairs {
+            let v = std::fs::read(manifest.join(vendored)).unwrap_or_else(|_| {
+                panic!("missing vendored {vendored} — run `make sync-templates`")
+            });
+            let s = std::fs::read(root.join(source))
+                .unwrap_or_else(|_| panic!("missing source {source}"));
+            assert_eq!(
+                v, s,
+                "{vendored} drifted from {source} — run `make sync-templates`"
+            );
+        }
     }
 }

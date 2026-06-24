@@ -87,7 +87,7 @@ stream / callback args / `.cast` / `.stop()`), binary (`Uint8Array`) messages, a
 [byte streams](/deep-dive/byte-streams) are all typed by the **`rusm-ts` package**.
 The Web APIs the runner polyfills (`URL`, `TextEncoder`, `Headers`,
 `ReadableStream`, `console`) are typed by the standard `DOM` lib — add it to your
-`tsconfig.json` (`"lib": ["ES2022", "DOM"]`). See the runnable `typescript` todo-board
+`tsconfig.json` (`"lib": ["ES2022", "DOM"]`). See the runnable [`typescript` todo-board](https://github.com/archan937/rusm/tree/main/examples/todo-board/typescript)
 example (its `store` service + `reporter` worker, with streaming + a callback) and
 `host_ts_component`.
 

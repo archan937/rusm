@@ -1,0 +1,19 @@
+# A mailer bridge app: a TypeScript host bridge that sends transactional email via Resend.
+# Set RESEND_API_KEY in your environment or .env file before serving.
+[node]
+listen = "127.0.0.1:8080"
+
+# The handler may import the `mailer` bridge — default-deny, granted by name.
+[capabilities.notifier]
+inherits = "sandboxed"
+bridges = ["mailer"]
+
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+
+[serve.routes]
+"POST /send" = "api#post"
+
+[components.api]
+capability = "notifier"

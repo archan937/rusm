@@ -78,5 +78,5 @@ rusm dev     # build + run, then watch ./components and reload on edit
 `rusm build` runs TinyGo for each Go component and generates the WIT bindings it needs;
 you write plain Go. To serve a Go component over HTTP/WS/SSE, see
 [Serve over HTTP, WebSocket & SSE](/build-an-app/serve-http). The runnable
-[`go`](https://github.com/archan937/rusm/tree/main/examples/go) todo-board example is the
+[`go`](https://github.com/archan937/rusm/tree/main/examples/todo-board/go) todo-board example is the
 same model wired end to end.

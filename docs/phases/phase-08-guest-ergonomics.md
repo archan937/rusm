@@ -82,7 +82,7 @@ JSON wire.
 ```sh
 # The TypeScript todo board — a `store` service + a `reporter` worker that drives it
 # through the typed client (call + cast + streaming + callback). Build with Bun, run on RUSM:
-cd examples/typescript
+cd examples/todo-board/typescript
 rusm build      # bun install (if needed) + bundle each components/<name>/index.ts
 rusm serve      # boots the resident reporter → logs the call / seed-callback / stream / cast
 rusm dev        # same, then watch & reload on edit

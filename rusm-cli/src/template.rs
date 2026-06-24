@@ -20,13 +20,15 @@ use std::path::PathBuf;
 use crate::scaffold::{package_json, Lang, SDK_VERSION};
 
 /// The template to scaffold. `TodoBoard` is the full multi-protocol app; `Weather` is the
-/// custom-bridge example (a native `weather` host function called from the guest). The
-/// `Weather` files come from the bridge scaffolder (`crate::scaffold::bridge_files`), not
-/// this module, so it isn't listed in `files()` below.
+/// custom-bridge example (a native `weather` host function called from the guest); `Mailer`
+/// is a TS-hosted bridge that sends transactional email via Resend. The `Weather` and
+/// `Mailer` files come from the bridge scaffolder (`crate::scaffold::bridge_files` /
+/// `mailer_bridge_files`), not this module, so neither is listed in `files()` below.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
     TodoBoard,
     Weather,
+    Mailer,
 }
 
 /// Parse the `--template` value.
@@ -34,7 +36,8 @@ pub fn parse_template(value: &str) -> Result<Template> {
     match value {
         "todo-board" | "todo" | "board" => Ok(Template::TodoBoard),
         "weather" | "bridge" | "custom-bridge" => Ok(Template::Weather),
-        other => bail!("unknown template `{other}` — templates are `todo-board` and `weather`"),
+        "mailer" | "email" => Ok(Template::Mailer),
+        other => bail!("unknown template `{other}` — templates are `todo-board`, `weather`, and `mailer`"),
     }
 }
 
@@ -211,12 +214,13 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    /// Every source file of `examples/<lang>` (minus build artifacts and the files this
-    /// module generates), as app-relative paths.
+    /// Every source file of `examples/todo-board/<lang>` (minus build artifacts and the files
+    /// this module generates), as app-relative paths.
     fn on_disk_sources(lang: &str, generated: &[&str]) -> BTreeSet<String> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("examples")
+            .join("todo-board")
             .join(lang);
         let mut set = BTreeSet::new();
         collect(&root, &root, &mut set);
@@ -264,7 +268,7 @@ mod tests {
             assert_eq!(
                 embedded,
                 on_disk_sources(lang, generated),
-                "{lang}: template file set drifted from examples/{lang}"
+                "{lang}: template file set drifted from examples/todo-board/{lang}"
             );
         }
     }
@@ -281,7 +285,7 @@ mod tests {
             ("rust", &[][..]),
             ("go", &[][..]),
         ] {
-            let examples = manifest.join("..").join("examples").join(lang);
+            let examples = manifest.join("..").join("examples").join("todo-board").join(lang);
             let templates = manifest.join("templates").join(lang);
 
             let mut ex = BTreeSet::new();
@@ -309,12 +313,12 @@ mod tests {
             }
             assert_eq!(
                 ex, tpl_mapped,
-                "{lang}: templates/{lang} file set drifted from examples/{lang} — run `make sync-templates`"
+                "{lang}: templates/{lang} file set drifted from examples/todo-board/{lang} — run `make sync-templates`"
             );
         }
     }
 
-    /// The `weather` custom-bridge scaffold template is vendored — from `examples/custom-bridge`
+    /// The `weather` custom-bridge scaffold template is vendored — from `examples/weather-api`
     /// (and the `rusm:runtime` guest WIT from `rusm-rs`) into `templates/weather/` — so it ships
     /// in the published `rusm-cli` tarball, where `../../examples/` and `../../crates/` don't
     /// exist. Each vendored file must stay byte-identical to its source, or a scaffolded app
@@ -330,27 +334,27 @@ mod tests {
         let pairs = [
             (
                 "templates/weather/host-main.rs",
-                "examples/custom-bridge/src/main.rs",
+                "examples/weather-api/src/main.rs",
             ),
             (
                 "templates/weather/bridge.wit",
-                "examples/custom-bridge/bridges/weather/bridge.wit",
+                "examples/weather-api/bridges/weather/bridge.wit",
             ),
             (
                 "templates/weather/host.rs",
-                "examples/custom-bridge/bridges/weather/host.rs",
+                "examples/weather-api/bridges/weather/host.rs",
             ),
             (
                 "templates/weather/rust-guest.rs",
-                "examples/custom-bridge/components/api/src/lib.rs",
+                "examples/weather-api/components/api/src/lib.rs",
             ),
             (
                 "templates/weather/ts-guest.ts",
-                "examples/custom-bridge/components/tsweather/index.ts",
+                "examples/weather-api/components/tsweather/index.ts",
             ),
             (
                 "templates/weather/go-guest.go",
-                "examples/custom-bridge/components/go-api/main.go",
+                "examples/weather-api/components/go-api/main.go",
             ),
         ];
         for (vendored, source) in pairs {

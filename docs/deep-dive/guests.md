@@ -9,9 +9,9 @@ idioms rather than a lowest-common-denominator API.
 
 > **Runnable examples.** The same five-component app (HTTP + SSE + WS + a service + a
 > worker) is written idiomatically in each language — read or run
-> [examples/typescript](https://github.com/archan937/rusm/tree/main/examples/typescript),
-> [examples/rust](https://github.com/archan937/rusm/tree/main/examples/rust), and
-> [examples/go](https://github.com/archan937/rusm/tree/main/examples/go), or scaffold your
+> [examples/todo-board/typescript](https://github.com/archan937/rusm/tree/main/examples/todo-board/typescript),
+> [examples/todo-board/rust](https://github.com/archan937/rusm/tree/main/examples/todo-board/rust), and
+> [examples/todo-board/go](https://github.com/archan937/rusm/tree/main/examples/todo-board/go), or scaffold your
 > own with `rusm new <name> --template todo-board --lang ts|rust|go`.
 
 ## Rust guests (`rusm-rs`)

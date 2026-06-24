@@ -79,5 +79,5 @@ wiring, no `allow-stdio`).
 
 To serve a Rust component over HTTP/WS/SSE, see
 [Serve HTTP](/build-an-app/serve-http). The runnable
-[`rust`](https://github.com/archan937/rusm/tree/main/examples/rust) todo-board example wires
+[`rust`](https://github.com/archan937/rusm/tree/main/examples/todo-board/rust) todo-board example wires
 the same model end to end.

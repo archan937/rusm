@@ -555,9 +555,9 @@ together.**
 > **Prefer a complete, runnable app?** The whole model on this page — HTTP CRUD, a live
 > SSE feed, WebSocket chat, and a service driven by a worker — is implemented as a
 > *collaborative todo board* in all three guest languages:
-> [TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript) ·
-> [Rust](https://github.com/archan937/rusm/tree/main/examples/rust) ·
-> [Go](https://github.com/archan937/rusm/tree/main/examples/go). Scaffold your own copy
+> [TypeScript](https://github.com/archan937/rusm/tree/main/examples/todo-board/typescript) ·
+> [Rust](https://github.com/archan937/rusm/tree/main/examples/todo-board/rust) ·
+> [Go](https://github.com/archan937/rusm/tree/main/examples/todo-board/go). Scaffold your own copy
 > with `rusm new <name> --template todo-board --lang ts|rust|go`. The snippets below are
 > the minimal form of what those apps wire together.
 

@@ -104,9 +104,9 @@ the `[[serve]]` and `[serve.routes]` schema is in the
 [configuration reference](/deep-dive/configuration).
 
 For a complete runnable app in each language, see the collaborative todo board —
-[TypeScript](https://github.com/archan937/rusm/tree/main/examples/typescript) ·
-[Rust](https://github.com/archan937/rusm/tree/main/examples/rust) ·
-[Go](https://github.com/archan937/rusm/tree/main/examples/go) — or scaffold one with
+[TypeScript](https://github.com/archan937/rusm/tree/main/examples/todo-board/typescript) ·
+[Rust](https://github.com/archan937/rusm/tree/main/examples/todo-board/rust) ·
+[Go](https://github.com/archan937/rusm/tree/main/examples/todo-board/go) — or scaffold one with
 `rusm new <name> --template todo-board`.
 
 > Phase 11. `rusm serve` hosts `rusm.toml [[serve]]` entries on real ports; 0.3.0 added

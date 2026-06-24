@@ -32,7 +32,7 @@ code* (no `wit-bindgen`/`export!`, no `Process` frame plumbing):
 | --- | --- | --- |
 | `--rust` / `--lang <ts\|rust\|go\|generic>` | TypeScript | `ts`, `rust`, `go`, `generic` |
 | `--protocol <p>` / `-p <p>` | `http` | `http`, `sse`, `ws` |
-| `--template <name>` | _(none)_ | `todo-board`, `weather` — see below |
+| `--template <name>` | _(none)_ | `todo-board`, `weather`, `mailer` — see below |
 | `--bridges` | _(off)_ | scaffold a **custom-bridge** app — see below |
 
 ```sh
@@ -77,7 +77,7 @@ What each cell scaffolds:
 ### `--template todo-board`
 
 Instead of the minimal single-component starter, scaffold a **full example app** — the
-collaborative todo board, the same one under [`examples/<lang>`](https://github.com/archan937/rusm/tree/main/examples):
+collaborative todo board, the same one under [`examples/todo-board/<lang>`](https://github.com/archan937/rusm/tree/main/examples/todo-board):
 five components (HTTP CRUD `api`, SSE `feed`, WebSocket `chat`, a `store` service, and a
 `reporter` worker) wired together by process-group tags, with a web UI. `--protocol` does
 not apply (the board brings its own listeners); choose the language with `--lang`.
@@ -102,6 +102,23 @@ rusm new forecast --template weather --lang ts    # a TS guest calling a native 
 rusm new forecast --template weather --lang go    # …or Go, or Rust (the default)
 cd forecast && rusm build && rusm serve
 ```
+
+### `--template mailer`
+
+Scaffold a **mailer bridge** app — a TypeScript host bridge that sends transactional email
+via [Resend](https://resend.com), registered as a resident actor. The same structure as
+`--template weather` but using a TS host (`host.ts`) instead of Rust, demonstrating the
+TS bridge path: `rusm build` generates the Rust delegation shim, the TS runner, and the
+host binary; the guest calls `mailer.send()` as a plain typed import. Set `RESEND_API_KEY`
+in `.env` before serving. `--lang` chooses the **guest** language — **TypeScript, Rust, or Go**.
+
+```sh
+rusm new notifier --template mailer --lang ts    # a TS guest calling the mailer bridge
+rusm new notifier --template mailer --lang go    # …or Go, or Rust
+cd notifier && rusm build && rusm serve
+```
+
+The live example lives at [`examples/mailer/`](https://github.com/archan937/rusm/tree/main/examples/mailer).
 
 ### `--bridges`
 
