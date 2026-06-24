@@ -230,9 +230,14 @@ source    = "https://cdn.example/api.wasm"
 - **The chosen code runs under the template's profile, always.** A guest picks *which*
   compiled component runs; it can never widen *what it's allowed to do*. That's the safety
   guarantee — host untrusted, generated, or per-tenant compiled code with confidence.
-- **Any source language.** Both `"wasm"` and `"wasi-cli"` compile to `wasm32-wasip2`; the
-  difference is the **WIT world** they implement. `"wasm"` plugins import `rusm:runtime` (the
-  actor ABI — spawn, send, receive). `"wasi-cli"` tools implement only `wasi:cli/run` — no
-  RUSM SDK, no actor wire, any standard CLI toolchain works.
+- **Any source language — really.** `"wasm"` plugins are RUSM actors: write them in Rust
+  (rusm-rs), TypeScript (rusm-ts), or Go (rusm-go), and they speak the full actor wire —
+  send messages, spawn siblings, use timers. `"wasi-cli"` goes further: that's a **standard**
+  `wasi:cli/run` component — any language or toolchain that targets `wasm32-wasip2` works,
+  with zero RUSM SDK. An existing command-line tool you already built, a Python script
+  compiled with Spin, a C utility via wasi-sdk — drop it in a template and it runs under
+  your declared capability profile, supervised, sandboxed, cached by content hash, the exact
+  same machinery as a native RUSM component. The only requirement is a `main`-equivalent
+  that returns.
 - **Full field reference:** every `source` / `dynamic` / `entry` / `dynamic_wasm_ttl_secs`
   rule is in the [configuration reference](/deep-dive/configuration#dynamic-bundle-sourcing).
