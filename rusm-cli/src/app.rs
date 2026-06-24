@@ -904,6 +904,10 @@ mod tests {
     const RS_WS_ECHO: &[u8] =
         include_bytes!("../../crates/rusm-wasm/tests/fixtures/rs_ws_echo.wasm");
 
+    // A Rust SSE-handler component fixture (streams events per connection).
+    const RS_SSE_FEED: &[u8] =
+        include_bytes!("../../crates/rusm-wasm/tests/fixtures/rs_sse_feed.wasm");
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn serves_a_websocket_component_on_a_real_port() {
         use futures_util::{SinkExt, StreamExt};
@@ -944,6 +948,85 @@ mod tests {
             b"ping",
             "the WS component echoed"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn serves_an_sse_component_on_a_real_port() {
+        // Full path: build_sse_server with a local .wasm actor component → SseServer.
+        // Verifies the end-to-end: bind, accept, hand-shake the HTTP upgrade, and emit
+        // the text/event-stream head — the minimal proof that the SSE path is wired up.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("wasm")).unwrap();
+        std::fs::write(dir.path().join("wasm/feed.wasm"), RS_SSE_FEED).unwrap();
+
+        let rt = Runtime::new();
+        let wasm = WasmRuntime::new(rt).unwrap();
+        let specs = vec![ServeSpec {
+            protocol: ServeProtocol::Sse,
+            listen: "127.0.0.1:0".to_string(),
+            routes: HashMap::new(),
+            component: Some("feed".to_string()),
+            source: None,
+            headers: Default::default(),
+            subprotocols: Vec::new(),
+            max_connections: None,
+            max_message_size: None,
+            allowed_origins: Vec::new(),
+            compression: false,
+            tls: None,
+        }];
+        let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
+            .await
+            .unwrap();
+        let addr = endpoints[0].addr;
+
+        let mut conn = TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /feed HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = vec![0u8; 1024];
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            conn.read(&mut buf),
+        )
+        .await
+        .expect("SSE response arrives in time")
+        .unwrap();
+        let head = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+        assert!(
+            head.contains("text/event-stream"),
+            "SSE response has correct content-type: {head}"
+        );
+    }
+
+    #[test]
+    fn build_sse_server_accepts_a_remote_bundle() {
+        // Covers the `Some(bundle)` branch of build_sse_server: a pre-fetched bundle
+        // (e.g. resolved from kv: or url:) is passed directly to sse_server_js without
+        // any file I/O — the returned SseServer is immediately valid.
+        let wasm = WasmRuntime::new(Runtime::new()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let result = build_sse_server(
+            dir.path(),
+            &wasm,
+            "feed",
+            Capabilities::nothing(),
+            Some(b"module.exports = {}".to_vec()),
+        );
+        assert!(result.is_ok(), "remote-bundle SSE path: {:?}", result.err());
+    }
+
+    #[test]
+    fn build_sse_server_reads_a_local_js_bundle() {
+        // Covers the `js_path.is_file()` branch: a pre-built .js artifact in wasm/
+        // is loaded into sse_server_js (the ts-worker SSE path, no Wasm compilation).
+        let wasm = WasmRuntime::new(Runtime::new()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let wasm_dir = dir.path().join("wasm");
+        std::fs::create_dir_all(&wasm_dir).unwrap();
+        std::fs::write(wasm_dir.join("feed.js"), b"module.exports.default = async function(){}").unwrap();
+        let result = build_sse_server(dir.path(), &wasm, "feed", Capabilities::nothing(), None);
+        assert!(result.is_ok(), "local js-bundle SSE path: {:?}", result.err());
     }
 
     // A `#[rusm_rs::handlers]` component: `fn hello(_, params)` + `fn echo(req, _)`.

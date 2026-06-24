@@ -403,7 +403,6 @@ pub fn gen_bridge_dts(bridges: &[BridgeSpec]) -> Result<String> {
 /// only the runner language differs. Written to `src/bridge_<ident>_delegate.rs` and
 /// mounted from `src/bridges.rs` via a `#[path]` attribute.
 pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<String> {
-    let name = &bridge.name;
     let api = crate::witmap::bridge_api(&bridge.wit())?;
     let runner_name = bridge.runner_name();
 
@@ -1202,15 +1201,6 @@ mod tests {
         }
     }
 
-    fn ts_bridge(root: &Path, name: &str) -> BridgeSpec {
-        let dir = root.join("bridges").join(name);
-        BridgeSpec {
-            name: name.into(),
-            host_impl: HostImpl::TypeScript(dir.join("host.ts")),
-            dir,
-        }
-    }
-
     #[test]
     fn gen_runner_bridges_gen_marshals_args_through_the_typed_binding() {
         let gen = gen_runner_bridges_gen(std::slice::from_ref(&weather_bridge())).unwrap();
@@ -1727,6 +1717,104 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("src/bridges.rs")).unwrap(),
             include_str!("../../examples/weather-api/rust/src/bridges.rs"),
+        );
+    }
+
+    /// Plant a copy of the `weather` bridge with `host.ts` (TypeScript host) in `root`.
+    fn weather_ts_bridge(root: &Path) {
+        let dir = root.join("bridges/weather");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
+            dir.join("bridge.wit"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("host.ts"), "// TS host impl\n").unwrap();
+    }
+
+    /// Plant a copy of the `weather` bridge with `host.go` (Go host) in `root`.
+    fn weather_go_bridge(root: &Path) {
+        let dir = root.join("bridges/weather");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
+            dir.join("bridge.wit"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("host.go"), "// Go host impl\n").unwrap();
+    }
+
+    #[test]
+    fn generate_host_files_writes_ts_runner_and_serde_bindings_for_a_ts_bridge() {
+        // TS host (host.ts) → needs_delegation=true branch:
+        //   - bindings.rs gets the serde-derive variant (BINDINGS_RS_SERDE)
+        //   - a delegation shim is written (`src/bridge_weather_delegate.rs`)
+        //   - bridges/weather/_runner.ts is generated (the dispatch loop)
+        //   - src/main.rs is auto-generated (no author main.rs present)
+        let root = app_dir("gen-ts");
+        weather_ts_bridge(&root);
+
+        let bridges = generate_host_files(&root).unwrap();
+        assert_eq!(bridges.len(), 1);
+
+        let bindings = std::fs::read_to_string(root.join("src/bindings.rs")).unwrap();
+        assert!(
+            bindings.contains("serde"),
+            "TS bridge → serde derives in bindings.rs: {bindings}"
+        );
+        assert!(
+            root.join("src/bridge_weather_delegate.rs").is_file(),
+            "delegation shim must be written for TS host"
+        );
+        let runner = std::fs::read_to_string(root.join("bridges/weather/_runner.ts")).unwrap();
+        assert!(
+            runner.contains("Process.register"),
+            "_runner.ts dispatch loop generated"
+        );
+        assert!(
+            root.join("src/main.rs").is_file(),
+            "auto-generated main.rs written when none exists"
+        );
+    }
+
+    #[test]
+    fn generate_host_files_writes_go_runner_and_creates_go_mod_when_absent() {
+        // Go host (host.go) → Go branch in generate_host_files:
+        //   - gen_go_bridge_runner produces the Go dispatch runner
+        //   - go.mod is created (because it doesn't pre-exist)
+        let root = app_dir("gen-go");
+        weather_go_bridge(&root);
+
+        generate_host_files(&root).unwrap();
+
+        assert!(
+            root.join("bridges/weather/_runner.go").is_file(),
+            "Go dispatch runner written"
+        );
+        let gomod = root.join("bridges/weather/go.mod");
+        assert!(gomod.is_file(), "go.mod created when absent");
+        assert!(
+            std::fs::read_to_string(&gomod).unwrap().contains("module"),
+            "go.mod has a module declaration"
+        );
+    }
+
+    #[test]
+    fn generate_host_files_does_not_overwrite_an_existing_go_mod() {
+        // If bridges/weather/go.mod already exists (user has custom deps), it must be
+        // preserved verbatim — generate_host_files skips writing it.
+        let root = app_dir("gen-go-existing-mod");
+        weather_go_bridge(&root);
+        let gomod_path = root.join("bridges/weather/go.mod");
+        std::fs::create_dir_all(root.join("bridges/weather")).unwrap();
+        std::fs::write(&gomod_path, "module custom.example/my-bridge\n").unwrap();
+
+        generate_host_files(&root).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&gomod_path).unwrap(),
+            "module custom.example/my-bridge\n",
+            "pre-existing go.mod must not be overwritten"
         );
     }
 

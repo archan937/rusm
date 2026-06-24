@@ -571,6 +571,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn surfaces_a_pong_control_frame() {
+        use tokio::io::AsyncWriteExt;
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        let pong = masked_client_frame(OpCode::Control(Control::Pong), false, b"data");
+        client.write_all(&pong).await.unwrap();
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap(),
+            WsMessage::Pong(b"data".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_reserved_control_opcode() {
+        use tokio::io::AsyncWriteExt;
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        let frame = masked_client_frame(OpCode::Control(Control::Reserved(0xB)), false, b"");
+        client.write_all(&frame).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "reserved control opcode must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_reserved_data_opcode() {
+        use tokio::io::AsyncWriteExt;
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        let frame = masked_client_frame(OpCode::Data(Data::Reserved(0x3)), false, b"");
+        client.write_all(&frame).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "reserved data opcode must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_new_data_frame_mid_fragment() {
+        use tokio::io::AsyncWriteExt;
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        // Start a fragment (non-final Text frame).
+        let mut first = masked_client_frame(OpCode::Data(Data::Text), false, b"hello");
+        first[0] &= 0x7F; // clear FIN bit
+        client.write_all(&first).await.unwrap();
+        // Send another non-final data frame before completing the fragment.
+        let mut second = masked_client_frame(OpCode::Data(Data::Binary), false, b"world");
+        second[0] &= 0x7F;
+        client.write_all(&second).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "new data frame mid-fragment must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_compressed_frame_when_deflate_not_negotiated() {
+        use tokio::io::AsyncWriteExt;
+        // deflate=false: connection did NOT negotiate permessage-deflate.
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        // RSV1=true signals compression; without deflate negotiation this is invalid.
+        let frame = masked_client_frame(OpCode::Data(Data::Binary), true, b"data");
+        client.write_all(&frame).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "compressed frame without deflate negotiation must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_continuation_without_a_start_frame() {
+        use tokio::io::AsyncWriteExt;
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        let cont = masked_client_frame(OpCode::Data(Data::Continue), false, b"orphan");
+        client.write_all(&cont).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "continuation without a start frame must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_rsv1_on_a_continuation_frame() {
+        use tokio::io::AsyncWriteExt;
+        // deflate=true so the connection IS negotiated; the initial frame has rsv1=false.
+        let (_sink, mut stream, mut client) = duplex_conn(true).await;
+        let mut first = masked_client_frame(OpCode::Data(Data::Binary), false, b"hello");
+        first[0] &= 0x7F; // clear FIN — this is a non-final, uncompressed start frame
+        client.write_all(&first).await.unwrap();
+        // Continuation with RSV1 set is invalid — RSV1 belongs only on the first data frame.
+        let bad_cont = masked_client_frame(OpCode::Data(Data::Continue), true, b"world");
+        client.write_all(&bad_cont).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "RSV1 set on continuation must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_non_final_control_frame() {
+        use tokio::io::AsyncWriteExt;
+        let (_sink, mut stream, mut client) = duplex_conn(false).await;
+        // Control frames (RFC 6455 §5.5) must not be fragmented (fin=0 is invalid).
+        let mut ping = masked_client_frame(OpCode::Control(Control::Ping), false, b"hi");
+        ping[0] &= 0x7F; // clear the FIN bit
+        client.write_all(&ping).await.unwrap();
+        assert!(
+            stream.recv().await.unwrap().is_err(),
+            "non-final control frame must be a protocol error"
+        );
+    }
+
+    #[tokio::test]
     async fn surfaces_ping_and_close_control_frames() {
         use tokio::io::AsyncWriteExt;
         let (_sink, mut stream, mut client) = duplex_conn(false).await;
