@@ -46,6 +46,7 @@ crates/rusm-wasm/tests/fixtures/pubsub-broker/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-flaky/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-guest/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-kv/wit/world.wit:guest
+crates/rusm-wasm/tests/fixtures/rs-call-timeout/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-service/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-sup/wit/world.wit:guest
 crates/rusm-wasm/tests/fixtures/rs-tag/wit/world.wit:guest
