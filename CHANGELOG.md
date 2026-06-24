@@ -6,6 +6,47 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.5.0] — 2026-06-24
+
+The bridge authoring model is now three-way: **Rust**, **TypeScript**, and **Go** bridge
+hosts are all first-class. A bridge's host language is now a per-app choice, not a platform
+constraint — Rust for zero-overhead, TS or Go for familiar toolchains and external-API bridges.
+
+### Added
+- **TypeScript bridge host (`host.ts`)** — write a bridge as a plain TS file; `rusm build`
+  generates the Rust delegation shim and TS runner (a resident actor). Each call crosses the
+  actor wire (~1–10 µs). No Rust required.
+- **Go bridge host (`host.go`)** — full parity with `host.ts`; TinyGo compiles
+  `bridges/<name>/` to `wasm/bridge-<name>.wasm`. WIT record params arrive as
+  `json.RawMessage` for idiomatic Go unmarshaling.
+- **`--template mailer`** — scaffold a complete transactional email bridge (Resend API) in
+  all three bridge-host languages + all three guest languages.
+  `rusm new <name> --template mailer`.
+- **Three-flavour example groups** — `examples/weather-api/` and `examples/mailer/` each
+  split into `rust/`, `typescript/`, and `go/` subdirectories, one standalone app per bridge
+  host language. Each flavour has its own README, `.gitignore`, and `rusm.toml`.
+- **Processes & messaging docs** — six new reference pages: *Spawn & lifecycle*, *Timers*,
+  *Links & monitors*, *Supervision*, *Pub/sub with tags*, *Powered by Tokio*.
+- **Serving docs revised** — HTTP, SSE, and WebSocket pages rewritten with concrete
+  multi-component examples, `[serve.routes]`-first framing, and the bidirectional WS model.
+- **Bridge authoring docs** — `add-your-own-functions.md` covers all three host languages
+  with a host-language comparison table and `how-it-builds` detail for each.
+- **Example READMEs** — comprehensive audit: missing READMEs added (`todo-board/`,
+  `url-shortener/{typescript,rust,go}/`), all flavour READMEs verified for accuracy,
+  consistency enforced across families.
+
+### Fixed
+- **`host.ts` delegation protocol** — three correctness fixes: envelope framing,
+  return-value serialisation, and actor lifecycle on bridge-host shutdown.
+- **Stale path references** — `examples/custom-bridge/` refs replaced by
+  `examples/weather-api/`; old top-level `examples/{typescript,rust,go}/` refs replaced
+  by `examples/todo-board/<lang>/`.
+- **Mailer Go module path** — template and scaffold always emit `api/internal/…` (Go module
+  is always `module api`), not the app-name-prefixed path.
+- **`SDK_VERSION` in scaffold** — `rusm new` now generates `rusm-ts@^0.5.0`,
+  `rusm-rs = "0.5.0"`, `rusm-go v0.5.0` instead of the stale `0.4.0` that was pinned.
+- **`url-shortener/go` dep** — `go.mod` was on `rusm-go v0.4.0`; updated to `v0.5.0`.
+
 ## [0.4.2] — 2026-06-23
 
 Closes two guest-SDK gaps that forced apps to hand-roll platform plumbing (raw wire / raw

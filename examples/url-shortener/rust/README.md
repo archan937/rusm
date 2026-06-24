@@ -23,7 +23,7 @@ and `expand` — routed declaratively by `[serve.routes]` in `rusm.toml`. Each r
 its own sandboxed Wasm instance; the `kv` bucket persists the `code → URL` map across restarts
 (`links.redb`).
 
-Uses **published** deps (`rusm-rs = "0.4.2"`) — copy this directory out of the repo and it
+Uses **published** deps (`rusm-rs = "0.5.0"`) — copy this directory out of the repo and it
 builds on its own.
 
 See [`../README.md`](../README.md) for the TypeScript and Go variants.

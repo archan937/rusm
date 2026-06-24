@@ -244,13 +244,16 @@ Not crates: the dashboard at `bench/dashboard` (Bun/React); docs under `docs/`. 
 
 ## Examples
 
-`examples/` holds ready-to-run programs in three groups:
+`examples/` holds ready-to-run programs:
 
-| Group | What it is |
+| Example | What it is |
 | --- | --- |
-| [`todo-board/typescript`](examples/todo-board/typescript) · [`todo-board/rust`](examples/todo-board/rust) · [`todo-board/go`](examples/todo-board/go) | **Apps — start here.** The same collaborative TODO board (HTTP + SSE + WS + a service), one per guest language. `cd examples/todo-board/<lang> && rusm build && rusm serve`. |
+| [`url-shortener/`](examples/url-shortener) | **Smallest complete app** — one handler, durable `kv`, in TypeScript, Rust, and Go. Start here. |
+| [`todo-board/`](examples/todo-board) | **Full app** — HTTP + SSE + WS + a service + a worker, one per guest language. |
+| [`weather-api/`](examples/weather-api) · [`mailer/`](examples/mailer) | **Custom bridges** — a typed native function your guests call as an import, in all three bridge-host languages (Rust/TS/Go). |
+| [`dynamic-wasm/`](examples/dynamic-wasm) | **Runtime-chosen code** — compiled Wasm components loaded at request time from a content-addressed cache. |
 | [`embedding/`](examples/embedding) | **Use RUSM as a Rust library** — host components, embed a node, run a TS guest, build a cluster. |
-| [`benchmarks/`](examples/benchmarks) | **Performance, measured not asserted** — HTTP/WS/SSE serving, connection scale, cross-node fan-out, against real baselines. |
+| [`benchmarks/`](examples/benchmarks) | **Performance, measured not asserted** — HTTP/WS/SSE, connection scale, cross-node fan-out. |
 
 See [`examples/README.md`](examples/README.md) for the full index and end-to-end recipes.
 

@@ -21,7 +21,7 @@ curl -i 127.0.0.1:8080/1   # → 302 location: https://rusm.dev/docs
 own sandboxed Wasm instance; the `kv` bucket persists the `code → URL` map across restarts
 (`links.redb`).
 
-Uses **published** deps (`rusm-ts@^0.4.2`) — copy this directory out of the repo and it
+Uses **published** deps (`rusm-ts@^0.5.0`) — copy this directory out of the repo and it
 builds on its own.
 
 See [`../README.md`](../README.md) for the Rust and Go variants.

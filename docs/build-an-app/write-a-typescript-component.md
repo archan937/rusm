@@ -64,7 +64,7 @@ The `Process` API and `spawn` come from the **`rusm-ts` package** — add it to 
 app's `package.json`:
 
 ```json
-{ "dependencies": { "rusm-ts": "^0.4.2" } }
+{ "dependencies": { "rusm-ts": "^0.5.0" } }
 ```
 
 `rusm build` runs `bun install` (if needed), then detects each `index.ts` and runs

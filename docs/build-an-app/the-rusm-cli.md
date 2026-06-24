@@ -14,7 +14,7 @@ rusm attach        # live REPL into a running node
 Config comes from `rusm.toml` (see **[configuration](/deep-dive/configuration)**);
 the commands that start a node also accept the flags in the last section.
 
-## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board|weather] [--bridges]`
+## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board|weather|mailer] [--bridges]`
 
 Scaffold a new app in `./<name>` — a component, a `rusm.toml` with a `[[serve]]`
 entry, `.gitignore`, and a README. From nothing to a live server in three commands.
@@ -250,4 +250,4 @@ Two flags are **global** — they work with any command, or none:
 | Flag | Meaning |
 | --- | --- |
 | `-h`, `--help` | The top-level help, or a command's (`rusm <command> --help`). |
-| `-V`, `--version` | Print the `rusm` version (e.g. `rusm 0.4.2`). |
+| `-V`, `--version` | Print the `rusm` version (e.g. `rusm 0.5.0`). |
