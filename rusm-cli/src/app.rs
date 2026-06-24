@@ -985,13 +985,10 @@ mod tests {
             .await
             .unwrap();
         let mut buf = vec![0u8; 1024];
-        let n = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            conn.read(&mut buf),
-        )
-        .await
-        .expect("SSE response arrives in time")
-        .unwrap();
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), conn.read(&mut buf))
+            .await
+            .expect("SSE response arrives in time")
+            .unwrap();
         let head = String::from_utf8_lossy(&buf[..n]).to_lowercase();
         assert!(
             head.contains("text/event-stream"),
@@ -1024,9 +1021,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wasm_dir = dir.path().join("wasm");
         std::fs::create_dir_all(&wasm_dir).unwrap();
-        std::fs::write(wasm_dir.join("feed.js"), b"module.exports.default = async function(){}").unwrap();
+        std::fs::write(
+            wasm_dir.join("feed.js"),
+            b"module.exports.default = async function(){}",
+        )
+        .unwrap();
         let result = build_sse_server(dir.path(), &wasm, "feed", Capabilities::nothing(), None);
-        assert!(result.is_ok(), "local js-bundle SSE path: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "local js-bundle SSE path: {:?}",
+            result.err()
+        );
     }
 
     // A `#[rusm_rs::handlers]` component: `fn hello(_, params)` + `fn echo(req, _)`.
