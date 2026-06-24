@@ -284,12 +284,12 @@ fn has_routes(app: &NewApp) -> bool {
 /// guards it against drift.
 const WASMTIME_VERSION: &str = "45.0.1";
 
-// The host-side custom-bridge files are the live `examples/weather-api` (the single source,
+// The host-side custom-bridge files are the live `examples/weather-api/rust` (the single source,
 // proven end to end), **vendored** into `templates/weather/` so they ship in the published
 // tarball (the workspace `../../examples/` isn't packaged) — `make sync-templates` keeps them
-// byte-identical to the example, guarded by a drift test. A scaffolded app is exactly the
-// example: the host `main.rs`, the bridge's contract + impl, and the Rust guest. (The Go guest
-// differs only by its module path — see `go_bridge_guest`.)
+// byte-identical to the example, guarded by `vendored_weather_template_matches_sources`. A
+// scaffolded app is exactly the example: the host `main.rs`, the bridge's contract + impl, and
+// the guest (all three languages share the template; Go uses `api/internal` directly).
 const BRIDGE_HOST_MAIN: &str = include_str!("../templates/weather/host-main.rs");
 const BRIDGE_WIT: &str = include_str!("../templates/weather/bridge.wit");
 const BRIDGE_HOST_IMPL: &str = include_str!("../templates/weather/host.rs");
@@ -480,10 +480,10 @@ fn bridge_rusm_toml(lang: Lang) -> String {
     )
 }
 
-/// The Go guest, single-sourced from the live example and retargeted from its `go-api` module
-/// to the scaffold's `api` module (the only difference — the logic is identical).
+/// The Go guest — verbatim from the template (uses `api/internal`, the canonical module name
+/// `go_mod()` emits; the logic is identical to the weather-api/go example).
 fn go_bridge_guest() -> String {
-    include_str!("../templates/weather/go-guest.go").replace("go-api/internal", "api/internal")
+    include_str!("../templates/weather/go-guest.go").to_string()
 }
 
 /// The `rusm.toml` for a mailer bridge app: an HTTP POST /send listener routing to `api`
@@ -1396,11 +1396,11 @@ mod tests {
             // Host-side files are the live example verbatim (single source).
             assert_eq!(
                 std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
-                include_str!("../../examples/weather-api/src/main.rs"),
+                include_str!("../../examples/weather-api/rust/src/main.rs"),
             );
             assert_eq!(
                 std::fs::read_to_string(root.join("bridges/weather/host.rs")).unwrap(),
-                include_str!("../../examples/weather-api/bridges/weather/host.rs"),
+                include_str!("../../examples/weather-api/rust/bridges/weather/host.rs"),
             );
 
             // The host crate pins the runtime crates + the exact wasmtime, named after the app.
@@ -1464,14 +1464,14 @@ mod tests {
         }
     }
 
-    /// The Go guest is the example's, retargeted to the scaffold's `api` module.
+    /// The Go guest template uses the `api` module name (from `go_mod()`), not a custom name.
     #[test]
-    fn go_bridge_guest_is_retargeted_from_the_example() {
+    fn go_bridge_guest_uses_api_module() {
         let go = go_bridge_guest();
         assert!(go.contains("\"api/internal/wit/weather/bridge/forecast\""));
         assert!(
             !go.contains("go-api/internal"),
-            "the go-api module path is retargeted"
+            "template must not contain the old go-api module path"
         );
         assert!(go.contains("forecast.Lookup"));
     }
@@ -1559,15 +1559,15 @@ mod tests {
         let pairs = [
             (
                 "templates/mailer/bridge.wit",
-                "examples/mailer/bridges/mailer/bridge.wit",
+                "examples/mailer/typescript/bridges/mailer/bridge.wit",
             ),
             (
                 "templates/mailer/host.ts",
-                "examples/mailer/bridges/mailer/host.ts",
+                "examples/mailer/typescript/bridges/mailer/host.ts",
             ),
             (
                 "templates/mailer/ts-guest.ts",
-                "examples/mailer/components/api/index.ts",
+                "examples/mailer/typescript/components/api/index.ts",
             ),
         ];
         for (vendored, source) in pairs {

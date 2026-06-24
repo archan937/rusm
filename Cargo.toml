@@ -20,20 +20,22 @@ members = [
     "bench/rusm-bench",
     "bench/rusm-loadtest",
     "rusm-cli",
-    # A worked custom-bridge host crate — its compilation proves the generated host-side
+    # Worked custom-bridge host crates — their compilation proves the generated host-side
     # pattern (the bindgen world + bindings + the host.rs convention) is valid Rust against
-    # the real rusm-wasm/rusm-cli API. Its guest component is wasm-only (excluded below).
-    "examples/weather-api",
+    # the real rusm-wasm/rusm-cli API. Their guest components are wasm-only (excluded below).
+    "examples/weather-api/rust",
+    "examples/mailer/rust",
 ]
 # Guest test fixtures are wasm-only crates built separately for wasm32-wasip2 and
 # checked in as prebuilt .wasm; they must not build for the host target. `rusm-rs`
 # is the wasm-only Rust *guest* crate (depended on by guests, not the host). The
-# weather-api example's guest component is likewise wasm-only.
+# weather-api and mailer example guest components are likewise wasm-only.
 exclude = [
     "crates/rusm-wasm/tests/fixtures",
     "crates/rusm-rs",
     "crates/rusm-rs-macros",
-    "examples/weather-api/components",
+    "examples/weather-api/rust/components",
+    "examples/mailer/rust/components",
 ]
 
 [workspace.package]

@@ -1,0 +1,22 @@
+# Host binary for the mailer Rust-bridge app: registers bridges/mailer/host.rs and serves
+# the manifest. `rusm build` (re)generates src/{bindings,bridges}.rs + wit/ from bridges/;
+# the generated files are committed so the crate compiles in the workspace.
+[package]
+name = "mailer-rust"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "mailer-rust"
+path = "src/main.rs"
+
+[dependencies]
+rusm-cli = { path = "../../../rusm-cli" }
+rusm-wasm = { path = "../../../crates/rusm-wasm" }
+rusm-node = { path = "../../../crates/rusm-node" }
+wasmtime = "45.0.1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"

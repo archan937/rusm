@@ -1,0 +1,21 @@
+# Guest component: per-request HTTP handler calling the weather bridge.
+# wasm-only — excluded from the host workspace; built separately for wasm32-wasip2.
+[workspace]
+
+[package]
+name = "api"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "api"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../../crates/rusm-rs" }
+wit-bindgen = "0.46"

@@ -1,0 +1,15 @@
+// The mailer bridge's contract — the app's OWN WIT package, the single source both the guest
+// binding and the host impl derive from. Self-contained, resolves without vendoring rusm:runtime.
+package app:mailer@0.1.0;
+
+interface smtp {
+    /// The email payload a guest sends through the bridge.
+    record message {
+        to:      string,
+        subject: string,
+        body:    string,
+    }
+
+    /// Deliver a transactional email. Returns true if the provider accepted it.
+    send: func(msg: message) -> bool;
+}

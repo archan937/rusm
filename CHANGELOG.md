@@ -112,7 +112,7 @@ whole workspace + the `rusm-ts` package move to **0.4.0** in lock-step; `rusm-go
   guest path is now supported; the per-app js-runner is rebuilt with the bridge compiled in).
 - **Docs & examples** — a task-oriented *Build an app* guide rebuilt around a runnable
   **URL-shortener** example (TypeScript/Rust/Go), an *Add your own functions* custom-bridges
-  page, and the `examples/weather-api` weather app.
+  page, and the `examples/weather-api/rust` weather app.
 
 ### Changed
 - **Internal `bridges/` single-source layout** — the host's built-in capabilities (`kv`,

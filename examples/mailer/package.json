@@ -1,8 +1,0 @@
-{
-  "name": "mailer",
-  "version": "0.1.0",
-  "private": true,
-  "devDependencies": {
-    "rusm-ts": "^0.4.2"
-  }
-}

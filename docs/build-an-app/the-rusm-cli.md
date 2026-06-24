@@ -118,7 +118,7 @@ rusm new notifier --template mailer --lang go    # …or Go, or Rust
 cd notifier && rusm build && rusm serve
 ```
 
-The live example lives at [`examples/mailer/`](https://github.com/archan937/rusm/tree/main/examples/mailer).
+The live examples live at [`examples/mailer/`](https://github.com/archan937/rusm/tree/main/examples/mailer) — three flavours, one per bridge host language.
 
 ### `--bridges`
 

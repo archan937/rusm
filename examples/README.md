@@ -41,17 +41,18 @@ server.
 
 ### Native functions — a [weather bridge](./weather-api/)
 
-Give every guest a typed function backed by host Rust. A `weather` bridge
-(`bridges/weather/{bridge.wit,host.rs}`) is called from Rust, Go, **and** TypeScript guests as
-an ordinary import — RUSM's answer to a capability provider, compiled-in and typed. Scaffold
-your own with `rusm new <name> --bridges`.
+Three standalone apps showing the same `weather` bridge implemented in each host language:
+[`rust/`](./weather-api/rust/) (native ABI), [`typescript/`](./weather-api/typescript/) (actor
+round-trip), and [`go/`](./weather-api/go/) (actor round-trip). The bridge WIT is identical
+across all three; guests call it as an ordinary typed import. Scaffold your own with
+`rusm new <name> --bridges` or `--template weather`.
 
 ### Transactional email — a [mailer bridge](./mailer/)
 
-A TypeScript host bridge that calls the [Resend](https://resend.com) API as a resident actor.
-The TS guest calls `mailer.send({ to, subject, body })` as a typed import; `rusm build`
-generates the Rust delegation shim and the TS runner. Scaffold your own with
-`rusm new <name> --template mailer`.
+Three standalone apps showing the same `mailer` bridge (Resend email) in each host language:
+[`rust/`](./mailer/rust/) (`reqwest`), [`typescript/`](./mailer/typescript/) (`fetch`), and
+[`go/`](./mailer/go/) (`net/http`). Set `RESEND_API_KEY` in `.env` before serving. Scaffold
+your own with `rusm new <name> --template mailer`.
 
 ### Runtime-chosen code — [dynamic WASM plugins](./dynamic-wasm/)
 

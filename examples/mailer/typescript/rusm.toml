@@ -1,0 +1,20 @@
+# mailer/typescript — TypeScript bridge host + TypeScript HTTP guest.
+# Set RESEND_API_KEY in .env before serving.
+# Run: rusm build && rusm serve
+# Test: curl -X POST http://127.0.0.1:8080/send -H 'Content-Type: application/json' -d '{"to":"you@example.com","subject":"Hi","body":"<b>hello</b>"}'
+[node]
+listen = "127.0.0.1:8080"
+
+[capabilities.notifier]
+inherits = "sandboxed"
+bridges = ["mailer"]
+
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+
+[serve.routes]
+"POST /send" = "api#post"
+
+[components.api]
+capability = "notifier"

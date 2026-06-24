@@ -1,0 +1,20 @@
+# weather-api/go — Go bridge host + Go HTTP guest.
+# Run: rusm build && rusm serve
+# Test: curl http://127.0.0.1:8080/forecast/Amsterdam
+[node]
+listen = "127.0.0.1:8080"
+
+[capabilities.forecaster]
+inherits = "sandboxed"
+bridges = ["weather"]
+
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+
+[serve.routes]
+"GET /forecast/:city" = "api#forecast"
+"GET /detailed/:city" = "api#detailed"
+
+[components.api]
+capability = "forecaster"

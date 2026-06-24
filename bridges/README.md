@@ -126,13 +126,17 @@ and `bridges/<name>/host.rs` (the impl, in the convention above) — plus a one-
 `rusm serve` then runs that host binary (which calls `rusm_cli::host::serve(.., bridges::extend)`)
 — so the bridge impls are compiled in, typed end to end. The author owns `bridges/<name>/`,
 `src/main.rs`, `Cargo.toml`, `rusm.toml`; everything in step 2 is generated (regenerated each
-build, never hand-edited). Worked example: **`examples/weather-api/`** (a `weather` bridge;
+build, never hand-edited). Worked example: **`examples/weather-api/rust/`** (a `weather` bridge;
 its host crate compiles in the workspace as the host-side proof, and a drift test guarantees
 the committed generated files are byte-identical to what `rusm build` emits).
 
-> **Status.** Live across **all three guest languages** — a custom bridge is callable from
-> Rust, Go, *and* TypeScript guests, proven end to end on `examples/weather-api` (one app,
-> one `weather` bridge, three guests):
+> **Status.** Live across **all three bridge host languages and guest languages** — see
+> `examples/weather-api/` (three standalone apps, one per bridge host language):
+> - **`rust/`** — `host.rs`, Rust guest over HTTP.
+> - **`typescript/`** — `host.ts`, TS guest over WebSocket.
+> - **`go/`** — `host.go`, Go guest over HTTP.
+>
+> Proven end to end on `examples/weather-api/rust` (one `weather` bridge, three guests):
 > - **Rust** — `#[rusm_rs::handlers(bridge = "ns:pkg/iface@ver")]`, re-exported at `crate::<iface>`;
 >   `curl /forecast/:city`.
 > - **Go** — `web.NewHandlers()` over the `wit-bindgen-go`-generated package; `rusm build` emits a

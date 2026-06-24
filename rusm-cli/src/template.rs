@@ -334,27 +334,27 @@ mod tests {
         let pairs = [
             (
                 "templates/weather/host-main.rs",
-                "examples/weather-api/src/main.rs",
+                "examples/weather-api/rust/src/main.rs",
             ),
             (
                 "templates/weather/bridge.wit",
-                "examples/weather-api/bridges/weather/bridge.wit",
+                "examples/weather-api/rust/bridges/weather/bridge.wit",
             ),
             (
                 "templates/weather/host.rs",
-                "examples/weather-api/bridges/weather/host.rs",
+                "examples/weather-api/rust/bridges/weather/host.rs",
             ),
             (
                 "templates/weather/rust-guest.rs",
-                "examples/weather-api/components/api/src/lib.rs",
+                "examples/weather-api/rust/components/api/src/lib.rs",
             ),
             (
                 "templates/weather/ts-guest.ts",
-                "examples/weather-api/components/tsweather/index.ts",
+                "examples/weather-api/typescript/components/api/index.ts",
             ),
             (
                 "templates/weather/go-guest.go",
-                "examples/weather-api/components/go-api/main.go",
+                "examples/weather-api/go/components/api/main.go",
             ),
         ];
         for (vendored, source) in pairs {

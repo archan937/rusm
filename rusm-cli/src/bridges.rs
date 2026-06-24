@@ -1185,7 +1185,7 @@ mod tests {
 
     /// The example's weather bridge spec, for the TS-codegen tests.
     fn weather_bridge() -> BridgeSpec {
-        let dir = PathBuf::from("../examples/weather-api/bridges/weather");
+        let dir = PathBuf::from("../examples/weather-api/rust/bridges/weather");
         BridgeSpec {
             name: "weather".into(),
             host_impl: HostImpl::Rust(dir.join("host.rs")),
@@ -1232,7 +1232,7 @@ mod tests {
         let bridge = BridgeSpec {
             name: "weather".into(),
             host_impl: HostImpl::TypeScript(PathBuf::from("bridges/weather/host.ts")),
-            dir: PathBuf::from("../examples/weather-api/bridges/weather"),
+            dir: PathBuf::from("../examples/weather-api/rust/bridges/weather"),
         };
         let contract = parse_contract(&bridge.wit()).unwrap();
         let shim = gen_delegate_host(&bridge, &contract).unwrap();
@@ -1270,7 +1270,7 @@ mod tests {
         let bridge = BridgeSpec {
             name: "weather".into(),
             host_impl: HostImpl::Go(PathBuf::from("bridges/weather/host.go")),
-            dir: PathBuf::from("../examples/weather-api/bridges/weather"),
+            dir: PathBuf::from("../examples/weather-api/rust/bridges/weather"),
         };
         let contract = parse_contract(&bridge.wit()).unwrap();
         let shim = gen_delegate_host(&bridge, &contract).unwrap();
@@ -1515,7 +1515,7 @@ mod tests {
         let bridge = BridgeSpec {
             name: "weather".into(),
             host_impl: HostImpl::Go(PathBuf::from("bridges/weather/host.go")),
-            dir: PathBuf::from("../examples/weather-api/bridges/weather"),
+            dir: PathBuf::from("../examples/weather-api/rust/bridges/weather"),
         };
         let runner = gen_go_bridge_runner(&bridge).unwrap();
         assert!(runner.contains("GENERATED"), "header: {runner}");
@@ -1595,7 +1595,7 @@ mod tests {
         let weather = root.join("bridges/weather");
         std::fs::create_dir_all(&weather).unwrap();
         std::fs::copy(
-            "../examples/weather-api/bridges/weather/bridge.wit",
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
             weather.join("bridge.wit"),
         )
         .unwrap();
@@ -1605,19 +1605,19 @@ mod tests {
         assert_eq!(bridges.len(), 1);
         assert_eq!(
             std::fs::read_to_string(root.join("wit/world.wit")).unwrap(),
-            include_str!("../../examples/weather-api/wit/world.wit"),
+            include_str!("../../examples/weather-api/rust/wit/world.wit"),
         );
         assert_eq!(
             std::fs::read_to_string(root.join("wit/deps/weather/bridge.wit")).unwrap(),
-            include_str!("../../examples/weather-api/wit/deps/weather/bridge.wit"),
+            include_str!("../../examples/weather-api/rust/wit/deps/weather/bridge.wit"),
         );
         assert_eq!(
             std::fs::read_to_string(root.join("src/bindings.rs")).unwrap(),
-            include_str!("../../examples/weather-api/src/bindings.rs"),
+            include_str!("../../examples/weather-api/rust/src/bindings.rs"),
         );
         assert_eq!(
             std::fs::read_to_string(root.join("src/bridges.rs")).unwrap(),
-            include_str!("../../examples/weather-api/src/bridges.rs"),
+            include_str!("../../examples/weather-api/rust/src/bridges.rs"),
         );
     }
 
@@ -1627,7 +1627,7 @@ mod tests {
         let weather = root.join("bridges/weather");
         std::fs::create_dir_all(&weather).unwrap();
         std::fs::copy(
-            "../examples/weather-api/bridges/weather/bridge.wit",
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
             weather.join("bridge.wit"),
         )
         .unwrap();
@@ -1670,7 +1670,7 @@ mod tests {
         let weather = root.join("bridges/weather");
         std::fs::create_dir_all(&weather).unwrap();
         std::fs::copy(
-            "../examples/weather-api/bridges/weather/bridge.wit",
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
             weather.join("bridge.wit"),
         )
         .unwrap();
@@ -1738,7 +1738,7 @@ mod tests {
         let weather = root.join("bridges/weather");
         std::fs::create_dir_all(&weather).unwrap();
         std::fs::copy(
-            "../examples/weather-api/bridges/weather/bridge.wit",
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
             weather.join("bridge.wit"),
         )
         .unwrap();
@@ -1769,36 +1769,36 @@ mod tests {
         );
     }
 
-    /// The worked example (`examples/weather-api/`) commits the *generated* files so it
+    /// The worked example (`examples/weather-api/rust/`) commits the *generated* files so it
     /// compiles in the workspace — proving the codegen output is valid Rust. This guards that
     /// those committed files are byte-identical to what the generator emits: the example
     /// can't drift from the generator, and `rusm build` reproduces the example exactly.
     #[test]
     fn the_worked_example_is_exactly_what_the_generator_emits() {
         let contract = parse_contract(Path::new(
-            "../examples/weather-api/bridges/weather/bridge.wit",
+            "../examples/weather-api/rust/bridges/weather/bridge.wit",
         ))
         .unwrap();
         assert_eq!(
             synth_world(std::slice::from_ref(&contract)),
-            include_str!("../../examples/weather-api/wit/world.wit"),
-            "examples/weather-api/wit/world.wit is not what synth_world emits",
+            include_str!("../../examples/weather-api/rust/wit/world.wit"),
+            "examples/weather-api/rust/wit/world.wit is not what synth_world emits",
         );
         assert_eq!(
             gen_bridges_module(&[&weather_bridge()]),
-            include_str!("../../examples/weather-api/src/bridges.rs"),
-            "examples/weather-api/src/bridges.rs is not what gen_bridges_module emits",
+            include_str!("../../examples/weather-api/rust/src/bridges.rs"),
+            "examples/weather-api/rust/src/bridges.rs is not what gen_bridges_module emits",
         );
         assert_eq!(
             BINDINGS_RS,
-            include_str!("../../examples/weather-api/src/bindings.rs"),
-            "examples/weather-api/src/bindings.rs is not what BINDINGS_RS holds",
+            include_str!("../../examples/weather-api/rust/src/bindings.rs"),
+            "examples/weather-api/rust/src/bindings.rs is not what BINDINGS_RS holds",
         );
         // The TS guest's ambient types are the generator's output too.
         assert_eq!(
             gen_bridge_dts(std::slice::from_ref(&weather_bridge())).unwrap(),
-            include_str!("../../examples/weather-api/bridges.d.ts"),
-            "examples/weather-api/bridges.d.ts is not what gen_bridge_dts emits",
+            include_str!("../../examples/weather-api/typescript/bridges.d.ts"),
+            "examples/weather-api/typescript/bridges.d.ts is not what gen_bridge_dts emits",
         );
     }
 }

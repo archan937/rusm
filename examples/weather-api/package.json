@@ -1,7 +1,0 @@
-{
-  "name": "custom-bridge",
-  "private": true,
-  "dependencies": {
-    "rusm-ts": "file:../../packages/rusm-ts"
-  }
-}

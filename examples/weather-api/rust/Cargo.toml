@@ -1,0 +1,23 @@
+# Host binary for the weather-api Rust-bridge app: registers bridges/weather/host.rs and
+# serves the manifest. `rusm build` (re)generates src/{bindings,bridges}.rs + wit/ from
+# bridges/; the generated files are committed so the crate compiles in the workspace.
+[package]
+name = "weather-api-rust"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "weather-api-rust"
+path = "src/main.rs"
+
+[dependencies]
+rusm-cli = { path = "../../../rusm-cli" }
+rusm-wasm = { path = "../../../crates/rusm-wasm" }
+rusm-node = { path = "../../../crates/rusm-node" }
+# Same version rusm-wasm links — `bindgen!` emits `wasmtime::` paths, so the host crate
+# needs Wasmtime in its extern prelude; the exact match makes the generated types identical
+# to the runtime's.
+wasmtime = "45.0.1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }

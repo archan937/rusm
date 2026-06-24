@@ -1,0 +1,17 @@
+# weather-api/typescript — TypeScript bridge host + TypeScript WebSocket guest.
+# Run: rusm build && rusm serve
+# Test: bun -e 'const w=new WebSocket("ws://127.0.0.1:8080");w.onopen=()=>w.send("Amsterdam");w.onmessage=e=>{console.log(e.data);process.exit(0)}'
+[node]
+listen = "127.0.0.1:8080"
+
+[capabilities.forecaster]
+inherits = "sandboxed"
+bridges = ["weather"]
+
+[[serve]]
+component = "api"
+protocol = "ws"
+listen = "127.0.0.1:8080"
+
+[components.api]
+capability = "forecaster"
