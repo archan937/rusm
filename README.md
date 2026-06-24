@@ -248,7 +248,7 @@ Not crates: the dashboard at `bench/dashboard` (Bun/React); docs under `docs/`. 
 
 | Group | What it is |
 | --- | --- |
-| [`typescript`](examples/typescript) · [`rust`](examples/rust) · [`go`](examples/go) | **Apps — start here.** The same collaborative TODO board (HTTP + SSE + WS + a service), one per guest language. `cd examples/<lang> && rusm build && rusm serve`. |
+| [`todo-board/typescript`](examples/todo-board/typescript) · [`todo-board/rust`](examples/todo-board/rust) · [`todo-board/go`](examples/todo-board/go) | **Apps — start here.** The same collaborative TODO board (HTTP + SSE + WS + a service), one per guest language. `cd examples/todo-board/<lang> && rusm build && rusm serve`. |
 | [`embedding/`](examples/embedding) | **Use RUSM as a Rust library** — host components, embed a node, run a TS guest, build a cluster. |
 | [`benchmarks/`](examples/benchmarks) | **Performance, measured not asserted** — HTTP/WS/SSE serving, connection scale, cross-node fan-out, against real baselines. |
 

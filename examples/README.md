@@ -18,33 +18,40 @@ rusm build && rusm serve
 curl -X POST 127.0.0.1:8080/shorten -d 'https://rusm.dev/docs'   # → /1
 ```
 
-### Full — a collaborative [todo board](./typescript/)
+### Full — a collaborative [todo board](./todo-board/)
 
 The same app in each guest language — HTTP CRUD + a live SSE feed + WebSocket chat + a
 service driven by a worker, each an isolated, supervised WASM process, unified by
 process-group tags (no broker). Build and serve, then open `http://localhost:8080`:
 
 ```sh
-cd examples/<lang>          # typescript | rust | go
+cd examples/todo-board/<lang>   # typescript | rust | go
 rusm build && rusm serve
 ```
 
 | App | Language | Toolchain |
 | --- | --- | --- |
-| [`typescript`](./typescript/) | TypeScript (Bun) | `rusm build` bundles each component |
-| [`rust`](./rust/) | Rust | `cargo` → `wasm32-wasip2` |
-| [`go`](./go/) | Go | TinyGo → `wasm32-wasip2` |
+| [`todo-board/typescript`](./todo-board/typescript/) | TypeScript (Bun) | `rusm build` bundles each component |
+| [`todo-board/rust`](./todo-board/rust/) | Rust | `cargo` → `wasm32-wasip2` |
+| [`todo-board/go`](./todo-board/go/) | Go | TinyGo → `wasm32-wasip2` |
 
 Each app's README has the full tour (the five components, the web page, the composition).
 They're the on-ramp: write normal code in your language, get a supervised multi-protocol
 server.
 
-### Native functions — a [weather custom bridge](./custom-bridge/)
+### Native functions — a [weather bridge](./weather-api/)
 
 Give every guest a typed function backed by host Rust. A `weather` bridge
 (`bridges/weather/{bridge.wit,host.rs}`) is called from Rust, Go, **and** TypeScript guests as
 an ordinary import — RUSM's answer to a capability provider, compiled-in and typed. Scaffold
 your own with `rusm new <name> --bridges`.
+
+### Transactional email — a [mailer bridge](./mailer/)
+
+A TypeScript host bridge that calls the [Resend](https://resend.com) API as a resident actor.
+The TS guest calls `mailer.send({ to, subject, body })` as a typed import; `rusm build`
+generates the Rust delegation shim and the TS runner. Scaffold your own with
+`rusm new <name> --template mailer`.
 
 ### Runtime-chosen code — [dynamic WASM plugins](./dynamic-wasm/)
 

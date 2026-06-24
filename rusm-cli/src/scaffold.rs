@@ -132,11 +132,11 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
         None => None,
     };
 
-    // A custom-bridge app comes two ways: the `--bridges` flag, or the `weather` template
-    // (which IS the bridge example). Both scaffold a host crate + the `weather` bridge + a
-    // guest that calls it, in any guest language (TS/Rust/Go — not `generic`, which has no
-    // guest source). TS guests can call custom bridges (the per-app js-runner is rebuilt with
-    // the bridge compiled in), so all three languages are accepted.
+    // A bridge app comes three ways: the `--bridges` flag (weather example, Rust host), the
+    // `weather` template (same), or the `mailer` template (TS host, generated host binary).
+    // All three require a real guest language (TS/Rust/Go — not `generic`, which has no guest
+    // source). TS guests can call bridges (the per-app js-runner is rebuilt with them compiled
+    // in), so all three languages are accepted for every bridge template.
     if bridges && template.is_some() {
         bail!(
             "`--bridges` can't be combined with `--template` — use `--template weather` or \
@@ -513,8 +513,10 @@ fn mailer_rusm_toml() -> String {
 }
 
 /// The Go guest for a mailer bridge app — calls `smtp.Send()` from the bridge-generated binding.
-fn mailer_go_guest(app: &NewApp) -> String {
-    MAILER_GO_GUEST.replace("api/internal/wit", &format!("{}/internal/wit", app.name))
+/// The template already uses the `api` module name (matching `go_mod()`'s `module api`), so
+/// no retargeting is needed here — unlike the weather Go guest which starts from `go-api`.
+fn mailer_go_guest(_app: &NewApp) -> String {
+    MAILER_GO_GUEST.to_string()
 }
 
 const TOML_HEADER: &str =
@@ -1472,6 +1474,28 @@ mod tests {
             "the go-api module path is retargeted"
         );
         assert!(go.contains("forecast.Lookup"));
+    }
+
+    /// The mailer Go guest uses the `api` module name (from `go_mod()`), not the app name.
+    #[test]
+    fn mailer_go_guest_uses_api_module() {
+        let app = NewApp {
+            name: "notifier".into(),
+            lang: Lang::Go,
+            protocol: Protocol::Http,
+            template: Some(Template::Mailer),
+            bridges: false,
+        };
+        let go = mailer_go_guest(&app);
+        assert!(
+            go.contains("\"api/internal/wit/app/mailer/smtp\""),
+            "import path must use the `api` module name"
+        );
+        assert!(
+            !go.contains("notifier/internal"),
+            "must not embed the app name — go.mod is always `module api`"
+        );
+        assert!(go.contains("smtp.Send"));
     }
 
     /// The host crate's pinned wasmtime must track what `rusm-wasm` links (bindgen type

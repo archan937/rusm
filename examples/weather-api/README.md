@@ -1,8 +1,8 @@
-# custom-bridge — an app that adds a native host capability
+# weather-api — an app with a native host bridge
 
 This app defines its **own host bridge** (`weather`) — a typed native function its guest
 components can call, RUSM's compiled-in answer to a wasmCloud capability provider. It shows
-the whole custom-bridge model end to end.
+the full bridge model end to end (contract → Rust impl → Rust/Go/TypeScript guests).
 
 ## What the author writes
 
