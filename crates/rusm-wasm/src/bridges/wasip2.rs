@@ -1974,6 +1974,147 @@ mod tests {
         );
     }
 
+    /// A service that receives requests but never replies — the target for call_timeout tests.
+    const BLACK_HOLE: &str =
+        "module.exports.default = async function() { for(;;) await Process.receive(); };";
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_js_call_timeout_fires_when_service_never_replies() {
+        // A JS guest uses `callTimeout(pid, op, ms, ...args)` against a black hole and
+        // must receive Error("timeout") within the deadline — not hang forever.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_js_component("hole", BLACK_HOLE.as_bytes().to_vec());
+
+        const CLIENT: &str = r#"
+            module.exports.default = async function() {
+                const collector = BigInt(await Process.receiveText());
+                const hole = Process.spawn("hole");
+                try {
+                    await callTimeout(hole, "echo", 50, "hi");
+                    Process.send(collector, "no-timeout");
+                } catch (e) {
+                    Process.send(collector, e.message === "timeout" ? "timeout" : "err:" + e.message);
+                }
+            };
+        "#;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let client = wr.spawn_js_with(CLIENT.as_bytes(), CapabilityProfile::Trusted.capabilities());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("js client must not hang — callTimeout must fire within the deadline")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "timeout",
+            "callTimeout fired with Error(\"timeout\") when the service never replied"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_js_client_with_timeout_fires_on_a_black_hole() {
+        // A JS guest uses `spawn("hole").withTimeout(50).echo("hi")` — the typed proxy
+        // variant — and must receive Error("timeout"), proving withTimeout routes calls
+        // through __callTimeout instead of __call.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_js_component("hole", BLACK_HOLE.as_bytes().to_vec());
+
+        const CLIENT: &str = r#"
+            module.exports.default = async function() {
+                const collector = BigInt(await Process.receiveText());
+                const hole = spawn("hole").withTimeout(50);
+                try {
+                    await hole.echo("hi");
+                    Process.send(collector, "no-timeout");
+                } catch (e) {
+                    Process.send(collector, e.message === "timeout" ? "timeout" : "err:" + e.message);
+                }
+            };
+        "#;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let client = wr.spawn_js_with(CLIENT.as_bytes(), CapabilityProfile::Trusted.capabilities());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("js client with withTimeout must not hang — deadline must fire")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "timeout",
+            "withTimeout(50) fired Error(\"timeout\") when the service never replied"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_rs_call_timeout_fires_when_service_never_replies() {
+        // A Rust guest uses `rusm_rs::wire::call_timeout` against a JS black hole and
+        // must report "timeout" to the collector — proving the Instant-tracked deadline works.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        const RS_CALL_TIMEOUT: &[u8] = include_bytes!("../../tests/fixtures/rs_call_timeout.wasm");
+        let hole = wr.spawn_js(BLACK_HOLE.as_bytes());
+        let prepared = wr
+            .prepare_component(&wr.compile_component(RS_CALL_TIMEOUT).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let client = wr.spawn_component(&prepared);
+        rt.send(client.pid(), hole.pid().raw().to_string().into_bytes());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("rs guest must not hang — call_timeout must fire within the deadline")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "timeout",
+            "Rust call_timeout returned Err(\"timeout\") when the service never replied"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_go_call_timeout_fires_when_service_never_replies() {
+        // A Go guest uses `rusm.CallTimeout` against a JS black hole and must report
+        // "timeout" to the collector — proving the time.Until-tracked deadline works.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        const GO_CALL_TIMEOUT: &[u8] = include_bytes!("../../tests/fixtures/go_call_timeout.wasm");
+        let hole = wr.spawn_js(BLACK_HOLE.as_bytes());
+        let prepared = wr
+            .prepare_component(&wr.compile_component(GO_CALL_TIMEOUT).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let client = wr.spawn_component(&prepared);
+        rt.send(client.pid(), hole.pid().raw().to_string().into_bytes());
+        rt.send(client.pid(), collector.pid().raw().to_string().into_bytes());
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .expect("go guest must not hang — CallTimeout must fire within the deadline")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "timeout",
+            "Go CallTimeout returned errors.New(\"timeout\") when the service never replied"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_ts_guest_connects_to_a_resident_by_name_and_calls_it() {
         // rusm-ts `connect(name)`: a TS caller reaches an EXISTING resident by its registered

@@ -116,15 +116,15 @@ sum, _ := rusm.Call[int](pid, "add", 2, 3) // → 5
 
 :::
 
-::: warning `connect` resolves a name — it does not verify a live service
+::: tip `connect` resolves a name — it does not verify a live service
 `connect(name)` throws only when the **name isn't registered** (the `whereis` is empty). It does
-**not** check that the target is alive or actually runs a dispatch loop — and a typed `call`
-currently has **no timeout** (it blocks until the reply arrives). So if you `connect` to a pid that
-has died, or to a process that isn't a service (a worker never replies), the **call hangs**, it
-doesn't error. This is why you `connect` to a **`resident` by name**: a resident is *supervised*
+**not** check that the target is alive or actually runs a dispatch loop — so if you `connect` to a
+pid that has died, or to a process that isn't a service (a worker never replies), the **call
+hangs**. This is why you `connect` to a **`resident` by name**: a resident is *supervised*
 (restarted on crash) and *re-registers its name*, so the name always resolves to a live instance.
-Don't hold a client across a target's crash — re-`connect` (re-resolve the name) instead. (Same
-caveat applies to a `spawn`ed client whose instance dies mid-call.)
+Don't hold a client across a target's crash — re-`connect` (re-resolve the name) instead. When
+liveness can't be guaranteed, add a deadline with `withTimeout` / `call_timeout` / `CallTimeout`
+(see [Call with a deadline](#call-with-a-deadline) below).
 :::
 
 ## `spawn` or `connect`?
@@ -157,6 +157,49 @@ only makes sense against a service for exactly that reason — point 1.)
 | your own private instance | service | `spawn<T>` | fresh | yes — `.stop()` it |
 | the shared, long-lived instance | service (`resident`) | `connect<T>` | existing | no — you didn't start it |
 
+## 4. Call with a deadline {#call-with-a-deadline}
+
+A plain `call` blocks until the reply arrives — forever if the target is dead or not a service.
+Use a **deadline** any time the callee's liveness isn't guaranteed:
+
+::: code-group
+
+```ts [TypeScript]
+import { spawn, callTimeout } from "rusm-ts";
+import type { Calc } from "../calc";
+
+// Option A — timeout on the proxy; every subsequent call uses it.
+const calc = spawn<Calc>("calc").withTimeout(500); // 500 ms deadline per call
+const result = await calc.add(2, 3);               // throws Error("timeout") if overdue
+
+// Option B — ad-hoc one-off call with a deadline.
+const sum = await callTimeout(pid, "add", 500, 2, 3); // (pid, op, timeoutMs, ...args)
+```
+
+```rust [Rust]
+use rusm_rs::wire::call_timeout;
+
+// Typed client: no built-in per-method timeout yet — use the wire function directly.
+let result: Result<i64, String> =
+    call_timeout(calc_pid, "add", &[2_i64, 3_i64], 500); // 500 ms; Err("timeout") on expiry
+```
+
+```go [Go]
+import rusm "github.com/archan937/rusm/packages/rusm-go"
+
+// CallTimeout[R](to, op, timeoutMs, ...args) — drops into Err("timeout") when the deadline fires.
+sum, err := rusm.CallTimeout[int](calcPid, "add", 500, 2, 3) // 500 ms
+if err != nil { /* err.Error() == "timeout" on expiry */ }
+```
+
+:::
+
+**How it works.** Every SDK tracks a `Instant` / `time.Until` / `Date.now()` deadline that spans
+the *entire* call — including any non-matching mail that must be set aside and restored to the
+inbox first. When the remaining time reaches zero before the matching reply arrives, the call
+returns `Err("timeout")` / throws `Error("timeout")` and restores all set-aside messages to the
+front of the inbox, so the process's own receive sees them in order.
+
 ## What you need to know
 
 - **Capability-gated.** Spawning is the `allow-spawn` capability — grant it on the caller's
@@ -171,3 +214,7 @@ only makes sense against a service for exactly that reason — point 1.)
 - **It's just messages.** The typed client is sugar over `send`/`receive`
   ([process management](/build-an-app/coordinate-and-supervise)); a Rust client and a TS
   service interoperate over the same JSON wire.
+- **Deadlines.** Use `withTimeout` / `call_timeout` / `CallTimeout` any time the callee's
+  liveness isn't guaranteed — a `spawn`ed service whose instance might crash, or a `connect`
+  target during a rolling restart. The timeout fires as `Err("timeout")` / `Error("timeout")`,
+  and all set-aside mail is restored to the inbox front.

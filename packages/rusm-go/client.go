@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"time"
 )
 
 // The typed client side of the wire. Call is a blocking request/reply; Cast is
@@ -65,6 +66,62 @@ func Call[R any](to Pid, op string, args ...any) (R, error) {
 		}
 		if !replyMatches(env, ref) {
 			setAside = append(setAside, raw) // someone else's reply, request, or plain message
+			continue
+		}
+		if e, ok := env["err"]; ok {
+			var msg string
+			_ = json.Unmarshal(e, &msg)
+			return zero, errors.New(msg)
+		}
+		var result R
+		if okVal, ok := env["ok"]; ok {
+			if err := json.Unmarshal(okVal, &result); err != nil {
+				return zero, err
+			}
+		}
+		return result, nil
+	}
+}
+
+// CallTimeout is Call with a deadline: returns an error with message "timeout" if the
+// reply doesn't arrive within timeoutMs milliseconds. Holds unrelated mail aside during
+// the wait and restores it on return, exactly as Call does.
+func CallTimeout[R any](to Pid, op string, timeoutMs uint64, args ...any) (R, error) {
+	var zero R
+	marked, cbIDs := prepareArgs(args)
+	defer releaseCallbacks(cbIDs)
+	ref := nextRef()
+	req, err := json.Marshal(wireOut{Op: op, Args: argsOf(marked), From: Self().String(), Ref: &ref})
+	if err != nil {
+		return zero, err
+	}
+	SendBytes(to, req)
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	var setAside [][]byte
+	defer func() { unstashFront(setAside) }()
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return zero, errors.New("timeout")
+		}
+		ms := uint64(remaining.Milliseconds())
+		if ms == 0 {
+			return zero, errors.New("timeout")
+		}
+		raw, ok := ReceiveBytesTimeout(ms)
+		if !ok {
+			return zero, errors.New("timeout")
+		}
+		var env map[string]json.RawMessage
+		if json.Unmarshal(raw, &env) != nil {
+			setAside = append(setAside, raw)
+			continue
+		}
+		if dispatchCallback(env) {
+			continue
+		}
+		if !replyMatches(env, ref) {
+			setAside = append(setAside, raw)
 			continue
 		}
 		if e, ok := env["err"]; ok {

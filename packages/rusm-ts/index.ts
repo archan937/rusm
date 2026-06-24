@@ -137,6 +137,10 @@ export type ServiceClient<T> = {
   };
   readonly pid: bigint;
   stop(): void;
+  /** Return a client variant that applies `ms` as a deadline to every typed call.
+   *  `await client.withTimeout(5000).method(args)` throws `Error("timeout")` if no
+   *  reply arrives within 5 s — the TS twin of Erlang's `gen_server:call/3 Timeout`. */
+  withTimeout(ms: number): Client<T>;
 };
 
 /** A typed client over an **already-running** service (a resident reached by name or pid via
@@ -189,6 +193,12 @@ const g = globalThis as unknown as {
   connect: <T>(target: string | bigint) => Client<T>;
   supervise: (opts: SupervisorOptions) => Promise<void>;
   kv: Kv;
+  callTimeout: (
+    pid: bigint | string,
+    op: string,
+    timeoutMs: number,
+    ...args: unknown[]
+  ) => Promise<unknown>;
 };
 
 /** The actor API for this process. */
@@ -203,6 +213,16 @@ export const kv: Kv = g.kv;
 export const spawn = <T = Record<string, (...args: any[]) => any>>(
   component: string,
 ): ServiceClient<T> => g.spawn<T>(component);
+
+/** Call `op` on `pid` with `args`, throwing `Error("timeout")` if no reply arrives within
+ *  `timeoutMs` milliseconds. The direct-call twin of `client.withTimeout(ms).method(…)`,
+ *  for callers that have a pid but not a typed client. */
+export const callTimeout = <T = unknown>(
+  pid: bigint | string,
+  op: string,
+  timeoutMs: number,
+  ...args: unknown[]
+): Promise<T> => g.callTimeout(pid, op, timeoutMs, ...args) as Promise<T>;
 
 /** Get a typed client for an **already-running** service — a resident — by its registered
  *  name or its pid. Unlike {@link spawn} it starts nothing; it's the TS twin of Rust's

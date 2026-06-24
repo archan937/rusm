@@ -99,6 +99,38 @@ async function __call(pid, op, args, expectReply) {
   }
 }
 
+// A call with a deadline: fails with Error("timeout") if no matching reply arrives within
+// timeoutMs milliseconds. Uses Process.receive(remaining) on each iteration so the host
+// fiber parks for at most `remaining` ms rather than forever. Tracks the deadline via
+// Date.now() so the budget spans the entire call, not just one receive.
+async function __callTimeout(pid, op, args, timeoutMs) {
+  const ref = ++__ref;
+  const msg = { op, args, from: Process.self().toString(), ref };
+  const ids = __sendRequest(pid, msg);
+  const deadline = Date.now() + timeoutMs;
+  const setAside = [];
+  try {
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("timeout");
+      const raw = await Process.receive(remaining);
+      if (raw === null) throw new Error("timeout");
+      let m;
+      try { m = JSON.parse(__td.decode(raw)); } catch { setAside.push(raw); continue; }
+      if (m && m.op === "__cb") { __callbacks[m.cbref]?.(...(m.args || [])); continue; }
+      const isReply = m && typeof m === "object" && ("ok" in m || "err" in m);
+      if (isReply && m.ref === ref) {
+        if ("err" in m) throw new Error(m.err);
+        return m.ok;
+      }
+      setAside.push(raw);
+    }
+  } finally {
+    for (const id of ids) delete __callbacks[id];
+    if (setAside.length) __rusm_unstash_front(setAside);
+  }
+}
+
 // A streaming call: the service opens a byte stream back; yield each JSON chunk.
 async function* __streamCall(pid, op, args) {
   const ref = ++__ref;
@@ -112,9 +144,12 @@ async function* __streamCall(pid, op, args) {
 
 // A method result: awaitable (→ a call) and async-iterable (→ a streaming call).
 // The caller chooses by `await proxy.m(...)` vs `for await (... of proxy.m(...))`.
-function __invoke(pid, op, args) {
+// `defaultTimeout` (set by withTimeout) routes calls through __callTimeout instead.
+function __invoke(pid, op, args, defaultTimeout) {
   let p;
-  const call = () => (p = p || __call(pid, op, args, true));
+  const call = () => (p = p || (defaultTimeout !== undefined
+    ? __callTimeout(pid, op, args, defaultTimeout)
+    : __call(pid, op, args, true)));
   return {
     then: (res, rej) => call().then(res, rej),
     catch: (f) => call().catch(f),
@@ -128,9 +163,10 @@ function __castClient(pid) {
 }
 
 // A typed client over a process `pid`: each property is a call (`await`) / stream
-// (`for await`); `.cast` is fire-and-forget; `.pid` is the pid. `owned` (a spawned process)
-// also exposes `.stop()` — a connected client to a resident you don't own does not.
-function __clientProxy(pid, owned) {
+// (`for await`); `.cast` is fire-and-forget; `.pid` is the pid; `.withTimeout(ms)` returns
+// a variant where every call has a deadline. `owned` (a spawned process) also exposes
+// `.stop()` — a connected client to a resident you don't own does not.
+function __clientProxy(pid, owned, defaultTimeout) {
   return new Proxy(
     {},
     {
@@ -138,7 +174,8 @@ function __clientProxy(pid, owned) {
         if (op === "pid") return pid;
         if (op === "cast") return __castClient(pid);
         if (op === "stop") return owned ? () => Process.kill(pid) : undefined;
-        return (...args) => __invoke(pid, String(op), args);
+        if (op === "withTimeout") return (ms) => __clientProxy(pid, owned, ms);
+        return (...args) => __invoke(pid, String(op), args, defaultTimeout);
       },
     },
   );
@@ -159,6 +196,12 @@ globalThis.connect = function (target) {
     if (pid == null) throw new Error("connect: no process registered as " + target);
   }
   return __clientProxy(pid, false);
+};
+
+// `callTimeout(pid, op, timeoutMs, ...args)` — a direct call with a deadline, without a
+// typed proxy. Useful when the caller has a pid but not a typed client.
+globalThis.callTimeout = function (pid, op, timeoutMs, ...args) {
+  return __callTimeout(pid, op, args, timeoutMs);
 };
 
 // Service dispatch: receive a request, call the matching exported handler, and

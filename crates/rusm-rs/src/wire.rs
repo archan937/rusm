@@ -7,7 +7,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::{me, receive_bytes, send_bytes, unstash_front, Pid, Stream};
+use crate::{me, receive_bytes, receive_bytes_timeout, send_bytes, unstash_front, Pid, Stream};
 
 /// A decoded service request.
 #[derive(serde::Deserialize)]
@@ -297,6 +297,70 @@ mod tests {
         let cb = json!({ "op": "__cb", "cbref": 3, "args": [null] });
         assert!(matches!(classify_reply(&cb, 1), Disposition::Callback));
     }
+}
+
+/// Like [`call`] but fails with `Err("timeout")` if the reply doesn't arrive within
+/// `timeout_ms` milliseconds. `args` serializes as a JSON array.
+pub fn call_timeout<A: Serialize, R: DeserializeOwned>(
+    to: Pid,
+    op: &str,
+    args: &A,
+    timeout_ms: u64,
+) -> Result<R, String> {
+    call_json_timeout(
+        to,
+        op,
+        serde_json::to_value(args).map_err(|e| e.to_string())?,
+        timeout_ms,
+    )
+}
+
+/// Like [`call_json`] but with a deadline: fails with `Err("timeout")` if no matching
+/// reply arrives within `timeout_ms` milliseconds. Non-matching mail is held in a local
+/// buffer during the wait and restored to the inbox front on return.
+pub fn call_json_timeout<R: DeserializeOwned>(
+    to: Pid,
+    op: &str,
+    args: serde_json::Value,
+    timeout_ms: u64,
+) -> Result<R, String> {
+    use std::time::Instant;
+    let reference = next_ref();
+    let req =
+        serde_json::json!({ "op": op, "args": args, "from": me().0.to_string(), "ref": reference });
+    send_bytes(to, &serde_json::to_vec(&req).expect("request serializes"));
+    let deadline = Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let mut saved: Vec<Vec<u8>> = Vec::new();
+    let outcome = loop {
+        let remaining_ms = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis();
+        if remaining_ms == 0 {
+            break Err("timeout".to_string());
+        }
+        match receive_bytes_timeout(remaining_ms as u64) {
+            None => break Err("timeout".to_string()),
+            Some(raw) => {
+                let v = match serde_json::from_slice::<serde_json::Value>(&raw) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        saved.push(raw);
+                        continue;
+                    }
+                };
+                match classify_reply(&v, reference) {
+                    Disposition::Callback => dispatch_callback(&v),
+                    Disposition::Reply(Err(err)) => break Err(err),
+                    Disposition::Reply(Ok(ok)) => {
+                        break serde_json::from_value(ok).map_err(|e| e.to_string())
+                    }
+                    Disposition::NotMine => saved.push(raw),
+                }
+            }
+        }
+    };
+    unstash_front(saved);
+    outcome
 }
 
 /// Client side of a **streaming** call: send a stream request, accept the stream
