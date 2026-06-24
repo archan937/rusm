@@ -12,9 +12,19 @@ unified by **process-group tags as pub/sub** (no broker).
 | **`store`** | service | a `#[rusm_rs::service]` module — its exported fns ARE the API |
 | **`reporter`** | worker | resident; drives `store` through the generated typed client |
 
+## Run it
+
+Requires the `wasm32-wasip2` target (`rustup target add wasm32-wasip2` once):
+
 ```sh
-rusm build && rusm serve
-# then open http://localhost:8080 — a self-explanatory page wiring all of the below:
+rusm build         # compile components/ → wasm/ (cargo, wasm32-wasip2)
+rusm serve         # http :8080  ·  sse :8081  ·  ws :8082
+```
+
+Then **open <http://localhost:8080>** — the web UI explains each part and is fully
+interactive (add/toggle/delete todos, chat).
+
+```sh
 curl localhost:8080/todos                                   # the list (seeded by reporter)
 curl -X POST localhost:8080/todos -d '{"text":"buy milk"}'  # {"id":...}
 curl -N localhost:8081                                       # live SSE feed of the list

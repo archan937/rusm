@@ -9,7 +9,7 @@ link survives a restart. Each request runs in its own sandboxed WASM instance; t
 shared state to corrupt.
 
 Every variant uses **published** dependency specs (`rusm-ts@^0.4.2`, `rusm-rs = "0.4.2"`,
-`rusm-go@v0.4.2`) — copy any one directory out of the repo and it builds on its own.
+`rusm-go@v0.4.0`) — copy any one directory out of the repo and it builds on its own.
 
 ## Run it
 

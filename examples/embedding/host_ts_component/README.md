@@ -36,4 +36,4 @@ Process.send(replyTo, `pong from ${Process.self()}`);
 --format=cjs` → `wasm/worker.js`, and `rusm run` loads `.js` artifacts on the
 js-runner under the declared capability profile. (A Rust component builds to
 `wasm/<name>.wasm` instead — same manifest, same loader.) `Process`/`spawn` and the
-types come from the [`rusm-ts`](../../../packages/rusm-ts) package. See the full [`typescript`](../../typescript) todo-board example.
+types come from the [`rusm-ts`](../../../packages/rusm-ts) package. See the full [`todo-board/typescript`](../../todo-board/typescript) todo-board example.

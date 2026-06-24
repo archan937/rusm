@@ -12,16 +12,25 @@ an isolated, supervised WASM process, unified by **process-group tags as pub/sub
 | **`store`** | service | `rusm.NewService()` — its registered ops ARE the API |
 | **`reporter`** | worker | resident; drives `store` through the typed `store.Client` |
 
+## Run it
+
+Requires **Go** and **TinyGo** installed (`rusm build` drives `go mod tidy` + `tinygo build`):
+
 ```sh
-rusm build && rusm serve
-# then open http://localhost:8080 — a self-explanatory page wiring all of the below:
+rusm build         # compile components/ → wasm/ (TinyGo, wasm32-wasip2)
+rusm serve         # http :8080  ·  sse :8081  ·  ws :8082
+```
+
+Then **open <http://localhost:8080>** — the web UI explains each part and is fully
+interactive (add/toggle/delete todos, chat).
+
+```sh
 curl localhost:8080/todos                                   # the list (seeded by reporter)
 curl -X POST localhost:8080/todos -d '{"text":"buy milk"}'  # {"id":...}
 curl -N localhost:8081                                       # live SSE feed of the list
 # WebSocket chat on :8082 — send {"join":"general"} then {"say":"hi"}
 ```
 
-Requires **Go** and **TinyGo** installed (`rusm build` drives `go mod tidy` + `tinygo build`).
 The first `rusm serve` boots the resident **`reporter`**, which seeds a short welcome list
 (only when the board is empty) — so the page has content on first open.
 

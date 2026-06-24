@@ -15,4 +15,12 @@ curl -X POST http://127.0.0.1:8080/send \
   -d '{"to":"you@example.com","subject":"Hello","body":"<b>It works!</b>"}'
 ```
 
+## How it works
+
+`rusm build` discovers `bridges/mailer/`, regenerates `src/{bindings,bridges}.rs` and `wit/`,
+vendors the contract into `components/api/`, and compiles the Rust guest. `rusm serve` runs the
+host binary, where `bridges::extend` wires `bridges/mailer/host.rs` directly into the component
+linker — no actor round-trip, no JSON marshaling. `RESEND_API_KEY` is read from the environment
+at the time of each `send` call via `std::env::var`.
+
 See [`../../README.md`](../../README.md) for all three bridge-host flavours.

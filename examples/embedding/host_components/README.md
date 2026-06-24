@@ -1,6 +1,6 @@
 # host_components
 
-**Hosting WASM components on RUSM's actor model** — the heart of Phase 7.
+**Hosting WASM components on RUSM's actor model** — the core of the component runtime.
 
 Loads real WASM **components** and runs them as isolated, observable, sandboxed
 processes:

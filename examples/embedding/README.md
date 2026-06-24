@@ -1,7 +1,7 @@
 # Embedding RUSM
 
 Use RUSM as a **Rust library** — from your own program, not the `rusm` CLI. Where the
-[app examples](../) (`typescript`/`rust`/`go`) are guests you write and `rusm serve` hosts,
+[app examples](../) are guests you write and `rusm serve` hosts,
 these drive the host crates directly: host WASM components as supervised processes, embed a
 node, run a TypeScript guest, or build a cluster — all the raw API the CLI is built on.
 
