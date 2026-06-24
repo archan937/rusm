@@ -170,14 +170,25 @@ pub struct ComponentSpec {
     #[serde(default)]
     pub source: Option<String>,
     /// Marks this as a **dynamic runner template**: a capability profile with no fixed
-    /// bundle. `dynamic = "js"` runs a runtime-chosen **JS** bundle; `dynamic = "wasm"`
-    /// runs a runtime-chosen **WASM component** (compiled once, then cached for hot
-    /// re-spawns — see the dynamic-WASM compile cache). A guest can't `spawn` a template;
-    /// it runs only via `spawn-from(name, source)`, which loads the chosen bundle and runs
-    /// it under this profile (operator policy — the guest picks the code, never the caps).
+    /// bundle. Supported kinds:
+    /// - `"js"` — runs a runtime-chosen JS bundle on the embedded rquickjs runner.
+    /// - `"wasm"` — runs a runtime-chosen RUSM actor component (compiled once, then cached
+    ///   for hot re-spawns). Use `entry =` to select a non-default export.
+    /// - `"wasi-cli"` — runs a runtime-chosen `wasi:cli/run` component (any stock
+    ///   `wasm32-wasip2` binary; no `rusm:runtime` required). Ignores `entry =`.
+    ///
+    /// A guest cannot `spawn` a template; it runs only via `spawn-from(name, source)` under
+    /// this profile (operator policy — the guest picks the code, never the capabilities).
     /// Mutually exclusive with `source` (a template has no fixed bundle).
     #[serde(default)]
     pub dynamic: Option<String>,
+    /// Override the WIT entry-point export name. Default `"run"` (the export every RUSM actor
+    /// component exposes). Set this for a component that names its export differently — e.g.
+    /// `entry = "handle"` for a component exporting `handle: func()`. Applies to static
+    /// components and `dynamic = "wasm"` templates; has no effect on `"js"` or `"wasi-cli"`
+    /// (their protocols are fixed). Omitted → `"run"`.
+    #[serde(default)]
+    pub entry: Option<String>,
 }
 
 /// Where a component's JS bundle is fetched from when a [`ComponentSpec`]/[`ServeSpec`]
@@ -578,6 +589,53 @@ mod tests {
             .components["x"]
             .dynamic
             .is_none());
+    }
+
+    #[test]
+    fn parses_a_dynamic_wasm_runner_template() {
+        let cfg = NodeConfig::from_toml(
+            "[components.wasm-runner]\ncapability = \"sandboxed\"\ndynamic = \"wasm\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.components["wasm-runner"].dynamic.as_deref(),
+            Some("wasm")
+        );
+    }
+
+    #[test]
+    fn parses_a_dynamic_wasi_cli_runner_template() {
+        // `dynamic = "wasi-cli"` registers a runner for stock `wasi:cli/run` components.
+        let cfg = NodeConfig::from_toml(
+            "[components.cli-runner]\ncapability = \"sandboxed\"\ndynamic = \"wasi-cli\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.components["cli-runner"].dynamic.as_deref(),
+            Some("wasi-cli")
+        );
+    }
+
+    #[test]
+    fn parses_a_custom_entry_override() {
+        // `entry = "fn-name"` overrides the default `"run"` entry-point export.
+        let cfg = NodeConfig::from_toml("[components.my-worker]\nentry = \"start\"\n").unwrap();
+        assert_eq!(cfg.components["my-worker"].entry.as_deref(), Some("start"));
+        // Absent → None (downstream defaults to "run").
+        assert!(NodeConfig::from_toml("[components.x]\n")
+            .unwrap()
+            .components["x"]
+            .entry
+            .is_none());
+    }
+
+    #[test]
+    fn dynamic_wasm_and_entry_coexist() {
+        let cfg =
+            NodeConfig::from_toml("[components.runner]\ndynamic = \"wasm\"\nentry = \"handle\"\n")
+                .unwrap();
+        assert_eq!(cfg.components["runner"].dynamic.as_deref(), Some("wasm"));
+        assert_eq!(cfg.components["runner"].entry.as_deref(), Some("handle"));
     }
 
     #[test]

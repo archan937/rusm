@@ -113,9 +113,17 @@ pub(crate) enum DynamicKind {
     /// A JS runner template: the prepared component is the shared js-runner; the source is a
     /// JS bundle delivered as message 1 (the runner's protocol).
     Js,
-    /// A WASM runner template: the source is a `.wasm` component, compiled + prepared (cached
-    /// by content hash) at spawn — cold once, hot thereafter on the pooled fast path.
+    /// A WASM runner template: the source is a `.wasm` **RUSM actor** component, compiled +
+    /// prepared (cached by content hash) at spawn — cold once, hot thereafter on the pooled
+    /// fast path. The `wasm_entry` field on [`Registered`] selects the entry export (default
+    /// `"run"`).
     Wasm,
+    /// A **wasi-cli runner template**: the source is a `.wasm` component implementing the
+    /// standard `wasi:cli/run` world — no `rusm:runtime` required. Compiled (cached by content
+    /// hash) and instantiated via [`wasmtime_wasi::p2::bindings::CommandPre`] at spawn; the
+    /// process runs to completion and then exits normally. `entry =` is ignored (the
+    /// `wasi:cli/run` protocol is fixed).
+    WasiCli,
 }
 
 /// A component registered for spawn-by-name: the prepared component plus an optional first
@@ -125,7 +133,7 @@ pub(crate) enum DynamicKind {
 #[derive(Clone)]
 pub(crate) struct Registered {
     /// The prepared component to instantiate on spawn. `None` only for a [`DynamicKind::Wasm`]
-    /// template, whose component is compiled per-source at spawn (see the dynamic-WASM cache).
+    /// or [`DynamicKind::WasiCli`] template, whose component is compiled per-source at spawn.
     pub(crate) prepared: Option<PreparedComponent>,
     /// `Arc` so a lookup clone is cheap; the bytes copy once, on the actual send.
     pub(crate) bundle: Option<Arc<Vec<u8>>>,
@@ -134,9 +142,14 @@ pub(crate) struct Registered {
     /// policy — what the manifest declares is what runs), instead of inheriting the
     /// spawner's caps. `None` → inherit the spawner's caps (ad-hoc registration / tests).
     pub(crate) caps: Option<Capabilities>,
-    /// `Some(kind)` marks a **dynamic runner template** (JS or WASM): code supplied per spawn
-    /// via `spawn-from`. `None` is an ordinary fixed component.
+    /// `Some(kind)` marks a **dynamic runner template** (JS, WASM, or wasi-cli): code
+    /// supplied per spawn via `spawn-from`. `None` is an ordinary fixed component.
     pub(crate) dynamic: Option<DynamicKind>,
+    /// The WIT entry-point export name for a [`DynamicKind::Wasm`] template or a static actor
+    /// component. `None` means `"run"` (the default for every RUSM actor component). Set via
+    /// `entry = "fn-name"` in the manifest — enables components that export a differently-named
+    /// entry. Ignored for `Js` and `WasiCli` templates (their protocols are fixed).
+    pub(crate) wasm_entry: Option<String>,
 }
 
 /// Resolves a `url:` `spawn-from` source to JS bundle bytes. **Injected by the
@@ -146,12 +159,22 @@ pub type BundleResolver = Arc<
     dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send>> + Send + Sync,
 >;
 
-/// Compiles + prepares a fetched dynamic-`.wasm` bundle into a [`PreparedComponent`]. Injected
-/// at construction (it captures the engine + the component linker + the overflow tier), so the
-/// dynamic-WASM `spawn-from` path compiles a runtime bundle without reaching back into the
-/// `WasmRuntime` — no `Arc` cycle. Sync: `Component::new` + `instantiate_pre` are CPU-bound.
+/// Compiles + prepares a fetched dynamic-`.wasm` **RUSM actor** bundle into a
+/// [`PreparedComponent`]. Takes the raw bytes and the entry-export name (e.g., `"run"`) so the
+/// prepared component targets the correct export. Injected at construction (it captures the
+/// engine + the component linker + the overflow tier), so the dynamic-WASM `spawn-from` path
+/// compiles a runtime bundle without reaching back into the `WasmRuntime` — no `Arc` cycle.
+/// Sync: `Component::new` + `instantiate_pre` are CPU-bound.
 pub(crate) type WasmPreparer =
-    Arc<dyn Fn(&[u8]) -> Result<PreparedComponent, String> + Send + Sync>;
+    Arc<dyn Fn(&[u8], &str) -> Result<PreparedComponent, String> + Send + Sync>;
+
+/// Compiles a fetched **wasi-cli** `.wasm` bundle to a raw [`wasmtime::component::Component`].
+/// The component is cached by content hash; per-spawn a [`wasmtime_wasi::p2::bindings::CommandPre`]
+/// is built from it (cheap — just import resolution + protocol check, no recompile). Using
+/// `Component` as the cache value avoids the `CommandPre<WasiHost>: !Sync` constraint (moka
+/// requires `V: Sync`). Injected at construction; captures the engine.
+pub(crate) type WasmCliPreparer =
+    Arc<dyn Fn(&[u8]) -> Result<wasmtime::component::Component, String> + Send + Sync>;
 
 /// Default freshness/idle window for the dynamic-WASM compile cache: how long a fetched
 /// bundle is reused for a source before the source is re-checked, and how long a compiled
@@ -196,6 +219,18 @@ pub(crate) struct Spawner {
     /// bundle compiles (cold), every later spawn reuses the prepared component on the pooled
     /// fast path (hot). See [`crate::bundle_cache`].
     pub(crate) wasm_cache: bundle_cache::BundleCache<PreparedComponent>,
+    /// The component linker — held here so the actor-bridge `spawn_from` path (which has only
+    /// an `Arc<Spawner>`, not the full `WasmRuntime`) can build a
+    /// [`wasmtime_wasi::p2::bindings::CommandPre`] for dynamic wasi-cli spawns without an `Arc`
+    /// cycle back to the runtime. The linker is `Arc`-shared (read-only after construction).
+    pub(crate) component_linker: Arc<wasmtime::component::Linker<bridges::WasiHost>>,
+    /// Compiles a fetched wasi-cli `.wasm` bundle to a [`wasmtime::component::Component`]
+    /// (cached by content hash). Injected once at construction; absent only on a bare spawner.
+    /// The `Component` (not `CommandPre`) is cached so moka's `Sync` bound is satisfied.
+    pub(crate) cli_preparer: OnceLock<WasmCliPreparer>,
+    /// Content-addressed compile cache for dynamic wasi-cli `spawn-from`. Same structure and
+    /// TTL as `wasm_cache`; caches raw `Component` values (CommandPre is built per-spawn).
+    pub(crate) cli_cache: bundle_cache::BundleCache<wasmtime::component::Component>,
 }
 
 impl Spawner {
@@ -256,19 +291,47 @@ impl Spawner {
     /// Resolve a dynamic-WASM `source` to a prepared component through the content-addressed
     /// cache: the first spawn of a bundle compiles (cold), every later spawn reuses the prepared
     /// component on the pooled fast path (hot). The caller must have gated the capability for the
-    /// source's scheme first.
+    /// source's scheme first. `entry` is the WIT export name (typically `"run"`); it is folded
+    /// into the cache key so the same bytes compiled for different entries are stored
+    /// independently (see [`bundle_cache::BundleCache::get`]'s `disc` parameter).
     pub(crate) async fn dynamic_wasm(
         &self,
         source: &str,
+        entry: &str,
     ) -> Result<Arc<PreparedComponent>, String> {
         let preparer = self
             .wasm_preparer
             .get()
             .cloned()
             .ok_or("dynamic WASM is not configured on this node")?;
+        let entry_owned = entry.to_string();
         self.wasm_cache
             .get(
                 source,
+                entry, // disc: same bytes + different entry → distinct compiled slots
+                || self.fetch_bundle(source),
+                move |bytes| preparer(bytes, &entry_owned),
+            )
+            .await
+    }
+
+    /// Resolve a dynamic wasi-cli `source` to a compiled [`wasmtime::component::Component`]
+    /// through the content-addressed cache — the cli twin of [`dynamic_wasm`]. The caller is
+    /// responsible for gating the capability by scheme first. The `CommandPre` is built
+    /// per-spawn from the cached `Component` (cheap — no recompile).
+    pub(crate) async fn dynamic_wasm_cli(
+        &self,
+        source: &str,
+    ) -> Result<Arc<wasmtime::component::Component>, String> {
+        let preparer = self
+            .cli_preparer
+            .get()
+            .cloned()
+            .ok_or("dynamic wasi-cli is not configured on this node")?;
+        self.cli_cache
+            .get(
+                source,
+                "", // no discriminator — wasi-cli has no entry parameter
                 || self.fetch_bundle(source),
                 move |bytes| preparer(bytes),
             )
@@ -574,25 +637,40 @@ impl WasmRuntime {
 
         // The dynamic-WASM preparer: compiles a fetched `.wasm` bundle to a prepared component
         // against the same linker(s). Captures clones of the engine + linkers (not the runtime),
-        // so it can run from the spawner's `spawn-from` path without an `Arc` cycle.
+        // so it can run from the spawner's `spawn-from` path without an `Arc` cycle. Takes
+        // `entry: &str` so the correct WIT export is targeted (typically `"run"`).
         let wasm_preparer: WasmPreparer = {
             let engine = engine.clone();
             let linker = Arc::clone(&component_linker);
             let overflow_engine = overflow.clone();
             let overflow_linker = overflow_component_linker.clone();
-            Arc::new(move |bytes: &[u8]| {
+            Arc::new(move |bytes: &[u8], entry: &str| {
                 let component = wasmtime::component::Component::new(&engine, bytes)
                     .map_err(|e| format!("compiling dynamic WASM component: {e}"))?;
                 let overflow = match (&overflow_engine, &overflow_linker) {
                     (Some(e), Some(l)) => Some((e, l.as_ref())),
                     _ => None,
                 };
-                bridges::wasip2::prepare_component_with(&linker, overflow, &component, "run")
+                bridges::wasip2::prepare_component_with(&linker, overflow, &component, entry)
                     .map_err(|e| format!("preparing dynamic WASM component: {e}"))
             })
         };
         let wasm_preparer_cell = OnceLock::new();
         let _ = wasm_preparer_cell.set(wasm_preparer);
+
+        // The dynamic wasi-cli preparer: compiles bytes → raw Component (no import resolution
+        // yet). Import resolution + protocol check (`CommandPre::new`) are deferred to
+        // spawn time — cheap, and avoids storing `CommandPre<WasiHost>` in the cache (its
+        // `!Sync` nature conflicts with moka's bound when `WasiHost: !Sync`).
+        let cli_preparer: WasmCliPreparer = {
+            let engine = engine.clone();
+            Arc::new(move |bytes: &[u8]| {
+                wasmtime::component::Component::new(&engine, bytes)
+                    .map_err(|e| format!("compiling dynamic wasi-cli component: {e}"))
+            })
+        };
+        let cli_preparer_cell = OnceLock::new();
+        let _ = cli_preparer_cell.set(cli_preparer);
 
         // Bump the epoch on a cadence — on a **dedicated OS thread**, not a Tokio
         // task. The whole point is to preempt guests that are pinning the Tokio
@@ -625,6 +703,9 @@ impl WasmRuntime {
                 bundle_resolver: OnceLock::new(),
                 wasm_preparer: wasm_preparer_cell,
                 wasm_cache: bundle_cache::BundleCache::new(dynamic_ttl),
+                component_linker: Arc::clone(&component_linker),
+                cli_preparer: cli_preparer_cell,
+                cli_cache: bundle_cache::BundleCache::new(dynamic_ttl),
             }),
             linker,
             component_linker,
@@ -660,6 +741,7 @@ impl WasmRuntime {
                 bundle: None,
                 caps: None,
                 dynamic: None,
+                wasm_entry: None,
             },
         );
     }
@@ -682,6 +764,7 @@ impl WasmRuntime {
                 bundle: None,
                 caps: Some(caps),
                 dynamic: None,
+                wasm_entry: None,
             },
         );
     }
@@ -699,6 +782,7 @@ impl WasmRuntime {
                 bundle: Some(Arc::new(bundle.into())),
                 caps: None,
                 dynamic: None,
+                wasm_entry: None,
             },
         );
     }
@@ -720,6 +804,7 @@ impl WasmRuntime {
                 bundle: Some(Arc::new(bundle.into())),
                 caps: Some(caps),
                 dynamic: None,
+                wasm_entry: None,
             },
         );
     }
@@ -739,18 +824,27 @@ impl WasmRuntime {
                 bundle: None,
                 caps: Some(caps),
                 dynamic: Some(DynamicKind::Js),
+                wasm_entry: None,
             },
         );
     }
 
     /// Registers a **dynamic WASM runner template** under `name`: a capability profile with no
     /// fixed component. A guest cannot `spawn` it; it runs only via `spawn-from(name, source)`,
-    /// which fetches a `.wasm` component from a runtime source (`kv:`/`url:`), compiles +
-    /// prepares it (cached by content hash — cold once, hot thereafter on the pooled fast
-    /// path), and instantiates it under `caps` (the operator's declared profile — the guest
-    /// chooses the code, never the capabilities). The app loader registers these for a
-    /// `[components.<name>]` marked `dynamic = "wasm"`.
-    pub fn register_wasm_template(&self, name: impl Into<String>, caps: Capabilities) {
+    /// which fetches a `.wasm` **RUSM actor** component from a runtime source (`kv:`/`url:`),
+    /// compiles + prepares it (cached by content hash and entry name — cold once, hot thereafter
+    /// on the pooled fast path), and instantiates it under `caps` (the operator's declared
+    /// profile — the guest chooses the code, never the capabilities). The app loader registers
+    /// these for a `[components.<name>]` marked `dynamic = "wasm"`.
+    ///
+    /// `entry` is the WIT export name to call (default `"run"`). Set it for components whose
+    /// entry export is named differently — see `entry =` in the manifest reference.
+    pub fn register_wasm_template(
+        &self,
+        name: impl Into<String>,
+        caps: Capabilities,
+        entry: Option<String>,
+    ) {
         self.spawner.register(
             name,
             Registered {
@@ -758,6 +852,27 @@ impl WasmRuntime {
                 bundle: None,
                 caps: Some(caps),
                 dynamic: Some(DynamicKind::Wasm),
+                wasm_entry: entry,
+            },
+        );
+    }
+
+    /// Registers a **dynamic wasi-cli runner template** under `name`: a capability profile with
+    /// no fixed component. A guest cannot `spawn` it; it runs only via `spawn-from(name,
+    /// source)`, which fetches a `.wasm` component that implements the standard `wasi:cli/run`
+    /// world, compiles it (cached by content hash), and spawns it as a one-shot command process
+    /// under `caps` — the operator's declared profile. No `rusm:runtime` imports are required;
+    /// any `wasm32-wasip2` binary works. The app loader registers these for a
+    /// `[components.<name>] dynamic = "wasi-cli"` entry.
+    pub fn register_wasm_cli_template(&self, name: impl Into<String>, caps: Capabilities) {
+        self.spawner.register(
+            name,
+            Registered {
+                prepared: None,
+                bundle: None,
+                caps: Some(caps),
+                dynamic: Some(DynamicKind::WasiCli),
+                wasm_entry: None,
             },
         );
     }

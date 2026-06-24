@@ -16,7 +16,9 @@ pub fn add_to_linker(linker: &mut BridgeLinker) -> wasmtime::Result<()> {
 
 impl smtp::Host for BridgeHost {
     async fn send(&mut self, msg: smtp::Message) -> bool {
-        let Ok(api_key) = std::env::var("RESEND_API_KEY") else { return false };
+        let Ok(api_key) = std::env::var("RESEND_API_KEY") else {
+            return false;
+        };
         reqwest::Client::new()
             .post("https://api.resend.com/emails")
             .bearer_auth(&api_key)

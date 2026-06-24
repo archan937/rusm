@@ -158,7 +158,13 @@ fn build_ts_bridge_runners(
         let bundle_name = format!("bridge-{}.js", bridge.name);
         let dest = wasm_dir.join(&bundle_name);
         let status = Command::new("bun")
-            .args(["build", "--target=browser", "--format=cjs", "--minify", "--outfile"])
+            .args([
+                "build",
+                "--target=browser",
+                "--format=cjs",
+                "--minify",
+                "--outfile",
+            ])
             .arg(&dest)
             .arg(&runner_ts)
             .status()

@@ -71,7 +71,7 @@ impl DynamicWasmEngine {
                     loop {
                         while inflight.len() < per_worker {
                             let started = Instant::now();
-                            let prepared = match wasm.prepare_dynamic(&source).await {
+                            let prepared = match wasm.prepare_dynamic(&source, "run").await {
                                 Ok(prepared) => prepared,
                                 Err(_) => return, // engine torn down
                             };

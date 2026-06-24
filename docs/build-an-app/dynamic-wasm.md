@@ -3,9 +3,7 @@
 A RUSM component is normally a **compiled** `.wasm` you build ahead of time (`rusm build` →
 `./wasm/`). But the bytes are just an artifact the runtime loads — so you can also supply a
 compiled component **at deploy time** or **choose one at runtime**, and run it inside a
-sandbox *you* define. It's the compiled twin of [dynamic JS](/build-an-app/dynamic-js), with
-one extra concern JS doesn't have: a `.wasm` must be **compiled** before it runs. RUSM makes
-that a one-time cost.
+sandbox *you* define. RUSM makes the compile a one-time cost.
 
 - **Compile once, spawn hot forever** — the first spawn of a bundle compiles it (cold);
   every later spawn instantiates the cached, prepared component on the pooled fast path
@@ -15,12 +13,21 @@ that a one-time cost.
   the capabilities; the request picks the code, never the permissions. Untrusted plugins,
   per-tenant logic, an artifact registry of components.
 
+Three runner flavours — pick by the component's WIT world:
+
+| | `dynamic = "wasm"` | `dynamic = "wasi-cli"` | `dynamic = "js"` |
+|---|---|---|---|
+| **WIT world** | `rusm:runtime` (RUSM actor) | `wasi:cli/run` (any wasm32-wasip2) | rquickjs JS bundle |
+| **Entry export** | `"run"` (or `entry =`) | fixed (`run` in the cli world) | — |
+| **`spawn-from` returns** | pid (actor — send/receive) | pid (runs to completion) | pid (TS actor) |
+| **Compile cache** | ✓ by content hash + entry | ✓ by content hash | — (js-runner is fixed) |
+
 The runnable companion is [`examples/dynamic-wasm`](https://github.com/archan937/rusm/tree/main/examples/dynamic-wasm).
 
-## Run a component chosen at runtime — `dynamic = "wasm"`
+## RUSM actor — `dynamic = "wasm"`
 
 Declare a **runner template**: a capability profile with **no fixed bundle**. A guest can't
-`spawn` it; it spawns instances with a runtime source, and the loaded component runs under
+`spawn` it; it runs only via `spawn-from(name, source)`, and the loaded component runs under
 the template's **declared** profile:
 
 ```toml
@@ -31,6 +38,7 @@ store = "plugins.redb"           # the durable store the bundles live in (for kv
 [components.plugin-runner]
 capability = "sandboxed"         # e.g. no network, no storage — whatever you grant here
 dynamic    = "wasm"
+# entry   = "handle"             # override the entry export name (default "run")
 ```
 
 A guest then runs a compiled component in that box. The source is **`kv:<bucket>/<key>`** (a
@@ -123,6 +131,76 @@ re-fetches from the URL once the TTL elapses, so replacing the artifact behind t
 blob store, an artifact API, a CDN) rolls the new component out live. `kv:` writes need the
 node stopped; `url:` sourcing is the live-redeploy path.
 
+## Stock CLI tools — `dynamic = "wasi-cli"`
+
+Sometimes you want to run an **existing** binary — a CLI tool, a batch script, a utility —
+that knows nothing about RUSM's actor world. Any `wasm32-wasip2` component that implements
+the standard `wasi:cli/run` world works here; no `rusm:runtime` imports, no actor wire, no
+`spawn-from` protocol to implement.
+
+```toml
+[node]
+store = "tools.redb"
+
+[components.image-processor]
+capability  = "sandboxed"
+dynamic     = "wasi-cli"
+```
+
+The guest spawns it exactly like any other template — `spawn-from(name, source)` fetches
+the `.wasm`, compiles it (once, cached by content hash), builds the `wasi:cli/run`
+instantiation, and runs it as a one-shot sandboxed process. The process runs to completion
+and exits normally; `spawn-from` returns a pid you can monitor or ignore:
+
+::: code-group
+
+```ts [TypeScript]
+import { Process } from "rusm-ts";
+
+// Run an image-processing binary stored in the node's kv store.
+const pid = Process.spawnFrom("image-processor", "kv:tools/img-proc.wasm");
+// Optionally monitor it — `__down` fires when it exits.
+const ref = Process.monitor(pid);
+```
+
+```rust [Rust]
+// Fire-and-forget: spawn a CLI tool, monitor so we know when it finishes.
+let pid = rusm_rs::spawn_from("image-processor", "kv:tools/img-proc.wasm")?;
+let mon = rusm_rs::monitor(pid);
+```
+
+```go [Go]
+pid, _ := rusm.SpawnFrom("image-processor", "kv:tools/img-proc.wasm")
+mon := rusm.Monitor(pid)
+```
+
+:::
+
+`entry =` is ignored for `wasi-cli` templates — the `wasi:cli/run` entry protocol is fixed.
+
+## Custom entry export — `entry`
+
+Every RUSM actor component exports `run: func()` by default. If your component names its
+entry export differently — say, a component built against a custom WIT world that exports
+`start: func()` — use `entry =`:
+
+```toml
+[components.my-worker]
+entry = "start"           # override the default "run"; applies to static + dynamic = "wasm"
+
+[components.dynamic-runner]
+dynamic = "wasm"
+entry   = "handle"        # dynamic WASM also obeys entry; keyed separately in the cache
+```
+
+The entry name is part of the compile-cache key for `dynamic = "wasm"` templates: the same
+`.wasm` bytes compiled for entry `"run"` and for `"handle"` are prepared and cached
+**independently**. This is uncommon — most components export `run` — but important when
+building against a non-standard WIT world.
+
+> `entry =` has no effect on `dynamic = "js"` (the JS runner has its own protocol) or
+> `dynamic = "wasi-cli"` (the `wasi:cli/run` entry is fixed by the standard).
+
 ## Deploy a remote component — `source`
 
 You don't need a template to load a remote `.wasm`. Give any `[components.<name>]` or
@@ -152,8 +230,8 @@ source    = "https://cdn.example/api.wasm"
 - **The chosen code runs under the template's profile, always.** A guest picks *which*
   compiled component runs; it can never widen *what it's allowed to do*. That's the safety
   guarantee — host untrusted, generated, or per-tenant compiled code with confidence.
-- **Any source language.** A plugin is just a `wasm32-wasip2` actor component — write it in
-  Rust, Go, or any toolchain that targets the component model. The runner template is
-  language-agnostic.
-- **Full field reference:** every `source` / `dynamic` / `dynamic_wasm_ttl_secs` rule is in
-  the [configuration reference](/deep-dive/configuration#dynamic-bundle-sourcing).
+- **Any source language.** A `dynamic = "wasm"` plugin is a `wasm32-wasip2` actor component —
+  write it in Rust, Go, or any toolchain that targets the component model. A
+  `dynamic = "wasi-cli"` tool is any stock `wasm32-wasip2` binary — no RUSM SDK needed.
+- **Full field reference:** every `source` / `dynamic` / `entry` / `dynamic_wasm_ttl_secs`
+  rule is in the [configuration reference](/deep-dive/configuration#dynamic-bundle-sourcing).

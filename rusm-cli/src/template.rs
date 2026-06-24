@@ -37,7 +37,9 @@ pub fn parse_template(value: &str) -> Result<Template> {
         "todo-board" | "todo" | "board" => Ok(Template::TodoBoard),
         "weather" | "bridge" | "custom-bridge" => Ok(Template::Weather),
         "mailer" | "email" => Ok(Template::Mailer),
-        other => bail!("unknown template `{other}` — templates are `todo-board`, `weather`, and `mailer`"),
+        other => bail!(
+            "unknown template `{other}` — templates are `todo-board`, `weather`, and `mailer`"
+        ),
     }
 }
 
@@ -285,7 +287,11 @@ mod tests {
             ("rust", &[][..]),
             ("go", &[][..]),
         ] {
-            let examples = manifest.join("..").join("examples").join("todo-board").join(lang);
+            let examples = manifest
+                .join("..")
+                .join("examples")
+                .join("todo-board")
+                .join(lang);
             let templates = manifest.join("templates").join(lang);
 
             let mut ex = BTreeSet::new();

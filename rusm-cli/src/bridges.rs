@@ -116,7 +116,11 @@ pub fn discover(root: &Path) -> Result<Vec<BridgeSpec>> {
                  keep exactly one of host.rs, host.ts, or host.go"
             ),
         };
-        bridges.push(BridgeSpec { name, dir: path, host_impl });
+        bridges.push(BridgeSpec {
+            name,
+            dir: path,
+            host_impl,
+        });
     }
     bridges.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(bridges)
@@ -419,8 +423,11 @@ pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<Str
         ));
 
         let prefix = format!("{ns_mod}::{pkg_mod}::{iface_mod}::");
-        let iface_funcs: Vec<&crate::witmap::Func> =
-            api.functions.iter().filter(|f| f.call_path.starts_with(&prefix)).collect();
+        let iface_funcs: Vec<&crate::witmap::Func> = api
+            .functions
+            .iter()
+            .filter(|f| f.call_path.starts_with(&prefix))
+            .collect();
 
         host_impls.push_str(&format!(
             "impl {iface_path}::Host for ::rusm_wasm::BridgeHost {{\n"
@@ -490,9 +497,7 @@ fn delegate_fn_impl(f: &crate::witmap::Func, bridge_name: &str, runner_name: &st
     };
 
     let parse_reply = if f.result_rust.is_some() {
-        format!(
-            "::rusm_wasm::serde_json::from_slice::<{ret}>(payload).unwrap_or_default()"
-        )
+        format!("::rusm_wasm::serde_json::from_slice::<{ret}>(payload).unwrap_or_default()")
     } else {
         "()".to_string()
     };
@@ -910,7 +915,11 @@ pub fn generate_host_files(root: &Path) -> Result<Vec<BridgeSpec>> {
     let needs_delegation = bridges.iter().any(|b| !b.is_rust_host());
     std::fs::write(
         src.join("bindings.rs"),
-        if needs_delegation { BINDINGS_RS_SERDE } else { BINDINGS_RS },
+        if needs_delegation {
+            BINDINGS_RS_SERDE
+        } else {
+            BINDINGS_RS
+        },
     )?;
 
     // Write the generated delegation shim and language-specific runner for each non-Rust bridge.
@@ -1238,7 +1247,10 @@ mod tests {
         let shim = gen_delegate_host(&bridge, &contract).unwrap();
         // Header comment names the host file (language-specific) and explains the mechanism.
         assert!(shim.contains("GENERATED"), "header present: {shim}");
-        assert!(shim.contains("bridges/weather/host.ts"), "TS host file in header: {shim}");
+        assert!(
+            shim.contains("bridges/weather/host.ts"),
+            "TS host file in header: {shim}"
+        );
         assert!(shim.contains("~1–10µs"), "overhead disclosed: {shim}");
         // add_to_linker wires the WIT interface via the typed bindgen path.
         assert!(shim.contains("pub fn add_to_linker("), "linker fn: {shim}");
@@ -1256,10 +1268,22 @@ mod tests {
         assert!(shim.contains("\"bridge:weather\""), "runner name: {shim}");
         // The selective receive tag includes the `:` separator so that call_id
         // `rusm-bridge:weather-42-1` does not falsely match `rusm-bridge:weather-42-10:…`.
-        assert!(shim.contains("recv_bridge_reply(&tag)"), "tagged recv: {shim}");
-        assert!(shim.contains("format!(\"{}:\", call_id)"), "tag includes separator: {shim}");
-        assert!(shim.contains("strip_prefix(tag.as_bytes())"), "strip tag prefix: {shim}");
-        assert!(shim.contains("rusm_wasm::serde_json::to_string"), "arg marshal: {shim}");
+        assert!(
+            shim.contains("recv_bridge_reply(&tag)"),
+            "tagged recv: {shim}"
+        );
+        assert!(
+            shim.contains("format!(\"{}:\", call_id)"),
+            "tag includes separator: {shim}"
+        );
+        assert!(
+            shim.contains("strip_prefix(tag.as_bytes())"),
+            "strip tag prefix: {shim}"
+        );
+        assert!(
+            shim.contains("rusm_wasm::serde_json::to_string"),
+            "arg marshal: {shim}"
+        );
         assert!(shim.contains("from_slice::<String>"), "reply deser: {shim}");
     }
 
@@ -1274,8 +1298,14 @@ mod tests {
         };
         let contract = parse_contract(&bridge.wit()).unwrap();
         let shim = gen_delegate_host(&bridge, &contract).unwrap();
-        assert!(shim.contains("bridges/weather/host.go"), "Go host file in header: {shim}");
-        assert!(!shim.contains("host.ts"), "no TS mention in Go shim: {shim}");
+        assert!(
+            shim.contains("bridges/weather/host.go"),
+            "Go host file in header: {shim}"
+        );
+        assert!(
+            !shim.contains("host.ts"),
+            "no TS mention in Go shim: {shim}"
+        );
         // Functional content is the same as the TS shim.
         assert!(shim.contains("pub fn add_to_linker("), "linker fn: {shim}");
         assert!(shim.contains("\"bridge:weather\""), "runner name: {shim}");
@@ -1290,12 +1320,30 @@ mod tests {
         };
         let runner = gen_ts_runner(&bridge);
         assert!(runner.contains("GENERATED"), "header: {runner}");
-        assert!(runner.contains("Process.register(\"bridge:weather\")"), "self-register: {runner}");
-        assert!(runner.contains("Process.receiveText()"), "receive loop: {runner}");
-        assert!(runner.contains("JSON.parse(raw)"), "parse request: {runner}");
-        assert!(runner.contains("require(\"./host\")"), "loads user bridge: {runner}");
-        assert!(runner.contains("JSON.stringify(result)"), "serialize reply: {runner}");
-        assert!(runner.contains("callId}:"), "reply tagged with callId: {runner}");
+        assert!(
+            runner.contains("Process.register(\"bridge:weather\")"),
+            "self-register: {runner}"
+        );
+        assert!(
+            runner.contains("Process.receiveText()"),
+            "receive loop: {runner}"
+        );
+        assert!(
+            runner.contains("JSON.parse(raw)"),
+            "parse request: {runner}"
+        );
+        assert!(
+            runner.contains("require(\"./host\")"),
+            "loads user bridge: {runner}"
+        );
+        assert!(
+            runner.contains("JSON.stringify(result)"),
+            "serialize reply: {runner}"
+        );
+        assert!(
+            runner.contains("callId}:"),
+            "reply tagged with callId: {runner}"
+        );
     }
 
     #[test]
@@ -1390,7 +1438,10 @@ mod tests {
         assert!(module.contains("json_codec::add_to_linker(linker)?;"));
         assert!(module.contains("pub fn extend(linker: &mut rusm_wasm::BridgeLinker)"));
         // Pure-Rust bridges: no `init` function.
-        assert!(!module.contains("pub fn init("), "no init for Rust-only: {module}");
+        assert!(
+            !module.contains("pub fn init("),
+            "no init for Rust-only: {module}"
+        );
     }
 
     #[test]
@@ -1418,7 +1469,10 @@ mod tests {
         assert!(module.contains("wasm/bridge-notifier.js"));
         assert!(module.contains("wasm.supervise("));
         // TS path uses register_js_component_with (not compile_component_bytes).
-        assert!(module.contains("register_js_component_with"), "TS uses JS registration: {module}");
+        assert!(
+            module.contains("register_js_component_with"),
+            "TS uses JS registration: {module}"
+        );
     }
 
     #[test]
@@ -1443,12 +1497,24 @@ mod tests {
         // `init` uses prepare_component_bytes + register_component_with (not JS).
         assert!(module.contains("pub fn init(wasm: &rusm_wasm::WasmRuntime)"));
         assert!(module.contains("\"bridge:signer\""));
-        assert!(module.contains("wasm/bridge-signer.wasm"), "Go uses .wasm: {module}");
-        assert!(module.contains("prepare_component_bytes"), "Go compiles wasm: {module}");
-        assert!(module.contains("register_component_with"), "Go registers as component: {module}");
+        assert!(
+            module.contains("wasm/bridge-signer.wasm"),
+            "Go uses .wasm: {module}"
+        );
+        assert!(
+            module.contains("prepare_component_bytes"),
+            "Go compiles wasm: {module}"
+        );
+        assert!(
+            module.contains("register_component_with"),
+            "Go registers as component: {module}"
+        );
         assert!(module.contains("wasm.supervise("));
         // Go path must NOT use register_js_component_with.
-        assert!(!module.contains("register_js_component_with"), "Go doesn't use JS registration: {module}");
+        assert!(
+            !module.contains("register_js_component_with"),
+            "Go doesn't use JS registration: {module}"
+        );
     }
 
     #[test]
@@ -1457,8 +1523,11 @@ mod tests {
         let dir = root.join("bridges/notifier");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("bridge.wit"), "package notifier:bridge@0.1.0;\n").unwrap();
-        std::fs::write(dir.join("host.ts"), "export async function ping() { return 'pong'; }\n")
-            .unwrap();
+        std::fs::write(
+            dir.join("host.ts"),
+            "export async function ping() { return 'pong'; }\n",
+        )
+        .unwrap();
         let found = discover(&root).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "notifier");
@@ -1497,7 +1566,11 @@ mod tests {
         let dir = root.join("bridges/weather");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("bridge.wit"), "package weather:bridge@0.1.0;\n").unwrap();
-        std::fs::write(dir.join("host.go"), "package main\nfunc Lookup(city string) string { return city }\n").unwrap();
+        std::fs::write(
+            dir.join("host.go"),
+            "package main\nfunc Lookup(city string) string { return city }\n",
+        )
+        .unwrap();
         let found = discover(&root).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "weather");
@@ -1520,23 +1593,53 @@ mod tests {
         let runner = gen_go_bridge_runner(&bridge).unwrap();
         assert!(runner.contains("GENERATED"), "header: {runner}");
         assert!(runner.contains("package main"), "package: {runner}");
-        assert!(runner.contains("\"encoding/json\""), "json import: {runner}");
-        assert!(runner.contains("rusm \"github.com/archan937/rusm/packages/rusm-go\""), "sdk import: {runner}");
-        assert!(runner.contains("rusm.Register(\"bridge:weather\")"), "self-register: {runner}");
+        assert!(
+            runner.contains("\"encoding/json\""),
+            "json import: {runner}"
+        );
+        assert!(
+            runner.contains("rusm \"github.com/archan937/rusm/packages/rusm-go\""),
+            "sdk import: {runner}"
+        );
+        assert!(
+            runner.contains("rusm.Register(\"bridge:weather\")"),
+            "self-register: {runner}"
+        );
         assert!(runner.contains("rusm.Receive()"), "receive loop: {runner}");
-        assert!(runner.contains("json.Unmarshal(raw, &req)"), "parse request: {runner}");
-        assert!(runner.contains("case \"lookup\":"), "dispatch case: {runner}");
+        assert!(
+            runner.contains("json.Unmarshal(raw, &req)"),
+            "parse request: {runner}"
+        );
+        assert!(
+            runner.contains("case \"lookup\":"),
+            "dispatch case: {runner}"
+        );
         assert!(runner.contains("var arg0 string"), "deser arg: {runner}");
-        assert!(runner.contains("return Lookup(arg0)"), "calls user fn: {runner}");
-        assert!(runner.contains("json.Marshal(result)"), "serialize reply: {runner}");
-        assert!(runner.contains("req.ReplyTo.CallID+\":\""), "reply tagged with callId: {runner}");
-        assert!(runner.contains("rusm.Send(req.ReplyTo.Pid, reply)"), "sends reply: {runner}");
+        assert!(
+            runner.contains("return Lookup(arg0)"),
+            "calls user fn: {runner}"
+        );
+        assert!(
+            runner.contains("json.Marshal(result)"),
+            "serialize reply: {runner}"
+        );
+        assert!(
+            runner.contains("req.ReplyTo.CallID+\":\""),
+            "reply tagged with callId: {runner}"
+        );
+        assert!(
+            runner.contains("rusm.Send(req.ReplyTo.Pid, reply)"),
+            "sends reply: {runner}"
+        );
     }
 
     #[test]
     fn gen_go_bridge_gomod_uses_sdk_version() {
         let gomod = gen_go_bridge_gomod("weather");
-        assert!(gomod.contains("module bridge-weather"), "module name: {gomod}");
+        assert!(
+            gomod.contains("module bridge-weather"),
+            "module name: {gomod}"
+        );
         assert!(gomod.contains("go 1.24"), "go version: {gomod}");
         assert!(
             gomod.contains(&format!(
@@ -1570,8 +1673,14 @@ mod tests {
         };
         let runner = gen_go_bridge_runner(&bridge).unwrap();
         // Record param → pass-through assignment, NOT json.Unmarshal.
-        assert!(runner.contains("arg0 := args[0]"), "record → pass-through: {runner}");
-        assert!(!runner.contains("json.Unmarshal(args[0]"), "no Unmarshal for record: {runner}");
+        assert!(
+            runner.contains("arg0 := args[0]"),
+            "record → pass-through: {runner}"
+        );
+        assert!(
+            !runner.contains("json.Unmarshal(args[0]"),
+            "no Unmarshal for record: {runner}"
+        );
         // The dispatch case still calls the user's PascalCase function.
         assert!(runner.contains("case \"send\":"), "dispatch case: {runner}");
         assert!(runner.contains("return Send(arg0)"), "calls Send: {runner}");

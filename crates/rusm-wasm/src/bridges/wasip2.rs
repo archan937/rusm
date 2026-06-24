@@ -126,8 +126,14 @@ impl WasmRuntime {
     /// a resolver set via [`set_bundle_resolver`](Self::set_bundle_resolver)). Capability
     /// gating is the host's concern here — there is no guest profile to enforce, exactly as
     /// for [`spawn_component`](Self::spawn_component).
-    pub async fn prepare_dynamic(&self, source: &str) -> Result<Arc<PreparedComponent>, String> {
-        self.spawner.dynamic_wasm(source).await
+    /// `entry` is the WIT export name (typically `"run"`); it is part of the cache key so
+    /// the same bytes compiled for different entries are stored independently.
+    pub async fn prepare_dynamic(
+        &self,
+        source: &str,
+        entry: &str,
+    ) -> Result<Arc<PreparedComponent>, String> {
+        self.spawner.dynamic_wasm(source, entry).await
     }
 
     /// Spawns a prepared component as an isolated process under the **default-deny
@@ -250,6 +256,30 @@ impl Spawner {
             self.rt.send(handle.pid(), (**bundle).clone());
         }
         Some(handle)
+    }
+
+    /// Spawns a pre-built command (`wasi:cli/run`) as an isolated one-shot process under
+    /// `caps`. The [`CommandPre`] has already been built by the caller (import resolution +
+    /// protocol check done); this path mirrors [`spawn_component`] but for the command world.
+    /// Used by the dynamic wasi-cli `spawn-from` dispatch in the actor bridge, which holds
+    /// only an `Arc<Spawner>` and has already fetched + compiled the [`Component`].
+    pub(crate) fn spawn_command_pre(
+        self: &Arc<Self>,
+        pre: CommandPre<WasiHost>,
+        caps: Capabilities,
+        label: Option<&str>,
+    ) -> ProcessHandle {
+        let log_caps = label
+            .filter(|_| self.rt.wants_log(rusm_otp::LogLevel::Error))
+            .map(|_| caps.clone());
+        let spawner = Arc::clone(self);
+        let handle = self
+            .rt
+            .spawn(move |ctx| run_command(spawner, pre, caps, ctx));
+        if let (Some(label), Some(caps)) = (label, &log_caps) {
+            self.record_spawn(handle.pid(), label, caps);
+        }
+        handle
     }
 
     /// The single platform-log policy for a **named** spawn: label the process (so its
@@ -2887,7 +2917,7 @@ mod tests {
         let rt = Runtime::new();
         let path = kv_test_path("spawn-from-wasm");
         let wr = WasmRuntime::with_store(rt.clone(), &path).unwrap();
-        wr.register_wasm_template("runner", CapabilityProfile::Trusted.capabilities());
+        wr.register_wasm_template("runner", CapabilityProfile::Trusted.capabilities(), None);
 
         let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
         host.kv_bucket("bundles")
@@ -2916,6 +2946,180 @@ mod tests {
                 format!("hello from {pid}"),
                 "the {label} dynamic-WASM instance ran under the template and answered"
             );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_from_compiles_and_runs_a_dynamic_wasi_cli_component() {
+        // A `dynamic = "wasi-cli"` template runs any stock `wasi:cli/run` component from a
+        // runtime source — no `rusm:runtime` required in the guest. The component is compiled
+        // once (cold), cached by content hash, and the `CommandPre` built per-spawn. Proves:
+        // the full `spawn-from` → compile → `CommandPre` → `spawn_command_pre` → run path.
+        use crate::bindings::rusm::runtime::actor::Host;
+        const CMD: &[u8] = include_bytes!("../../tests/fixtures/cmd_writes.wasm");
+        let dir =
+            std::env::temp_dir().join(format!("rusm-wasi-cli-spawnfrom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let rt = Runtime::new();
+        let path = kv_test_path("spawn-from-wasi-cli");
+        let wr = WasmRuntime::builder(rt.clone())
+            .store(&path)
+            .build()
+            .unwrap();
+        // Grant preopen so the command can write its marker file.
+        let caps = CapabilityProfile::Sandboxed
+            .capabilities()
+            .preopen(dir.clone(), "/out", false);
+        wr.register_wasm_cli_template("cli-runner", caps);
+
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        host.kv_bucket("tools").unwrap().set("cmd", CMD).unwrap();
+
+        // Both spawns should run the command to completion. The second proves the cache
+        // (`cold` compiles once; `hot` instantiates from the cached Component).
+        for label in ["cold", "hot"] {
+            let pid = host
+                .spawn_from("cli-runner".into(), "kv:tools/cmd".into())
+                .await
+                .unwrap_or_else(|e| panic!("{label} wasi-cli spawn-from failed: {e}"));
+            // Wait for the command to finish via a monitor: the Down message fires when the
+            // process exits (normal completion after writing the marker).
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let watcher = rt.spawn(move |mut ctx| async move {
+                ctx.recv().await;
+                let _ = tx.send(());
+            });
+            rt.monitor(watcher.pid(), rusm_otp::Pid::from_raw(pid));
+            tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+                .await
+                .unwrap_or_else(|_| panic!("{label} wasi-cli command did not finish within 5s"))
+                .unwrap();
+        }
+
+        let marker = dir.join("ran.txt");
+        let got = std::fs::read(&marker).expect("command wrote its marker");
+        assert_eq!(
+            got, b"command component ran",
+            "wasi-cli command ran end-to-end"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wasi_cli_template_rejects_spawn_by_name() {
+        // A `wasi-cli` template is spawn-from only — calling `spawn` on it must return an
+        // error directing the caller to use `spawn-from`, just like `js` and `wasm` templates.
+        use crate::bindings::rusm::runtime::actor::Host;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        wr.register_wasm_cli_template("my-cli", CapabilityProfile::Sandboxed.capabilities());
+
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        let err = host.spawn("my-cli".to_string()).await.unwrap_err();
+        assert!(
+            err.contains("dynamic runner template"),
+            "expected 'dynamic runner template' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_from_on_non_template_returns_error() {
+        // `spawn-from` on a fixed (non-template) component must return a clear error
+        // directing the caller to use `spawn` instead.
+        use crate::bindings::rusm::runtime::actor::Host;
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(COMP_RUN).unwrap(), "run")
+            .unwrap();
+        wr.register_component("fixed", pre);
+
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        let err = host
+            .spawn_from("fixed".to_string(), "inline:ignored".to_string())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("not a dynamic template"),
+            "expected 'not a dynamic template' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn entry_override_prepares_a_non_run_export() {
+        // `prepare_component(c, "handle")` succeeds when the component exports `handle: func()`;
+        // `prepare_component(c, "run")` fails — the export doesn't exist. This proves the entry
+        // parameter threads all the way through and the wrong name is a clear error.
+        const COMP_HANDLE: &str = r#"(component
+            (core module $m (func (export "handle")))
+            (core instance $i (instantiate $m))
+            (func (export "handle") (canon lift (core func $i "handle"))))"#;
+
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let component = wr.compile_component(COMP_HANDLE).unwrap();
+
+        assert!(
+            wr.prepare_component(&component, "handle").is_ok(),
+            "should succeed: the component exports `handle`"
+        );
+        assert!(
+            wr.prepare_component(&component, "run").is_err(),
+            "should fail: the component has no `run` export"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dynamic_wasm_with_entry_override_compiles_and_runs() {
+        // `dynamic = "wasm"` with `entry = "handle"` compiles, caches, and runs a component
+        // whose entry export is `handle` instead of `run`. The cache key includes the entry name,
+        // so `"run"` and `"handle"` are compiled and cached independently.
+        use crate::bindings::rusm::runtime::actor::Host;
+        const COMP_HANDLE_ECHO: &str = r#"(component
+            (core module $m (func (export "handle")))
+            (core instance $i (instantiate $m))
+            (func (export "handle") (canon lift (core func $i "handle"))))"#;
+
+        let rt = Runtime::new();
+        let path = kv_test_path("spawn-from-wasm-entry");
+        let wr = WasmRuntime::with_store(rt.clone(), &path).unwrap();
+        wr.register_wasm_template(
+            "handle-runner",
+            CapabilityProfile::Trusted.capabilities(),
+            Some("handle".to_string()),
+        );
+
+        let mut host = test_host(&wr, &rt, CapabilityProfile::Trusted.capabilities());
+        // `Component::new` accepts both binary `.wasm` and WAT text, so storing the WAT
+        // source bytes in kv is a valid deployment — the preparer re-parses them.
+        host.kv_bucket("components")
+            .unwrap()
+            .set("app", COMP_HANDLE_ECHO.as_bytes())
+            .unwrap();
+
+        // Both cold and hot spawns must succeed — the entry override is in play throughout.
+        for label in ["cold", "hot"] {
+            let pid = host
+                .spawn_from("handle-runner".into(), "kv:components/app".into())
+                .await
+                .unwrap_or_else(|e| panic!("{label} handle-entry spawn-from failed: {e}"));
+            // Wait for completion via a monitor — the process exits once `handle` returns.
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let watcher = rt.spawn(move |mut ctx| async move {
+                ctx.recv().await;
+                let _ = tx.send(());
+            });
+            rt.monitor(watcher.pid(), rusm_otp::Pid::from_raw(pid));
+            tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+                .await
+                .unwrap_or_else(|_| {
+                    panic!("{label} handle-entry component did not finish within 5s")
+                })
+                .unwrap();
         }
         let _ = std::fs::remove_file(&path);
     }

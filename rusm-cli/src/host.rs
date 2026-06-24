@@ -155,10 +155,15 @@ mod tests {
     async fn serve_with_init_calls_init_before_spawn() {
         let called = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&called);
-        serve_with_init(Path::new("."), &NodeConfig::default(), |_| Ok(()), move |_wasm| {
-            flag.store(true, Ordering::SeqCst);
-            Ok(())
-        })
+        serve_with_init(
+            Path::new("."),
+            &NodeConfig::default(),
+            |_| Ok(()),
+            move |_wasm| {
+                flag.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
         .await
         .unwrap();
         assert!(called.load(Ordering::SeqCst), "init must be called");

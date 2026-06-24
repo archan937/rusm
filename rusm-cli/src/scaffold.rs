@@ -143,7 +143,8 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
              `--template mailer` for a bridge example, or `--bridges` to start a new bridge app"
         );
     }
-    let bridge_app = bridges || matches!(template, Some(Template::Weather) | Some(Template::Mailer));
+    let bridge_app =
+        bridges || matches!(template, Some(Template::Weather) | Some(Template::Mailer));
     if bridge_app && matches!(lang, Lang::Generic) {
         bail!(
             "a custom-bridge app needs a guest language to call the bridge — \
@@ -401,7 +402,10 @@ fn mailer_bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
         }
         Lang::Go => {
             out.push((PathBuf::from("components/api/go.mod"), go_mod()));
-            out.push((PathBuf::from("components/api/main.go"), mailer_go_guest(app)));
+            out.push((
+                PathBuf::from("components/api/main.go"),
+                mailer_go_guest(app),
+            ));
         }
         _ => {
             out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));

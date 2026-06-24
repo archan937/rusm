@@ -16,6 +16,8 @@ use std::time::Duration;
 
 use rusm_otp::{Context, ExitReason, Pid, Received, Runtime, Strategy};
 
+use wasmtime_wasi::p2::bindings::CommandPre;
+
 use crate::bridges::WasiHost;
 use crate::DynamicKind;
 
@@ -125,14 +127,29 @@ impl actor::Host for WasiHost {
                 self.rt.send(Pid::from_raw(child.pid().raw()), bundle);
                 Ok(child.pid().raw())
             }
-            // Dynamic WASM: gate the I/O capability by scheme, then compile (cold once, cached
-            // by content hash) and spawn the prepared component on the pooled fast path (hot).
-            // `dynamic_wasm` borrows only the `Sync` spawner across its await, so the future
-            // stays `Send`.
+            // Dynamic WASM (RUSM actor): gate the I/O capability by scheme, then compile (cold
+            // once, cached by content hash + entry name) and spawn on the pooled fast path (hot).
+            // `dynamic_wasm` borrows only the `Sync` spawner across its await → future is `Send`.
             Some(DynamicKind::Wasm) => {
                 self.gate_source(&source)?;
-                let prepared = spawner.dynamic_wasm(&source).await?;
+                let wasm_entry = entry.wasm_entry.as_deref().unwrap_or("run").to_string();
+                let prepared = spawner.dynamic_wasm(&source, &wasm_entry).await?;
                 let child = spawner.spawn_component(prepared.as_ref(), caps, Some(&component));
+                Ok(child.pid().raw())
+            }
+            // Dynamic wasi-cli: compile the `.wasm` (cached by content hash), build a
+            // `CommandPre` (import resolution + protocol check — cheap, no recompile), and
+            // spawn as a one-shot command process. No `rusm:runtime` required in the guest.
+            Some(DynamicKind::WasiCli) => {
+                self.gate_source(&source)?;
+                let component_arc = spawner.dynamic_wasm_cli(&source).await?;
+                let instance_pre = spawner
+                    .component_linker
+                    .instantiate_pre(&component_arc)
+                    .map_err(|e| format!("wasi-cli: instantiate_pre failed: {e}"))?;
+                let pre = CommandPre::new(instance_pre)
+                    .map_err(|e| format!("`{component}` source is not a wasi:cli command: {e}"))?;
+                let child = spawner.spawn_command_pre(pre, caps, Some(&component));
                 Ok(child.pid().raw())
             }
         }

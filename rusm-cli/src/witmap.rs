@@ -106,7 +106,11 @@ pub fn bridge_api(wit: &Path) -> Result<Api> {
                 None => (None, None, None),
                 Some(t) => {
                     let lowered = lower(&resolve, t, &ns, &pkg_name, &mut ts_decls)?;
-                    (Some(lowered.ts), Some(lowered.rust), Some(go_type(&resolve, t)))
+                    (
+                        Some(lowered.ts),
+                        Some(lowered.rust),
+                        Some(go_type(&resolve, t)),
+                    )
                 }
             };
             functions.push(Func {
@@ -421,9 +425,19 @@ fn go_type_def(resolve: &Resolve, id: TypeId) -> String {
             // Pointer-ify primitive and string options (Go idiom for optional scalar);
             // complex inner types use json.RawMessage (null JSON round-trips cleanly).
             match inner {
-                Type::Bool | Type::U8 | Type::U16 | Type::U32 | Type::U64
-                | Type::S8 | Type::S16 | Type::S32 | Type::S64
-                | Type::F32 | Type::F64 | Type::Char | Type::String => {
+                Type::Bool
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::S8
+                | Type::S16
+                | Type::S32
+                | Type::S64
+                | Type::F32
+                | Type::F64
+                | Type::Char
+                | Type::String => {
                     format!("*{}", go_type(resolve, inner))
                 }
                 _ => "json.RawMessage".into(),

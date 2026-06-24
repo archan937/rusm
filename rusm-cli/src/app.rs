@@ -192,6 +192,9 @@ enum Registration {
 /// a TS service; a `<name>.wasm` is an actor component (registrable) or, failing the
 /// actor world, a stock `wasi:cli` command spawned once. Errors if no artifact exists
 /// or it won't compile — a clear signal to run `rusm build` first.
+///
+/// `entry` overrides the WIT entry-point export name (default `"run"`); applies to static
+/// `.wasm` components and `dynamic = "wasm"` templates. Ignored for JS and wasi-cli.
 async fn register_component(
     wasm_dir: &Path,
     wasm: &WasmRuntime,
@@ -199,10 +202,13 @@ async fn register_component(
     caps: &Capabilities,
     source: Option<&str>,
     dynamic: Option<&str>,
+    entry: Option<&str>,
 ) -> Result<Registration> {
-    // A dynamic runner template: a capability profile with no fixed bundle. A guest
-    // reaches it via spawn-from(name, runtime-source); nothing loads here. `"js"` runs a
-    // runtime-chosen JS bundle, `"wasm"` a runtime-chosen (compile-cached) WASM component.
+    // A dynamic runner template: a capability profile with no fixed bundle. A guest reaches
+    // it via `spawn-from(name, runtime-source)`; nothing is loaded here. Supported kinds:
+    // - `"js"`: runtime-chosen JS bundle on the shared rquickjs runner.
+    // - `"wasm"`: runtime-chosen RUSM actor component (compile-cached; `entry` applies).
+    // - `"wasi-cli"`: runtime-chosen `wasi:cli/run` component (no rusm:runtime needed).
     if let Some(kind) = dynamic {
         if source.is_some() {
             return Err(anyhow!(
@@ -211,10 +217,22 @@ async fn register_component(
         }
         match kind {
             "js" => wasm.register_js_template(name.to_string(), caps.clone()),
-            "wasm" => wasm.register_wasm_template(name.to_string(), caps.clone()),
+            "wasm" => wasm.register_wasm_template(
+                name.to_string(),
+                caps.clone(),
+                entry.map(str::to_string),
+            ),
+            "wasi-cli" => {
+                if entry.is_some() {
+                    return Err(anyhow!(
+                        "component `{name}`: `entry` has no effect on `dynamic = \"wasi-cli\"` — the wasi:cli/run protocol is fixed"
+                    ));
+                }
+                wasm.register_wasm_cli_template(name.to_string(), caps.clone())
+            }
             other => {
                 return Err(anyhow!(
-                    "component `{name}`: dynamic = {other:?} is not supported (use \"js\" or \"wasm\")"
+                    "component `{name}`: dynamic = {other:?} is not supported (use \"js\", \"wasm\", or \"wasi-cli\")"
                 ));
             }
         }
@@ -228,9 +246,15 @@ async fn register_component(
             let component = wasm
                 .compile_component(&bundle)
                 .with_context(|| format!("compiling remote component `{name}`"))?;
-            let prepared = wasm.prepare_component(&component, "run").with_context(|| {
-                format!("remote source for `{name}` is not a rusm actor component")
-            })?;
+            let entry_name = entry.unwrap_or("run");
+            let prepared = wasm
+                .prepare_component(&component, entry_name)
+                .with_context(|| {
+                    format!(
+                        "remote source for `{name}` is not a rusm actor component \
+                         (entry = {entry_name:?}; run `rusm build`?)"
+                    )
+                })?;
             wasm.register_component_with(name.to_string(), prepared, caps.clone());
         } else {
             wasm.register_js_component_with(name.to_string(), bundle, caps.clone());
@@ -253,10 +277,11 @@ async fn register_component(
     let component = wasm
         .compile_component(&bytes)
         .with_context(|| format!("compiling component `{name}`"))?;
-    // An actor component exports `run` (rusm:runtime); a stock component exports
-    // `wasi:cli/run`. Prefer the actor path (registrable + spawnable by siblings, and
-    // resident-supervisable); otherwise run it unchanged as a one-shot command.
-    match wasm.prepare_component(&component, "run") {
+    // An actor component exports an entry (default `"run"` for rusm:runtime); a stock
+    // wasi:cli component is an alternative. Prefer the actor path (registrable + supervisable);
+    // fall back to one-shot command only when no entry matches.
+    let entry_name = entry.unwrap_or("run");
+    match wasm.prepare_component(&component, entry_name) {
         Ok(prepared) => {
             wasm.register_component_with(name.to_string(), prepared, caps.clone());
             Ok(Registration::Service)
@@ -265,7 +290,10 @@ async fn register_component(
             let handle = wasm
                 .spawn_command_with(&component, caps.clone())
                 .with_context(|| {
-                    format!("`{name}` is neither a rusm actor component nor a wasi:cli command")
+                    format!(
+                        "`{name}` is neither a rusm actor component (entry = {entry_name:?}) \
+                         nor a wasi:cli command"
+                    )
                 })?;
             Ok(Registration::Command(handle))
         }
@@ -307,6 +335,7 @@ pub async fn spawn_components(
             &caps,
             spec.source.as_deref(),
             spec.dynamic.as_deref(),
+            spec.entry.as_deref(),
         )
         .await?
         {
@@ -631,6 +660,7 @@ mod tests {
             resident,
             source: None,
             dynamic: None,
+            entry: None,
         }
     }
 
@@ -1119,6 +1149,7 @@ mod tests {
             resident: false,
             source: None,
             dynamic: Some(kind.to_string()),
+            entry: None,
         }
     }
 
@@ -1144,6 +1175,83 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registers_a_dynamic_wasi_cli_template() {
+        // `dynamic = "wasi-cli"` registers a cli runner template — no artifact is read,
+        // no process is boot-parked; the template is spawn-from only.
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = WasmRuntime::new(Runtime::new()).unwrap();
+        let hosted = spawn_components(
+            dir.path(),
+            &wasm,
+            &components(&[("cli-runner", template_spec("wasi-cli"))]),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            hosted.names,
+            ["cli-runner"],
+            "the wasi-cli template is registered"
+        );
+        assert!(
+            hosted.resident.is_empty(),
+            "a template is never boot-parked"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registers_a_component_with_entry_override() {
+        // `entry = "handle"` overrides the default `"run"` export for a static component.
+        // Wasmtime accepts WAT source text as bytes, so we write the WAT straight to the
+        // `.wasm` file and let `register_component` compile it — same path as a real deploy.
+        const COMP_HANDLE: &str = r#"(component
+            (core module $m (func (export "handle")))
+            (core instance $i (instantiate $m))
+            (func (export "handle") (canon lift (core func $i "handle"))))"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasm_dir = dir.path().join("wasm");
+        std::fs::create_dir_all(&wasm_dir).unwrap();
+        // Wasmtime accepts WAT source text in addition to binary — write it directly.
+        std::fs::write(wasm_dir.join("handle-svc.wasm"), COMP_HANDLE.as_bytes()).unwrap();
+
+        let wasm = WasmRuntime::new(Runtime::new()).unwrap();
+
+        // `entry = "handle"` must register successfully.
+        let ok = register_component(
+            &wasm_dir,
+            &wasm,
+            "handle-svc",
+            &rusm_wasm::Capabilities::nothing(),
+            None,
+            None,
+            Some("handle"),
+        )
+        .await;
+        if let Err(e) = ok {
+            panic!("entry = \"handle\" must succeed: {e}");
+        }
+
+        // The default `"run"` must fail — this component has no `run` export.
+        let err = expect_err(
+            register_component(
+                &wasm_dir,
+                &wasm,
+                "handle-svc",
+                &rusm_wasm::Capabilities::nothing(),
+                None,
+                None,
+                Some("run"),
+            )
+            .await,
+        );
+        assert!(
+            err.contains("handle-svc"),
+            "error names the component: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rejects_an_unknown_dynamic_kind() {
         // Only `js`/`wasm` are runner-template kinds; anything else is a clear load error
         // (a typo is caught at boot, not silently ignored).
@@ -1157,12 +1265,13 @@ mod tests {
                 &Capabilities::nothing(),
                 None,
                 Some("python"),
+                None,
             )
             .await,
         );
         assert!(err.contains("python"), "names the bad kind: {err}");
         assert!(
-            err.contains("js") && err.contains("wasm"),
+            err.contains("js") && err.contains("wasm") && err.contains("wasi-cli"),
             "lists the valid kinds: {err}"
         );
     }
@@ -1186,6 +1295,7 @@ mod tests {
                 "svc",
                 &Capabilities::nothing(),
                 Some("kv:bundles/broken"),
+                None,
                 None,
             )
             .await,

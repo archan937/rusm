@@ -65,9 +65,15 @@ impl<V: Send + Sync + 'static> BundleCache<V> {
     ///
     /// `fetch` is invoked at most once per call (cold/stale only); `prepare` at most once per
     /// distinct content-hash across the whole cache.
+    ///
+    /// `disc` is an **optional discriminator string** (e.g., the entry-export name for dynamic
+    /// WASM components): when non-empty it is folded into both cache keys, so the same bytes
+    /// compiled for entry `"run"` and for entry `"handle"` are stored and retrieved
+    /// independently. Pass `""` for the disc-less behaviour (the existing single-entry path).
     pub(crate) async fn get<F, Fut, P>(
         &self,
         source: &str,
+        disc: &str,
         fetch: F,
         prepare: P,
     ) -> Result<Arc<V>, String>
@@ -76,15 +82,32 @@ impl<V: Send + Sync + 'static> BundleCache<V> {
         Fut: Future<Output = Result<Vec<u8>, String>>,
         P: FnOnce(&[u8]) -> Result<V, String>,
     {
+        // When a discriminator is in play the freshness key encodes it, so two distinct
+        // (source, disc) pairs occupy separate freshness and compiled slots.
+        let fresh_key: String = if disc.is_empty() {
+            source.to_string()
+        } else {
+            format!("{disc}\0{source}")
+        };
+
         // Fully hot: the source is fresh and its compile is still warm.
-        if let Some(hash) = self.fresh.get(source).await {
+        if let Some(hash) = self.fresh.get(&fresh_key).await {
             if let Some(prepared) = self.compiled.get(&hash).await {
                 return Ok(prepared);
             }
         }
-        // Cold or stale: (re)fetch, hash, and compile only if these exact bytes aren't cached.
+        // Cold or stale: (re)fetch, then compute a discriminated content-hash so the same
+        // bytes compiled for different entries live in separate compiled-cache slots.
         let bytes = fetch().await?;
-        let hash = content_hash(&bytes);
+        let hash: ContentHash = if disc.is_empty() {
+            content_hash(&bytes)
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            hasher.update(b"\0");
+            hasher.update(disc.as_bytes());
+            hasher.finalize().into()
+        };
         let prepared = self
             .compiled
             .try_get_with(hash, async { prepare(&bytes).map(Arc::new) })
@@ -93,7 +116,7 @@ impl<V: Send + Sync + 'static> BundleCache<V> {
         // Record the source → hash mapping only on success, so `fresh` never points at a hash
         // that failed to compile (a bad deploy surfaces the error without corrupting the cache;
         // a previously-good hash stays referenced and keeps serving until the next good bundle).
-        self.fresh.insert(source.to_string(), hash).await;
+        self.fresh.insert(fresh_key, hash).await;
         Ok(prepared)
     }
 }
@@ -116,11 +139,18 @@ mod tests {
                 prepares: AtomicUsize::new(0),
             }
         }
-        async fn get(&self, cache: &BundleCache<Vec<u8>>, source: &str, bytes: &[u8]) -> Vec<u8> {
+        async fn get(
+            &self,
+            cache: &BundleCache<Vec<u8>>,
+            source: &str,
+            disc: &str,
+            bytes: &[u8],
+        ) -> Vec<u8> {
             let bytes = bytes.to_vec();
             cache
                 .get(
                     source,
+                    disc,
                     || async {
                         self.fetches.fetch_add(1, Ordering::SeqCst);
                         Ok(bytes.clone())
@@ -155,11 +185,11 @@ mod tests {
     async fn second_spawn_is_hot_no_fetch_no_compile() {
         let cache = BundleCache::new(Duration::from_secs(60));
         let probe = Probe::new();
-        assert_eq!(probe.get(&cache, "api", b"v1").await, b"v1");
+        assert_eq!(probe.get(&cache, "api", "", b"v1").await, b"v1");
         assert_eq!(probe.counts(), (1, 1), "cold: one fetch, one compile");
         // Hot — within the TTL, the same source neither fetches nor compiles again.
-        assert_eq!(probe.get(&cache, "api", b"v1").await, b"v1");
-        assert_eq!(probe.get(&cache, "api", b"v1").await, b"v1");
+        assert_eq!(probe.get(&cache, "api", "", b"v1").await, b"v1");
+        assert_eq!(probe.get(&cache, "api", "", b"v1").await, b"v1");
         assert_eq!(probe.counts(), (1, 1), "hot: no extra fetch or compile");
     }
 
@@ -169,8 +199,8 @@ mod tests {
         let probe = Probe::new();
         // Two distinct sources serving the SAME bytes: each is fetched (different source), but
         // the content-hash dedups the expensive compile to one.
-        probe.get(&cache, "url:a", b"same").await;
-        probe.get(&cache, "url:b", b"same").await;
+        probe.get(&cache, "url:a", "", b"same").await;
+        probe.get(&cache, "url:b", "", b"same").await;
         assert_eq!(
             probe.counts(),
             (2, 1),
@@ -182,12 +212,12 @@ mod tests {
     async fn changed_bytes_recompile_under_a_new_hash() {
         let cache = BundleCache::new(Duration::from_millis(60));
         let probe = Probe::new();
-        probe.get(&cache, "api", b"v1").await;
+        probe.get(&cache, "api", "", b"v1").await;
         assert_eq!(probe.counts(), (1, 1));
         // Let the source go stale, then it serves new bytes → new hash → re-fetch + recompile.
         tokio::time::sleep(Duration::from_millis(90)).await;
         cache.fresh.run_pending_tasks().await;
-        assert_eq!(probe.get(&cache, "api", b"v2").await, b"v2");
+        assert_eq!(probe.get(&cache, "api", "", b"v2").await, b"v2");
         assert_eq!(
             probe.counts(),
             (2, 2),
@@ -199,12 +229,12 @@ mod tests {
     async fn stale_source_is_refetched_after_ttl() {
         let cache = BundleCache::new(Duration::from_millis(60));
         let probe = Probe::new();
-        probe.get(&cache, "api", b"v1").await;
+        probe.get(&cache, "api", "", b"v1").await;
         assert_eq!(probe.counts().0, 1, "one fetch cold");
         tokio::time::sleep(Duration::from_millis(90)).await;
         cache.fresh.run_pending_tasks().await;
         // Source is re-checked after the freshness TTL.
-        probe.get(&cache, "api", b"v1").await;
+        probe.get(&cache, "api", "", b"v1").await;
         assert_eq!(
             probe.counts().0,
             2,
@@ -225,6 +255,7 @@ mod tests {
                 cache
                     .get(
                         "api",
+                        "",
                         || async { Ok(b"payload".to_vec()) },
                         |b| {
                             prepares.fetch_add(1, Ordering::SeqCst);
@@ -253,6 +284,7 @@ mod tests {
         let attempt = || {
             cache.get(
                 "api",
+                "",
                 || async { Ok(b"x".to_vec()) },
                 |_| {
                     calls.fetch_add(1, Ordering::SeqCst);
@@ -267,5 +299,30 @@ mod tests {
             2,
             "a failed compile is retried, never cached"
         );
+    }
+
+    #[tokio::test]
+    async fn discriminated_entries_compile_separately() {
+        // Same source, same bytes — but two different disc values. Each occupies its own
+        // freshness and compiled slot, so "handle" and "run" are compiled independently.
+        let cache = BundleCache::new(Duration::from_secs(60));
+        let probe = Probe::new();
+
+        probe.get(&cache, "kv:bundle", "run", b"code").await;
+        assert_eq!(probe.counts(), (1, 1), "run: one fetch, one compile");
+
+        // Same source, same bytes, different disc → fresh key differs → re-fetches and
+        // compiles independently (the compiled hash also differs so no cross-slot hit).
+        probe.get(&cache, "kv:bundle", "handle", b"code").await;
+        assert_eq!(
+            probe.counts(),
+            (2, 2),
+            "handle: a second fetch and compile, independent of run"
+        );
+
+        // Both are now hot in their own slots — no extra work.
+        probe.get(&cache, "kv:bundle", "run", b"code").await;
+        probe.get(&cache, "kv:bundle", "handle", b"code").await;
+        assert_eq!(probe.counts(), (2, 2), "both hot: no additional work");
     }
 }
