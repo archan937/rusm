@@ -37,6 +37,8 @@ rusm generate component feed --protocol sse                   # add a TS SSE com
 rusm generate bridge mailer --lang ts                         # add a TS host bridge
 ```
 
+## Configure your app
+
 The scaffolded `rusm.toml` is your app manifest — see the
 [configuration reference](/deep-dive/configuration) for every table and field
 (`[[serve]]`, `[serve.routes]`, `[capabilities.<name>]`, `[components.<name>]`, env), and the
