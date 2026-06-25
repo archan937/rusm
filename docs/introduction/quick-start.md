@@ -25,8 +25,17 @@ your guest, in any language — `rusm new forecast --template weather --lang ts`
 [Add your own functions](/build-an-app/add-your-own-functions).
 
 `--lang rust` (or `--lang go`) scaffolds a single Rust or Go component instead of TypeScript;
-`--protocol ws` (or `sse`) scaffolds a WebSocket or SSE handler instead of HTTP. The
-scaffolded `rusm.toml` is your app manifest — see the
+`--protocol ws` (or `sse`) scaffolds a WebSocket or SSE handler instead of HTTP.
+
+Once you have a project, `rusm generate` adds to it without touching anything else:
+
+```sh
+rusm generate component payments --lang rust --protocol http  # add a Rust HTTP component
+rusm generate component feed --protocol sse                   # add a TS SSE component
+rusm generate bridge mailer --lang ts                         # add a TS host bridge
+```
+
+The scaffolded `rusm.toml` is your app manifest — see the
 [configuration reference](/deep-dive/configuration) for every table and field
 (`[[serve]]`, `[serve.routes]`, `[capabilities.<name>]`, `[components.<name>]`, env), and the
 [`rusm` CLI reference](/build-an-app/the-rusm-cli) for the full command set.
