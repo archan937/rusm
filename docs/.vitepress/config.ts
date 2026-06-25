@@ -89,6 +89,7 @@ const sections = [
         text: 'Extend',
         items: [
           { text: 'Add your own functions', link: '/build-an-app/add-your-own-functions' },
+          { text: 'Multi-tenant bridges', link: '/build-an-app/multi-tenant-bridges' },
           { text: 'Dynamic JS', link: '/build-an-app/dynamic-js' },
           { text: 'Dynamic WASM', link: '/build-an-app/dynamic-wasm' },
         ],
