@@ -1,149 +1,111 @@
 # Multi-tenant bridges
 
 A [custom bridge](/build-an-app/add-your-own-functions) is one shared host implementation,
-but it doesn't have to treat every caller the same. A single `gql()` can talk to client X's
-GraphQL endpoint with X's credentials and client Y's with Y's — the question is only *where
-the per-tenant secret lives* and *how the bridge knows who's calling*. There are two honest
-answers, with different trust models; pick by whether your tenants must be isolated from one
-another.
+but it doesn't have to treat every caller the same. A single `gql()` can connect with client
+X's GraphQL credentials and client Y's — resolved **dynamically at call time** from your own
+source of truth, not baked in at deploy.
 
-## The real boundary is the capability profile
+The mechanism is easy; the part worth getting right is **which tenant the call belongs to**,
+and how trustworthy that answer has to be.
 
-A component reaches a bridge only when its [capability profile](/build-an-app/grant-capabilities)
-grants it (`bridges = ["gql"]`), and the bridge gates itself default-deny on
-`self.caps().allows_bridge("gql")`. The profile is **operator-controlled and a guest cannot
-forge it** — so it, not the caller's self-asserted name, is the boundary to lean on for
-anything sensitive.
+## The capability profile gates access
 
-For credential **isolation** between tenants, scope each tenant's secret to its own profile.
-Grant component X only X's environment keys and component Y only Y's:
+Access is gated by the [capability profile](/build-an-app/grant-capabilities): a component
+reaches `gql` only if its profile grants the bridge (`bridges = ["gql"]`), and the bridge
+gates default-deny on `self.caps().allows_bridge("gql")`. That decides *who may call* — the
+per-tenant credentials are the runtime concern below.
 
-```toml
-[capabilities.client-x]
-inherits = "network-client"
-bridges  = ["gql"]
-env      = ["X_GQL_URL", "X_GQL_TOKEN"]   # only these reach X's sandbox
+## Resolve the credentials dynamically
 
-[capabilities.client-y]
-inherits = "network-client"
-bridges  = ["gql"]
-env      = ["Y_GQL_URL", "Y_GQL_TOKEN"]   # only these reach Y's sandbox
-
-[components.client-x]
-capability = "client-x"
-
-[components.client-y]
-capability = "client-y"
-```
-
-Each guest reads its **own** granted env (it cannot see the other tenant's keys — they were
-never placed in its sandbox) and passes the endpoint + token to the bridge call. The bridge
-stays stateless about credentials. This is the answer when X and Y must not be able to reach
-each other's secrets: the isolation is enforced by the platform, not by trusting a name.
-
-## Resolving per-caller config inside the bridge (Rust host)
-
-When the components are **your own** and you'd rather keep the secrets host-side — so they
-never enter any guest — a **Rust** host bridge can resolve them per caller. Every bridge
-method is `async fn(&mut self, …)` on `BridgeHost`, which hands you the caller on each call:
-
-- `self.pid()` — the calling process's pid (host-assigned).
-- `self.runtime()` — the actor runtime, to look the caller up in the registry.
-- `self.caps()` — the caller's capability grants (`allows_bridge`, `storage_allowed`, …).
-
-The component identifies itself by the name it registers; the bridge maps that name to
-config it loaded host-side:
+Whatever identifies the tenant, the bridge looks the credentials up **at the moment of the
+call** — a `kv` read, a database query, an internal credentials service — never a static
+env var:
 
 ```rust
-use std::collections::HashMap;
-use std::sync::OnceLock;
-
-use rusm_otp::Pid;                          // add `rusm-otp` to the bridge crate to name Pid
-use rusm_wasm::wasmtime::component::HasSelf;
-use rusm_wasm::{wasmtime, BridgeHost, BridgeLinker};
-
-use crate::bindings::app::gql::gql;         // generated from bridges/gql/bridge.wit
-
-struct Tenant {
+struct Credentials {
     endpoint: String,
     token: String,
 }
 
-/// Loaded once, host-side — no guest ever sees it.
-fn tenants() -> &'static HashMap<String, Tenant> {
-    static T: OnceLock<HashMap<String, Tenant>> = OnceLock::new();
-    T.get_or_init(|| {
-        // …load from env / a config file / the kv store…
-        HashMap::new()
-    })
+/// Your dynamic lookup: resolve `tenant` against whatever owns per-tenant config. Runs
+/// host-side; no guest ever sees it. Cache it if you like — the point is it's resolved now.
+async fn resolve_credentials(tenant: &str) -> Result<Credentials, String> {
+    // …look up `tenant` → endpoint + token…
+    todo!()
 }
+```
 
-pub fn add_to_linker(linker: &mut BridgeLinker) -> wasmtime::Result<()> {
-    gql::add_to_linker::<_, HasSelf<BridgeHost>>(linker, |host| host)
-}
+The only open question is where `tenant` comes from.
 
+## Pattern A — the caller passes its tenant (Rust, TypeScript, or Go host)
+
+Make the tenant an argument of the bridge call. The component states which tenant it's
+acting for; the bridge resolves that tenant's credentials. This works for every host
+language (it's just a call argument) and needs nothing from the runtime:
+
+```rust
+// bridges/gql/bridge.wit:  query: func(tenant: string, q: string) -> result<string, string>;
 impl gql::Host for BridgeHost {
-    async fn query(&mut self, q: String) -> Result<String, String> {
-        // The caller identifies itself by the name it registered (e.g. Process.register).
-        let pid = Pid::from_raw(self.pid());
-        let tenant = self
-            .runtime()
-            .info(pid)
-            .and_then(|info| info.names.into_iter().next())
-            .ok_or("caller registered no tenant name")?;
-        let creds = tenants()
-            .get(&tenant)
-            .ok_or_else(|| format!("no GraphQL credentials for {tenant}"))?;
-        // …run the GraphQL request against creds.endpoint with creds.token…
-        Ok(run_query(&creds.endpoint, &creds.token, &q))
+    async fn query(&mut self, tenant: String, q: String) -> Result<String, String> {
+        let creds = resolve_credentials(&tenant).await?;
+        run_query(&creds.endpoint, &creds.token, &q).await
     }
 }
 ```
 
-The guest registers its tenant name once, then just calls the bridge — the credentials never
-enter it:
+```ts
+// the guest, in any language, just names its tenant:
+await gql.query("client-x", "{ orders { id } }");
+```
 
-::: code-group
+## Pattern B — the bridge reads the caller's identity (Rust host)
 
-```ts [TypeScript]
+If you'd rather not thread a tenant argument, a **Rust** host bridge can read it from the
+caller. `BridgeHost` hands you `self.pid()`, `self.runtime()`, and `self.caps()` on every
+call; map the caller to a tenant via a name it registers under an explicit convention (not
+"whatever name it happens to hold"):
+
+```rust
+use rusm_otp::Pid;   // add `rusm-otp` to the bridge crate to name Pid
+
+impl gql::Host for BridgeHost {
+    async fn query(&mut self, q: String) -> Result<String, String> {
+        let pid = Pid::from_raw(self.pid());
+        // A deliberate `tenant:` registry convention — discovery names are not identity.
+        let tenant = self
+            .runtime()
+            .info(pid)
+            .into_iter()
+            .flat_map(|info| info.names)
+            .find_map(|name| name.strip_prefix("tenant:").map(str::to_owned))
+            .ok_or("caller registered no tenant")?;
+        let creds = resolve_credentials(&tenant).await?;
+        run_query(&creds.endpoint, &creds.token, &q).await
+    }
+}
+```
+
+```ts
 import { Process } from "rusm-ts";
-Process.register("client-x");
-// later: gql.query("{ orders { id } }")
+Process.register("tenant:client-x"); // once, at startup
 ```
 
-```rust [Rust]
-rusm_rs::register("client-x");
-// later: gql::query("{ orders { id } }")
-```
+A `host.ts` / `host.go` bridge can't do this — it runs behind a generated Rust shim and its
+function receives only the call's arguments, not the caller. Use Pattern A there.
 
-```go [Go]
-rusm.Register("client-x")
-// later: gql.Query("{ orders { id } }")
-```
+## The trust model — read this before using it for secrets
 
-:::
+Both patterns are **guest-asserted**: the component chooses the tenant it claims, whether by
+the argument it passes or the name it registers. That is exactly right when the components
+are **your own**, deployed one-per-tenant and trusted to state their own identity — the
+common multi-tenant-app case.
 
-::: warning The registered name is guest-asserted
-`runtime().info(pid)` returns the name the **component itself** registered — convenient for
-your own cooperating components, but it is **not** a sandbox boundary: a component could
-register a different name and select another tenant's credentials. If your tenants are
-mutually distrusting, isolate their secrets with capability profiles (the section above),
-which the operator controls and a guest can't forge.
-:::
-
-## TypeScript and Go host bridges
-
-A `host.ts` / `host.go` bridge runs as a resident actor reached over the actor wire from a
-generated Rust shim, and its exported function receives **only the call's arguments** — not
-the caller's identity. So bridge-side per-caller resolution is a Rust-host capability today.
-A TS or Go host serves multiple tenants by either:
-
-- the caller passing a tenant id as an argument (`gql.query(tenant, "{ … }")`), or
-- the capability-profile scoping above, where each tenant's secret lives in its own
-  component and the call carries it.
-
-## Where the config lives
-
-Host-side: process env, a config file, or the durable `kv` store — loaded once (a
-`OnceLock`) and held in the bridge module, never granted to a guest. That's the point of
-keeping resolution in the bridge: the secret stays on the host side of the sandbox.
+It is **not** an isolation boundary against a hostile component: nothing stops one from
+claiming another tenant and resolving its credentials. For credentials that must be
+unreachable across mutually-distrusting tenants, the identity has to be **unforgeable** —
+established by the operator, outside the guest's control. A bridge today sees the caller's
+`pid` and capability grant-flags but not its operator-declared identity, so hard isolation
+means binding pid → tenant authoritatively where you spawn the components (the
+[embedding](/deep-dive/embedding-rusm-as-a-library) model), rather than trusting a value the
+guest supplies. Pick the pattern that matches your threat model — don't reach for B's
+convenience when you actually need that boundary.
