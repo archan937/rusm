@@ -146,11 +146,28 @@ cold per-request throughput** vs a non-pre-initialized runner.
 binary. You ship the engine once; RUSM CoW-shares it across however many concurrent
 instances are live.
 
-**vs JCO.** JCO transpiles a WASM component *to JavaScript* to run inside Node.js, Deno, or
-Bun — the opposite direction. That means no Wasm sandbox (your code runs in the host JS
-engine), no capability gating, no memory cap, and a full V8/runtime per instance. rquickjs
-runs JS *inside* the Wasm sandbox: capability-gated, epoch-preempted, memory-capped, and
-wizer-warm so per-spawn cost is near zero.
+**vs JCO.** JCO's direction is the opposite: it transpiles a compiled Wasm component *to
+JavaScript* so it can run inside an existing Node.js, Deno, or Bun process. That solves a
+different problem — and it means no Wasm sandbox, no capability gating, and the full weight
+of a V8 process for every deployment. RUSM runs JS *inside* the Wasm sandbox. Here is what
+that difference looks like end to end:
+
+| | **RUSM + rquickjs** | **JCO** |
+|---|---|---|
+| **Direction** | JS runs *inside* Wasm | Wasm compiled *to* JS |
+| **Your component artifact** | `.js` bundle (your code only, 2–50 KB) | `.wasm` + JS glue (500 KB – 5 MB+) |
+| **Shared runtime** | ~920 KB js-runner, CoW-shared | 50–100 MB Node.js / Deno / Bun |
+| **Wasm sandbox** | ✓ real memory isolation | ✗ runs in host JS engine |
+| **Capability gating** | ✓ default-deny per process | ✗ none |
+| **Memory cap** | ✓ `StoreLimiter` per instance | ✗ none |
+| **Cold spawn** | Near-zero — CoW from wizer snapshot | Full JS engine boot per instance |
+| **Epoch preemption** | ✓ a spinning guest can't starve others | ✗ |
+| **Actor model** | ✓ supervised, addressable, killable | ✗ |
+
+The component artifact size gap is the starkest signal. A JCO-deployed component ships the
+entire compiled Wasm binary — a non-trivial Rust HTTP handler easily reaches 1–5 MB before
+optimization. A RUSM TypeScript component ships only your bundled application logic; the
+920 KB engine is shared across every component running on the node, loaded once.
 
 ## Go deeper
 
