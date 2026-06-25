@@ -1,66 +1,45 @@
-# Phase 10 — scale & hardening
+# Phase 10 — Scale & hardening
 
-**Goal:** not raw speed — RUSM's throughput and latency are already at the
-isolation-model ceiling (~440k component spawns/s, ~21M msgs/s). Phase 10 is about
-surviving **scale, overload, and attack**: lift the fixed instance cap, protect
-against overload, secure the cluster properly, and stop crash loops. No new
-user-facing features — production hardening of what's already there.
+Phase 10 is not about speed — RUSM already runs at the isolation-model ceiling. It's about surviving scale, overload, and attack: lift the fixed instance cap, protect against memory exhaustion, secure the cluster properly, and stop crash loops before they cascade.
 
-## What we built (TDD throughout)
+## Why this phase
 
-1. **On-demand instance tier** (`rusm-wasm`). `WasmRuntime::with_overflow` adds a
-   second, on-demand engine behind the pooling allocator. A spawn **reserves a
-   pooled slot** via an atomic counter — exactly `cap` claims can be outstanding, so
-   a claimed pooled spawn never blocks on exhaustion — and once the pool is full it
-   instantiates on the on-demand engine instead. The live *Wasm*-process count is
-   then bounded by **available memory**, not a compile-time pool size. The overflow
-   `InstancePre` is prepared without recompiling (serialize the compiled component,
-   deserialize into the overflow engine), and the epoch ticker drives *both* engines
-   so overflow guests are preempted too. Found along the way: without overflow,
-   spawns past a full pool **block indefinitely** — exactly what this fixes.
-2. **Opt-in bounded mailboxes** (`rusm-otp`). `Runtime::with_mailbox_capacity(n)`
-   sheds *user* messages once a mailbox holds `n`, so a fast producer can't grow a
-   slow consumer's memory without bound. **System signals are never shed** — exits
-   and monitor-downs ride the same single mailbox but bypass the capacity check, so
-   back-pressure never breaks links, monitors, or supervision. The default
-   (unbounded) path is untouched — one predicted branch, no new atomics.
-3. **Cluster security hardening** (`rusm-cluster`). `ClusterCa::generate()` +
-   `ca.issue(node)` give each node its **own** keypair and a CA-signed certificate;
-   every link is **mutually authenticated** (server requires a client cert, both
-   verify against the trust anchor). A node from a foreign CA is rejected at the
-   handshake. This replaces Phase 9's single pre-shared cluster cert, so a
-   compromised node can be excluded by rotating the CA without re-keying the rest.
-   Cost is handshake-only; steady-state throughput is unchanged.
-4. **Supervisor restart-intensity** (both guests). Erlang's
-   `{max_restarts, max_seconds}`: `rusm-rs`'s `Supervisor::within(Duration)` and
-   `rusm-ts`'s `supervise({ maxRestarts, maxSeconds })` give up only if more than
-   `max_restarts` happen **within a sliding window** — instead of the old lifetime
-   counter, which wrongly penalised long uptime and gave no crash-loop escalation.
-   A burst trips it (the supervisor exits, letting failure escalate); occasional
-   crashes spread over time never accumulate.
+~440k component spawns/sec and ~21M msgs/sec are already at the hardware ceiling for this isolation model. What breaks in production is not raw throughput — it's the edge cases. A pool that fills up and blocks. A fast producer that grows a slow consumer's mailbox without bound. A compromised node that can re-join the cluster with a stolen cert. A supervisor that restarts a crashing child forever and runs out of resources.
 
-## No regression
+Phase 10 closes those four failure modes, one by one, without touching the happy-path numbers.
 
-The hot paths were held to their numbers, measured before/after:
+## What shipped
 
-- **component-storm** ~430–440k spawns/s (a first draft of the overflow tier
-  double-cloned the `InstancePre` and dropped it to ~415k; fixed by moving the
-  chosen pre instead of cloning it);
-- **ping-pong** ~21M msgs/s, **spawn-storm** ~2.48M spawns/s (bounded mailboxes add
-  nothing to the default unbounded path);
-- cross-node throughput unchanged (mutual TLS costs only at the handshake).
+1. **On-demand instance tier** — `WasmRuntime::with_overflow` adds a second, on-demand engine behind the pooling allocator. A spawn reserves a pooled slot via an atomic counter — exactly `cap` claims can be outstanding at once. Once the pool is full, the spawn instantiates on the on-demand engine instead. The live Wasm-process count is now bounded by **available memory**, not a fixed pool size. Without this, spawns past a full pool blocked indefinitely.
+2. **Opt-in bounded mailboxes** — `Runtime::with_mailbox_capacity(n)` sheds *user* messages once a mailbox holds `n`, so a fast producer can't grow a slow consumer's memory without bound. **System signals are never shed** — exits and monitor-downs bypass the capacity check, so back-pressure never breaks links, monitors, or supervision trees. The default (unbounded) path is untouched — one predicted branch, no new atomics.
+3. **Mutual TLS with per-node certs** — `ClusterCa::generate()` + `ca.issue(node)` give each node its own keypair and a CA-signed certificate. Every cluster connection is mutually authenticated: the server requires a client cert, both sides verify against the trust anchor. A node from a foreign CA is rejected at the handshake. A compromised node can be excluded by rotating the CA without re-keying the rest of the cluster. Cost is handshake-only; steady-state throughput is unchanged.
+4. **Supervisor restart-intensity** — both rusm-rs and rusm-ts now implement Erlang's `{max_restarts, max_seconds}`: `Supervisor::within(Duration)` / `supervise({ maxRestarts, maxSeconds })` give up only if more than `max_restarts` happen *within a sliding window* — not a lifetime counter, which wrongly penalized long uptime and gave no crash-loop protection. A burst trips the intensity limit and the supervisor exits, letting failure escalate. Occasional crashes spread over hours never accumulate.
 
-## Verification
+## Design highlights
 
-`cargo test` green across the workspace. New tests: overflow spawns past a pool of
-2 (five long-lived instances all come alive); a bounded mailbox sheds user messages
-past capacity while a full mailbox still delivers a system `Down`; same-CA nodes
-form a cluster and a foreign-CA node is rejected; and a rapid kill-burst makes both
-the Rust **and** TS supervisors give up past their restart intensity. `cargo fmt` +
-clippy clean.
+- **Overflow `InstancePre` without recompilation.** The overflow engine shares the same component bytes via serialization/deserialization — no second compile step, no new source to maintain. The epoch ticker drives both engines so overflow guests are preempted identically to pooled guests.
+- **Bounded mailboxes with zero hot-path cost.** The default unbounded path sees one predicted branch. Enabling bounded mailboxes adds a single check on *user* messages only. The system signal path is entirely separate — a bounded mailbox can never prevent a supervision signal from arriving.
+- **Sliding-window intensity over lifetime counters.** A service that runs for three days and has three crashes spread across that time should not trigger a restart-intensity limit. Only a burst — more than N crashes in M seconds — indicates a crash loop. The old lifetime counter got this wrong; the sliding window gets it right.
+- **No regression on the hot paths.** Before and after measurement: component-storm holds ~430–440k spawns/sec; ping-pong holds ~21M msgs/sec; cross-node throughput is unchanged (mTLS costs only at handshake). A first draft of the overflow tier double-cloned `InstancePre` and dropped component-storm to ~415k; fixed by moving the chosen pre instead of cloning.
 
-## Next
+## What this unlocks
 
-[Phase 11](/about/roadmap): the **standard-WASI surface** — `wasi:http` hosting
-(serve HTTP/WS/SSE from a component), the `wasi:cli/run` entrypoint, and a native
-p3-typed `stream<u8>` for the actor world.
+RUSM can now run unbounded workloads without hitting a fixed instance cap. A bounded mailbox protects any slow-consumer component from being overwhelmed. The cluster is properly secured — each node is individually authenticated, and a key rotation excludes a bad actor without disrupting the rest. Supervisors correctly distinguish crash loops from occasional failures.
+
+Together, these four changes take RUSM from "fast and correct on a well-behaved workload" to "durable under real-world adversarial conditions."
+
+## Try it
+
+```sh
+cargo run --release -p rusm-bench -- run component-storm 5   # overflow tier active; ~440k holds
+cargo run --release -p rusm-bench -- run ping-pong 5         # bounded mailbox path; ~21M holds
+cargo test -p rusm-cluster tls                               # mTLS + foreign-CA rejection
+```
+
+## Status
+
+Phase complete. All regressions held. Component-storm ~440k spawns/sec, ping-pong ~21M msgs/sec, cross-node throughput unchanged. Deferred to Phase 11: native p3-typed `stream<u8>` WIT signature (handle-based byte streams are fully functional).
+
+---
+
+*Phase 11 (serving & standard-WASI surface) is functionally complete: HTTP, WebSocket, and SSE serving from any component in any language, declarative routing, `wasi:cli/run` support, and the full three-language serving benchmark suite. See the [roadmap](/about/roadmap).*

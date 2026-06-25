@@ -1,83 +1,50 @@
 # Phase 6 — Wasmtime as the process backend
 
-**Goal:** the pivot the whole design was built for — swap a process body from a
-native Rust closure to a **sandboxed Wasm instance**, behind the *same*
-`rusm-otp` API. Task-level isolation becomes **true memory isolation**.
-**Graduates:** the **fairness** scenario to live Wasm.
+Phase 6 proves the core bet: because the OTP layer was built Wasm-ready from the start, adding Wasmtime is *additive* — the same `spawn()` call, now running a sandboxed Wasm instance with true memory isolation.
 
-## Why this is the keystone
+## Why this phase
 
-Phases 1–5 made the actor model real and measurable on native bodies. Phase 6
-proves the bet: because the OTP layer was designed Wasm-ready, adding Wasmtime is
-**additive, not a rewrite**. A process is still a Tokio task and a table entry —
-now its body is a guest instance that can crash, loop, or misbehave without
-touching anything else.
+Phases 1–5 built a real, fast, measurable actor model on native Rust bodies. Phase 6 is the answer to the question those phases were designed to make possible: can we swap the native body for a Wasm instance without touching the actor model?
 
-## The hard boundary
+The answer is yes — because `rusm-otp` was always designed with a hard boundary. All Wasmtime lives in `rusm-wasm`; `rusm-otp` has zero `wasmtime` dependency. The dependency graph enforces it. Phase 6 proves the bet pays off: a process is still a Tokio task and a table entry. Now its body is a guest instance that can crash, loop, or misbehave without touching anything outside its sandbox.
 
-All Wasmtime lives in **`rusm-wasm`**. The core (`rusm-otp`) still has *zero*
-`wasmtime` dependency — the dependency graph enforces it. `rusm-wasm` drives the
-core through its public API; Wasm never bleeds into Wasm-irrelevant code.
+## What shipped
 
-## What we built (TDD throughout)
+1. **`WasmRuntime`** over a shared `rusm-otp` `Runtime` — owns the Wasmtime `Engine`, a `Linker<Host>`, and shared `Counters`. Thin wrapper; the actor core is unchanged.
+2. **Instance-per-process** — `compile(wat) -> Module`, `prepare(module) -> InstancePre<Host>`, `spawn(prepared, entry) -> ProcessHandle`. Each spawn instantiates a fresh, isolated Wasm instance as a `rusm-otp` process.
+3. **Three fast-spawn levers on one `Engine`** — all working together:
+   - **Pooling allocator** — instances, memories, and tables recycled from a pool.
+   - **`memory_init_cow`** — copy-on-write memory images; a fresh instance doesn't zero or copy its whole linear memory.
+   - **Per-module `InstancePre`** — type-checking and host-import resolution done once at `prepare`, not per spawn.
+4. **Epoch-interruption preemption** — even a guest running `loop { }` is forced to yield and stays killable. The epoch bumper runs on a **dedicated OS thread** — not a Tokio task. This is critical: a Tokio task could be starved by the very guests it must preempt, deadlocking. The store yields async on each epoch tick.
+5. **Host ABI via `Caller::data`** — `rusm::self_pid` (the guest's own pid) and `rusm::notify` (bumps a shared counter) — the seed of the [host ABI](/deep-dive/host-abi-reference) fully delivered in Phase 7.
+6. **Trap → `ExitReason::Crashed`** — a guest trap reports through the same exit machinery as a native crash from Phase 3. Links, monitors, and supervisors see no difference.
+7. **Fairness engine** (`rusm-bench`) — Wasm spinners saturate every core while Wasm bystanders keep calling `notify`. A nonzero bystander rate (~50M+ ops/sec under load, past 400M on free cores) *is* the proof that epoch preemption works.
 
-1. **`WasmRuntime`** over a shared `rusm-otp` `Runtime` — owns the Wasmtime
-   `Engine`, a `Linker<Host>`, and shared `Counters`.
-2. **Instance-per-process** — `compile(wat) -> Module`, `prepare(module) ->
-   InstancePre<Host>`, `spawn(prepared, entry) -> ProcessHandle`. Each spawn
-   instantiates a fresh, isolated instance as a rusm-otp process.
-3. **Fast spawns** (instance-per-process, far cheaper than a naive on-demand
-   allocator; the optimized component path reaches ~440k spawns/sec — see
-   [Phase 7](./phase-07-components.md)) via three levers on one `Engine`:
-   - **pooling allocator** — instances/memories/tables recycled from a pool,
-   - **`memory_init_cow`** — copy-on-write memory images, so a fresh instance
-     doesn't zero/copy its whole linear memory,
-   - **per-module `InstancePre`** — type-checking and host-import resolution done
-     **once** at `prepare`, not per spawn.
-4. **Epoch-interruption preemption** — even a guest in `loop { }` is forced to
-   yield and stays killable. The epoch is bumped on a **dedicated OS thread**, not
-   a Tokio task — *critical*: as a task it could be starved by the very guests it
-   must preempt, deadlocking. The store yields async on each epoch tick.
-5. **Host ABI via `Caller::data`** — `rusm::self_pid` (the guest's own pid) and
-   `rusm::notify` (bumps a shared counter), the seed of the
-   [host ABI](/deep-dive/host-abi-reference).
-6. **Trap → `ExitReason::Crashed`** — a guest trap is reported through the same
-   exit machinery as a native crash from [Phase 3](./phase-03-supervision.md).
-7. **Fairness engine** (`rusm-bench`) — Wasm spinners saturate **every core**
-   while Wasm bystanders keep calling `notify`; a nonzero bystander rate (~50M+
-   ops/sec under load, past 400M on free cores) *is* the proof that preemption is
-   yielding the spinners.
+## Design highlights
 
-## Design notes — efficiency & honesty
+- **Dedicated epoch thread — the single most important correctness decision in this phase.** A preemption mechanism that can itself be preempted is no mechanism at all. The OS-level thread runs regardless of Tokio scheduler pressure.
+- **Three spawn levers cost almost nothing individually; together they compound.** Pooling eliminates allocation; CoW eliminates zero-copy; `InstancePre` eliminates per-spawn type resolution. The combination pushes spawn cost down to nanoseconds.
+- **The Wasm-free boundary is machine-enforced.** `cargo tree -p rusm-otp` shows no `wasmtime` anywhere in the graph. This isn't a convention — it's a compile-time guarantee.
+- **The bench counts honestly.** It asserts `notifications == n` (every guest actually ran its body), so crashed instances can't inflate the spawn rate number.
 
-- **One `Engine`, shared levers.** Pooling + CoW + `InstancePre` all hang off the
-  same engine, so the cost moves from per-spawn to one-time per-module.
-- **Dedicated epoch thread.** The single most important correctness fix in this
-  phase — preemption that can itself be preempted isn't preemption.
-- **The spawn bench counts honestly.** It asserts `notifications == n` (every
-  guest actually ran its body), so crashed instances can't inflate the rate.
+## What this unlocks
 
-## Concepts introduced
+The entire OTP actor model — spawn, kill, link, monitor, supervise, registry, timers — now applies to Wasm instances without modification. A Wasm guest that panics becomes `ExitReason::Crashed` and propagates through links. A supervisor can restart a crashed guest the same way it restarts a crashed native process.
 
-- [Wasm instance as a process](/deep-dive/the-process-model),
-  [fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async), and
-  [epoch preemption](/deep-dive/epoch-preemption).
+Phase 7 delivers the modern artifact (WASM components instead of core modules) and the full `rusm:runtime` WIT actor world. The optimized component path will reach ~440k spawns/sec — the foundation is here.
 
-## Play with it
+## Try it
 
 ```sh
-cargo run -p rusm-bench -- run fairness 5     # spinners saturate cores; bystanders still run
-cargo test -p rusm-wasm                       # instance-per-process, traps, preemption
+cargo run -p rusm-bench -- run fairness 5     # spinners saturate all cores; bystanders still run
+cargo test -p rusm-wasm                       # instance-per-process, traps, epoch preemption
 ```
 
-## Verification
+## Status
 
-`cargo test -p rusm-wasm` green (add, host-import call, pid reporting, trap →
-crash, spinner preemption); fairness live in the dashboard; the Wasm-free
-invariant holds (no `wasmtime` anywhere under `rusm-otp`).
+Phase complete. Fairness is live in the dashboard. The Wasm-free invariant holds. The spawn optimizations here are the foundation for ~440k component spawns/sec in Phase 7.
 
-## Next
+---
 
-[Phase 7](./phase-07-components.md): **component hosting** — run real WASM
-*components* (the component model + WASI p2/p3) as RUSM processes, with a
-`rusm:runtime` actor ABI and default-deny per-process capabilities.
+*Next: [Phase 7](./phase-07-components.md) — component hosting: the WASM component model, the `rusm:runtime` WIT actor world, and ~440k component spawns/sec.*

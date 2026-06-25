@@ -1,115 +1,48 @@
-# Phase 7 — component hosting
+# Phase 7 — Component hosting
 
-**Goal:** the payoff the whole design was built toward — **run real WASM
-*components* as RUSM processes**: the component-model artifact and capabilities of
-wasmCloud, but on RUSM's Erlang/OTP actor model, with no lattice and no
-execution-time cap. **Graduates:** the **component-storm** scenario to live data.
+The modern artifact: a WASM component, running as a supervised, addressable, killable, preemptible process — the Erlang/OTP model, applied to the WebAssembly component ecosystem.
 
-## Why this matters
+## Why this phase
 
-Phases 1–6 made the actor model real on native bodies and core-module Wasm. Phase
-7 hosts the *modern* artifact: a WASI **component** (what `cargo component`, `jco`
-and wasmCloud emit). A component becomes a long-lived, addressable, supervised,
-killable, preemptible process — the BEAM model, for the component ecosystem.
+Phase 6 proved a Wasm instance can be a supervised process. Phase 7 hosts the *modern* artifact: a WASM component compiled with `cargo build --target wasm32-wasip2`, the same target wasmCloud and the broader component ecosystem use. But where wasmCloud executes components in a lattice with a 30-second execution cap, RUSM runs them as long-lived, addressable processes — supervised, killable, preemptible, no timeout.
 
-## What we built (TDD throughout)
+The programming model stays identical to Phase 6. The component model adds structured types, WASI interfaces, and language-agnostic ABI — RUSM just makes those components the process body.
 
-1. **`bridges/` over a shared core** — `rusm-wasm` adds `wasmtime-wasi` and a
-   per-version bridge layout over one shared engine (epoch ticker, pooling
-   allocator, CoW): `wasip1` (core modules), `wasip2` (components, the `@0.2.0`
-   WASI interfaces), and `wasip3` (additive over p2 — the `@0.3.0` async/streams
-   interfaces on the same component linker, with the async component model enabled
-   in `Config`). A component importing p2 or p3 resolves against the one shared
-   `WasiHost`.
-2. **The `rusm:runtime` WIT actor world** (`wit/world.wit` + `bindgen!`) — a
-   component imports `actor` and gets typed `self`/`send`/`receive`(async)/
-   `list-processes`/`info`/`is-alive`/`kill`/`register`/`whereis`/`unregister`/
-   `set-label`. Each host function is a thin call into `rusm-otp` — the Erlang
-   `Process` API, callable from any language (Rust via `wit-bindgen`, TS via the
-   genius-style Bun+rquickjs embed). Composition is **message passing**, not WIT
-   wiring — no lattice.
-3. **Default-deny capabilities** (`caps.rs`) — named profiles (`Sandboxed` /
-   `NetworkClient` / `Trusted`) build a `WasiCtx` (fs preopens, env, network) plus
-   a `StoreLimiter` memory cap. A process gets nothing unless granted.
-4. **Introspection & byte streams** (`rusm-otp`, Wasm-free) — `list`/`info`/
-   `set_label`, opt-in `mailbox_depth`, and `Received::Stream` over a
-   Tokio-backpressured `StreamHandle`.
-5. **App model** (`rusm-cli`) — `rusm.toml [components.<name>]`, a `./wasm/` loader that
-   spawns each component under its profile, and `rusm build` / `rusm run` /
-   `rusm dev` (one toolchain: `cargo build --target wasm32-wasip2`, no jco). Env is
-   the Rust way: process env, then `.env`.
-6. **Lifetime superiority** — a component runs as long as it needs, stays killable
-   and preemptible (epoch), supervised — **no wasmCloud-style execution timeout**.
-7. **The wasip1 bridge** (`bridges/wasip1.rs`) — RUSM on **Lunatic's home turf**:
-   preview1 **core modules** run as processes too, with preview1 WASI, the same
-   default-deny capabilities + `StoreLimiter`, the precomputed export index, and a
-   **raw `rusm::*` actor ABI** marshalled through the guest's linear memory
-   (`own_pid`/`send`/`receive`(async)/`list_processes`/`is_alive`/`kill`/`register`/
-   `whereis`/`unregister`/`set_label`) — the *same* calls into `rusm-otp` as the WIT
-   world, just a flat `(ptr, len)` calling convention. A misbehaving guest (bad
-   pointer, no `memory`, non-UTF8 name) becomes a clean process crash, never a host
-   panic.
-8. **Cross-process byte streams** (`bridges/wasip1.rs`) — RUSM's stream-passing
-   reaches guests: `stream_open(to)` hands a Tokio-backpressured `StreamHandle`'s
-   read end to another process (it rides the mailbox as `Received::Stream`, the
-   *same* primitive a native process gets) while the opener keeps the write end;
-   `stream_write`/`stream_close` and `stream_accept`/`stream_read` move chunks with
-   real back-pressure (a slow reader parks the writer's fiber, no busy-poll). This
-   is composition the RUSM way — message-passing, not WIT inter-component wiring.
+## What shipped
 
-## Performance
+1. **`bridges/` over a shared core** — `rusm-wasm` adds `wasmtime-wasi` and per-version bridges over one shared engine (epoch ticker, pooling allocator, CoW): `wasip1` (core modules, Lunatic's home turf), `wasip2` (components, WASI `@0.2.0`), and `wasip3` (additive over p2 — WASI `@0.3.0` async interfaces on the same component linker).
+2. **The `rusm:runtime` WIT actor world** — a component imports the `actor` interface and gets typed `self`/`send`/`receive`/`list-processes`/`info`/`kill`/`register`/`whereis`/`unregister`/`set-label`. Each is a thin call into `rusm-otp` — the Erlang `Process` API, callable from any language that targets WASI components.
+3. **Default-deny capabilities** (`caps.rs`) — named profiles (`Sandboxed` / `NetworkClient` / `Trusted`) build a `WasiCtx` (fs preopens, env, network) plus a `StoreLimiter` memory cap. A process gets nothing unless granted.
+4. **Cross-process byte streams** (`Received::Stream`, Wasm-free) — `stream-open(to)` hands a Tokio-backpressured `StreamHandle` to another process via the mailbox; the opener keeps the write end. Real back-pressure: a slow reader parks the writer's fiber — no busy-poll, no unbounded buffering.
+5. **App model** (`rusm-cli`) — `rusm.toml [components.<name>]`, a `./wasm/` loader, and `rusm build` / `rusm run` / `rusm dev`. One toolchain: `cargo build --target wasm32-wasip2`, no jco, no cargo-component.
+6. **wasip1 core-module bridge** — RUSM on Lunatic's home turf: preview1 core modules run as processes too, with the same default-deny caps + `StoreLimiter` and the same raw `rusm::*` actor ABI over linear memory.
 
-The spawn path is deliberately optimized: pooling allocator + copy-on-write +
-per-module `InstancePre` + a **precomputed export index** (no per-spawn by-name
-lookup) + **opt-in mailbox depth** (default off → zero hot-path atomics) + a single
-runtime-handle clone + park-based backpressure. The live **component-storm**
-scenario sustains **~440k component spawns/sec** (p50 ~1 µs); the **module-storm**
-scenario spawns the *same artifact Lunatic hosts* — wasip1 core modules — at
-**~475k spawns/sec**. The two being so close is the point: **the component model
-costs almost nothing over a raw core module** on RUSM's pooled path. The only big
-step is to a bare task (~2.4M/sec) — that ~5x is the price of real Wasm memory
-isolation, paid once whether you host a core module or a component. Lunatic hosts
-only core modules with its own ABI — it has no component-model host at all.
+## Design highlights
 
-## Concepts introduced
+- **Composition is message passing, not WIT wiring.** Two components communicating don't share a WIT import — they send messages. This keeps the programming model identical whether processes are on one node or across a cluster (Phase 9). There is no lattice, no link map, no runtime topology to declare.
+- **Component model costs almost nothing over a raw core module.** Component-storm: **~440k spawns/sec**. Module-storm (wasip1 core modules — the direct Lunatic comparison): **~475k spawns/sec**. The ~5× gap to bare tasks (~2.4M/sec) is the price of real Wasm memory isolation — paid once, regardless of whether you host a core module or a full component.
+- **No execution cap.** A component runs as long as it needs. `rusm dev` keeps running; residents stay alive. The epoch preemption from Phase 6 ensures a spinning guest doesn't starve others, but it never *kills* a guest for being slow.
+- **Per-process `InstancePre` with precomputed export index.** No per-spawn by-name export lookup. The entry function index is resolved at prepare time, so every spawn hits the same fast path.
 
-- [Components & the actor world](/deep-dive/components-and-the-actor-world) —
-  the component model + the `rusm:runtime` WIT world; composition is message passing.
-- [Permissions & sandboxing](/deep-dive/permissions-and-sandboxing) — per-process
-  WASI capabilities, default-deny profiles.
-- [Byte streams](/deep-dive/byte-streams) — cross-process, Tokio-backpressured.
-- [The app model](/deep-dive/the-app-model) — `rusm.toml`, `./wasm/`, `rusm dev`.
-- The full ABI — see the [host ABI](/deep-dive/host-abi-reference).
+## What this unlocks
 
-## Play with it
+Any language that compiles to `wasm32-wasip2` can now be a supervised RUSM process. Rust, TypeScript (via Phase 8's rquickjs runner), Go via TinyGo — all compile to the same artifact, run under the same actor model, message each other over the same wire.
+
+The full OTP tree — spawn, supervise, kill, link, monitor, registry — applies to components without modification. Crash a component and the supervisor restarts it. Register it by name and any other component can find it. The app model (`rusm.toml`, `rusm build`, `rusm dev`) makes this declarative.
+
+## Try it
 
 ```sh
 cargo run --release -p rusm-bench -- run component-storm 3   # ~440k component spawns/sec
 cargo run --release -p rusm-bench -- run module-storm 3      # ~475k wasip1 core-module spawns/sec
-# In an app project (rusm.toml + components/ + wasm/):
-rusm dev                                                     # build, then run the components
+# In an app project:
+rusm build && rusm dev                                       # build components, run, watch for changes
 ```
 
-## Verification
+## Status
 
-`cargo test` green (component runs/reaped, trap → Crashed, epoch preempts a
-component, memory-cap deny → Crashed, the full actor ABI driven by a real
-`wit-bindgen` guest, component-to-component request/reply, manifest + loader);
-component-storm live in the dashboard; workspace coverage ≥98%; the Wasm-free
-invariant holds (no `wasmtime` under `rusm-otp`).
+Phase complete. Component-storm and module-storm are live in the dashboard. The Wasm-free invariant holds. Deferred to Phase 11: a native p3-typed `stream<u8>` WIT signature (the handle-based byte streams are fully functional and load-bearing; the native signature is a standards-surface refinement).
 
-Cross-process byte streaming is live on **both** paths — wasip1 core modules (the
-raw `rusm::*` ABI) and **components** (the `rusm:runtime` WIT world:
-`stream-open`/`write`/`close`/`accept`/`read`, handle-based) — over the Wasm-free
-`StreamHandle`.
+---
 
-**Deferred follow-ons:** a native p3-typed `stream<u8>` WIT signature (instead of
-the handle-based ops) — *still* deferred as a standards-surface refinement, since the
-handle ABI is load-bearing; and `rusm dev` filesystem watch/reload — **delivered in
-[Phase 8](./phase-08-guest-ergonomics.md)**.
-
-## Next
-
-[Phase 8](./phase-08-guest-ergonomics.md): the **`rusm-rs` guest crate** — ergonomic
-spawn/Mailbox/AbstractProcess/Supervisor over the raw ABI, so guests write idiomatic
-code instead of hand-rolled bindings.
+*Next: [Phase 8](./phase-08-guest-ergonomics.md) — guest ergonomics: TypeScript, Rust, and Go SDKs, the typed client, streaming, callbacks, and `rusm dev` watch+reload.*
