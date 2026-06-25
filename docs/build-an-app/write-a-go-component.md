@@ -6,9 +6,21 @@ as a Rust or TypeScript component. `rusm new --lang go` scaffolds one; `rusm bui
 TinyGo for you (no hand-rolled bindings). The actor API and the typed client come from the
 **`rusm-go`** package.
 
-A Go component lives under `components/<name>/` with a `main.go`. There are two shapes — a
-**worker** (runs once) and a **service** (a dispatch loop) — mirroring the TypeScript and
-Rust models over the same JSON wire, so a Go client and a TS or Rust service interoperate.
+A Go component lives under `components/<name>/` with a `main.go`:
+
+```
+my-app/
+├── rusm.toml
+├── components/
+│   └── worker/
+│       ├── go.mod          # module + rusm-go dep
+│       └── main.go
+└── wasm/                   # rusm build writes worker.wasm here
+```
+
+There are two shapes — a **worker** (runs once) and a **service** (a dispatch loop) —
+mirroring the TypeScript and Rust models over the same JSON wire, so a Go client and a TS
+or Rust service interoperate.
 
 ## A worker
 

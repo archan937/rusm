@@ -8,6 +8,15 @@ the actor world. You write TS; **Bun** bundles it to one `.js`; the runner
 executes it inside the same sandbox (capabilities, memory cap, epoch preemption)
 as a Rust component. A TS component is just a folder with an `index.ts`:
 
+```
+my-app/
+├── rusm.toml
+├── components/
+│   └── worker/
+│       └── index.ts
+└── wasm/                   # rusm build writes worker.wasm here
+```
+
 A TS component comes in two shapes. A **service** just exports functions — RUSM
 runs the receive→dispatch→reply loop around them:
 
