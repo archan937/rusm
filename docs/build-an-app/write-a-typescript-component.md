@@ -129,6 +129,29 @@ the time, `component#pid`, and a severity colour. No setup, no `allow-stdio` gra
 logger object. Gated by `[log] level` in `rusm.toml`.
 :::
 
+## How TypeScript runs in RUSM
+
+RUSM ships a single **~920 KB js-runner** — [QuickJS](https://bellard.org/quickjs/) compiled
+to `wasm32-wasip2` via [rquickjs](https://github.com/DelSkayn/rquickjs). This shapes
+everything about how TS components perform:
+
+**Wizer pre-initialization.** At build time, [wizer](https://github.com/bytecodealliance/wizer)
+boots the QuickJS engine and the full JS bridge — all `Process.*`, `fetch`, `crypto`, and `kv`
+primitives — and snapshots the result into the binary. Every spawned instance
+**copy-on-write starts from that warm snapshot**: the engine never boots from scratch at
+runtime; each spawn only evaluates your Bun-bundled `.js`. This gives roughly **8× better
+cold per-request throughput** vs a non-pre-initialized runner.
+
+**One engine, every component.** All your TypeScript components share the same js-runner
+binary. You ship the engine once; RUSM CoW-shares it across however many concurrent
+instances are live.
+
+**vs JCO.** JCO transpiles a WASM component *to JavaScript* to run inside Node.js, Deno, or
+Bun — the opposite direction. That means no Wasm sandbox (your code runs in the host JS
+engine), no capability gating, no memory cap, and a full V8/runtime per instance. rquickjs
+runs JS *inside* the Wasm sandbox: capability-gated, epoch-preempted, memory-capped, and
+wizer-warm so per-spawn cost is near zero.
+
 ## Go deeper
 
 - [Call another component](/build-an-app/call-another-component) — typed clients, `connect` to a resident, call with a deadline
