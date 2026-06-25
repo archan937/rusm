@@ -146,7 +146,9 @@ cold per-request throughput** vs a non-pre-initialized runner.
 binary. You ship the engine once; RUSM CoW-shares it across however many concurrent
 instances are live.
 
-**vs JCO.** JCO's direction is the opposite: it transpiles a compiled Wasm component *to
+### RUSM TS components vs JCO
+
+JCO's direction is the opposite: it transpiles a compiled Wasm component *to
 JavaScript* so it can run inside an existing Node.js, Deno, or Bun process. That solves a
 different problem — and it means no Wasm sandbox, no capability gating, and the full weight
 of a V8 process for every deployment. RUSM runs JS *inside* the Wasm sandbox. Here is what
