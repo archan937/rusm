@@ -143,8 +143,11 @@ runtime; each spawn only evaluates your Bun-bundled `.js`. This gives roughly **
 cold per-request throughput** vs a non-pre-initialized runner.
 
 **One engine, every component.** All your TypeScript components share the same js-runner
-binary. You ship the engine once; RUSM CoW-shares it across however many concurrent
-instances are live.
+binary. You ship the engine once. Each spawned instance starts from the wizer snapshot and
+the OS uses **copy-on-write (CoW)** to share it: every instance reads from the same physical
+memory pages until it writes to one, at which point only that page is copied for that
+instance. The 920 KB engine image is never duplicated in full — you pay only for the pages
+each instance actually diverges from the snapshot.
 
 ### RUSM TS components vs JCO
 
