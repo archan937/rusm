@@ -204,6 +204,7 @@ const sections = [
         items: [
           { text: 'P9 — Distributed clusters', link: '/phases/phase-09-distributed-clusters' },
           { text: 'P10 — Scale & hardening', link: '/phases/phase-10-scale-hardening' },
+          { text: 'P11 — Serving', link: '/phases/phase-11-serving' },
         ],
       },
     ],

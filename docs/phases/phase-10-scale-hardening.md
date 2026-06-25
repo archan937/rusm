@@ -42,4 +42,4 @@ Phase complete. All regressions held. Component-storm ~440k spawns/sec, ping-pon
 
 ---
 
-*Phase 11 (serving & standard-WASI surface) is functionally complete: HTTP, WebSocket, and SSE serving from any component in any language, declarative routing, `wasi:cli/run` support, and the full three-language serving benchmark suite. See the [roadmap](/about/roadmap).*
+*Next: [Phase 11 — Serving & the standard-WASI surface](/phases/phase-11-serving) — HTTP, WebSocket, and SSE serving from any component in any language, declarative routing, `wasi:cli/run` support, and the full three-language serving benchmark suite.*

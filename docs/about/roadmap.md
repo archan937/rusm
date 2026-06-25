@@ -65,41 +65,18 @@ data to real measurements.
   opt-in bounded mailboxes (overload load-shed), per-node certs under a cluster CA
   + mutual TLS, and windowed supervisor restart-intensity — no spawn/message
   regression.
-- **Phase 11 — serving & standard-WASI surface (functionally complete; one
-  refinement deferred):** run a component as a high-throughput
-  **HTTP / WS / SSE** server. The serving engine is **built and measured** —
-  `WasmRuntime::http_server` (instance-per-request `wasi:http`), `ws_server` (one
-  sandboxed component process per WebSocket connection, replies via a Wasm-free writer
-  process), and SSE (a `wasi:http` streaming body). **`rusm serve`** now hosts
-  `rusm.toml [[serve]]` listeners (`protocol` = `http`|`sse`|`ws`, `listen`, and — for
-  HTTP/SSE — a `[serve.routes]` table naming `[components.<name>]` handlers) on real TCP
-  ports, loading `wasm/<name>.{wasm,js}` (HTTP/SSE via the
-  `http_server` path, WS via `ws_server`); **`rusm new <name>`** scaffolds a
-  ready-to-serve TS HTTP app. Serving is benchmarked two ways: the **fair, credible
-  headline numbers** come **out-of-process** from the `rusm-loadtest` binary against a
-  live `rusm serve` port — loopback: HTTP ~46k req/s (0% errors), WS ~146k
-  round-trips/s (256 held), SSE ~609k events/s (256 held), and ~34k
-  sandboxed-process-per-connection WS establishments/s (`rusm-loadtest`'s `conn`
-  mode). The **six serving dashboard tiles** (`http-throughput`, `ws-echo`,
-  `sse-fanout` and their `*-ts` twins) are **co-resident live demos** — the same real
-  in-process WASM server driven through the shared `rusm-loadtest` path (a steady
-  closed-loop driver for HTTP — a fixed set of outstanding requests that holds the tile at
-  the server's real ceiling, never flooding or collapsing — and a connection-capacity
-  harness for WS/SSE held connections), with load generator and server sharing the node
-  process. (The fair out-of-process headline still uses balter's rate sweep.) See
-  [serving HTTP/WS/SSE](/deep-dive/serving-http-ws-and-sse). **0.3.0** matured the serving surface —
-  the per-connection request context, full WS framing + permessage-deflate, rich SSE events
-  + resumption, per-listener resource/CSWSH controls, compression, and native **TLS**
-  (`https`/`wss`); only serve-path admission-control + default-bounded serve mailboxes remain
-  for **Phase 12** (below). Beyond serving, Phase 11 closed the
-  standard-WASI surface: **stock `wasi:cli/run` command components** run unchanged
-  (`WasmRuntime::spawn_command`), and the TS runner gained a capability-gated,
-  streaming **outbound `fetch`** (over `wasi:http`, TLS via `wasmtime-wasi-http`) plus
-  **`crypto`** (getRandomValues/randomUUID over `wasi:random`) — enough to host real npm
-  clients such as `ai-sdk`. The one **deferred** item is a native p3-typed
-  **`stream<u8>`** actor-world signature: cosmetic standards-polish, since the
-  handle-ABI byte streams are functionally complete and load-bearing for WS/SSE serving.
-  `rusm-otp` stays Wasm-free (hyper/tungstenite/`wasi:http` live only in `rusm-wasm`).
+- **Phase 11 — serving & standard-WASI surface** (functionally complete; one
+  refinement deferred): run a component as a high-throughput **HTTP / WS / SSE**
+  server — HTTP/SSE instance-per-request, WS one process per connection, from Rust,
+  TypeScript, and Go guests. **`rusm serve`** hosts `rusm.toml [[serve]]` listeners
+  with declarative `[serve.routes]`; **`rusm new`** scaffolds a ready-to-serve app.
+  The standard-WASI surface is closed too: stock `wasi:cli/run` components, a
+  capability-gated outbound `fetch`, and `crypto`. **0.3.0** matured it — request
+  context, full WS framing + permessage-deflate, rich SSE + resumption, resource/CSWSH
+  controls, compression, and native **TLS**. Fair out-of-process numbers (`rusm-loadtest`,
+  loopback): HTTP ~46k req/s, WS ~146k round-trips/s, SSE ~609k events/s. The one
+  deferred item is a native p3-typed `stream<u8>` signature (cosmetic). Full story:
+  [Phase 11](/phases/phase-11-serving) and [serving HTTP/WS/SSE](/deep-dive/serving-http-ws-and-sse).
 
 **Across all phases:**
 
