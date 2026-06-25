@@ -3,31 +3,58 @@
 Need your guests to call something the platform doesn't provide — a payment processor, an
 email API, a signing routine, a proprietary database client? Add a **custom bridge**: a
 native function *your app* defines once and calls from **any** guest — TypeScript, Rust,
-or Go — as an ordinary typed import. It's RUSM's answer to a wasmCloud **capability
-provider**, but compiled-in and typed: no lattice, no broker, no RPC, no JSON dispatcher.
+or Go — as an ordinary typed import.
 
-## 1 — Define the bridge
+No lattice. No broker. No RPC dispatcher. No JSON middleware. The bridge contract is a WIT
+interface; `rusm build` generates all the glue. You write one file — `host.rs`, `host.ts`,
+or `host.go` — and the rest is produced for you.
 
-A bridge is a directory `bridges/<name>/` with the **contract** (`bridge.wit`) and a **host
-impl** — Rust (`host.rs`), TypeScript (`host.ts`), or Go (`host.go`). All three are
-first-class; pick based on what the bridge needs to do:
+## Get started in 30 seconds
+
+The fastest way in is a ready-made template. The `mailer` template wires a Resend email
+bridge end-to-end — contract, host impl, guest call, capability grant, all generated:
+
+```sh
+rusm new myapp --template mailer              # TypeScript guest (default)
+rusm new myapp --template mailer --lang rust  # Rust guest
+rusm new myapp --template mailer --lang go    # Go guest
+cd myapp && rusm build && rusm serve
+```
+
+The `weather` template ships a **Rust host bridge** — the zero-overhead path useful as a
+starting point for CPU-critical or tight-loop callers:
+
+```sh
+rusm new myapp --template weather             # Rust host, TypeScript guest
+rusm new myapp --template weather --lang rust # Rust host, Rust guest
+rusm new myapp --template weather --lang go   # Rust host, Go guest
+```
+
+::: tip Adding a bridge to an existing project
+`rusm generate bridge <name>` scaffolds `bridges/<name>/bridge.wit` and a starter
+`host.ts` (or `host.rs` / `host.go` with `--lang`) into your current project, adds the
+`rusm.toml` entry, and regenerates glue on the next `rusm build`.
+:::
+
+## How a bridge works
+
+A bridge is a directory `bridges/<name>/` with a **contract** (`bridge.wit`) and a **host
+impl** — Rust, TypeScript, or Go. `rusm build` generates everything else.
 
 | | `host.rs` | `host.ts` | `host.go` |
 |---|---|---|---|
-| Who authors it | Rust developer | Any developer | Go developer |
-| Call overhead | ~few hundred ns (native ABI) | ~1–10 µs (actor round-trip + JSON) | ~1–10 µs (actor round-trip + JSON) |
-| Best for | CPU-critical, tight-loop callers | I/O-bound work, 3rd-party JS SDKs | I/O-bound work, existing Go libs |
+| **Runs as** | Compiled into the host binary | Resident actor (`bridge:<name>`) | Resident actor (`bridge:<name>`) |
+| **Call overhead** | ~few hundred ns (native ABI) | ~1–10 µs (actor round-trip + JSON) | ~1–10 µs (actor round-trip + JSON) |
+| **Best for** | CPU-critical, tight-loop callers | I/O-bound work, 3rd-party JS SDKs | I/O-bound work, existing Go libraries |
 
-`rusm build` generates all surrounding glue for all three — the host crate, the WIT world,
-the delegation shim, and the language-specific runner. A Rust bridge compiles in; a TS or
-Go bridge runs as a resident actor (`bridge:<name>`) and the generated shim dispatches
-to it over the actor wire.
+A **Rust bridge** compiles directly into the host binary — zero delegation, no extra process.
+A **TypeScript or Go bridge** runs as a supervised resident actor; the generated delegation
+shim dispatches calls over the actor wire. Both are capability-gated and default-deny:
+guests import the bridge only if their capability profile lists it.
 
-The example below is a **transactional email bridge** (`mailer`) using the Resend API —
-a universally understood I/O-bound task that naturally belongs in a bridge: it needs
-network access, an API key, and shouldn't live inside guest Wasm code.
+## 1 — Define the contract
 
-### The contract (shared by all three host impls)
+The WIT interface is the single source of truth for all three languages:
 
 ```wit
 // bridges/mailer/bridge.wit
@@ -47,13 +74,10 @@ interface smtp {
 
 ### TypeScript host
 
-The runner is a long-lived resident actor — the Resend API key loads once at startup and
-is available for the node's entire lifetime.
+Write one file — the runner, dispatch loop, and all Rust glue are generated:
 
 ```ts
 // bridges/mailer/host.ts — the ONLY file you write.
-// rusm build generates the Rust delegation shim, the TS dispatch runner (_runner.ts),
-// and all host crate glue. Bun bundles the runner to wasm/bridge-mailer.js.
 const API_KEY = process.env.RESEND_API_KEY ?? "";
 
 export async function send(msg: { to: string; subject: string; body: string }): Promise<boolean> {
@@ -74,18 +98,13 @@ export async function send(msg: { to: string; subject: string; body: string }): 
 }
 ```
 
-The `send` function is `async` — the resident actor `await`s the Resend response on its
-own Tokio task, so nothing blocks the calling guest.
+The `send` function is `async` — the resident actor awaits the Resend response on its own
+Tokio task, so nothing blocks the calling guest.
 
 ### Go host
 
-TinyGo compiles `host.go` + the generated `_runner.go` into a single Wasm component.
-WIT record params arrive as `json.RawMessage` — see the callout below.
-
 ```go
 // bridges/mailer/host.go — the ONLY file you write.
-// rusm build generates _runner.go, a minimal go.mod (if absent), and the Rust delegation
-// shim. TinyGo compiles the whole bridges/mailer/ package to wasm/bridge-mailer.wasm.
 package main
 
 import (
@@ -101,7 +120,7 @@ var (
 )
 
 // Send delivers the email via Resend. The generated dispatcher calls this with the WIT
-// `message` record already serialised into a json.RawMessage — unmarshal into your struct.
+// `message` record already serialised into a json.RawMessage.
 func Send(raw json.RawMessage) bool {
 	var msg struct {
 		To      string `json:"to"`
@@ -130,17 +149,15 @@ func Send(raw json.RawMessage) bool {
 ```
 
 ::: tip WIT records in Go bridges
-When a WIT function takes a `record` parameter the generated dispatcher passes a
-`json.RawMessage` (raw JSON bytes) — no intermediate allocation. Your `host.go` function
-receives the slice and calls `json.Unmarshal` into its own struct, giving you full control
-over field naming and validation. Primitive params (`string`, `uint32`, `bool`, …) are
-deserialised to the correct Go type directly.
+`record`, `enum`, `variant`, and `result` params arrive as `json.RawMessage` — no
+intermediate allocation. Unmarshal into your own struct for full control over field naming.
+Primitive params (`string`, `uint32`, `bool`, …) are deserialised to the correct Go type
+directly.
 :::
 
 ### Rust host
 
-Rust bridges compile directly into the host binary — zero delegation, no actor, no JSON.
-The host crate is a normal Rust crate; add any dependency to its `Cargo.toml`.
+Rust bridges compile directly into the host binary — zero delegation, no actor, no JSON:
 
 ```rust
 // bridges/mailer/host.rs — the ONLY Rust an app must add for a Rust bridge.
@@ -175,8 +192,7 @@ impl smtp::Host for BridgeHost {
 
 ## 2 — Grant it (default-deny)
 
-A bridge is reachable only by a component whose capability profile lists it — like every
-other grant, default-deny:
+A bridge is reachable only by a component whose capability profile lists it:
 
 ```toml
 [capabilities.notifier]
@@ -198,8 +214,8 @@ A guest calls the bridge as a plain typed import — no dispatcher, no marshalin
 import { http } from "rusm-ts";
 
 // `mailer` is a typed global the per-app js-runner exposes (rusm build compiles it in).
-// Bridge calls are synchronous from the guest's perspective — no await needed.
-// The js-runner fiber-parks the Wasm instance while the host resolves, then resumes.
+// Bridge calls are synchronous from the guest's perspective — the fiber parks while
+// the host resolves, then resumes. No await needed.
 export default http({
   async post(req) {
     const { to, subject, body } = await req.json();
@@ -257,9 +273,9 @@ func run() {
 
 ## Rich types, not just strings
 
-The bridge contract above uses a `record` — and that's just the beginning. WIT carries the
-full value-type set: records, variants, enums, lists, options, results, tuples. Extend the
-mailer with an optional attachment, for example:
+The bridge contract uses a `record` — and that's just the beginning. WIT carries the full
+value-type set: records, variants, enums, lists, options, results, tuples. Extend the
+mailer with an optional attachment:
 
 ```wit
 record attachment { filename: string, content: list<u8> }
@@ -267,75 +283,29 @@ record attachment { filename: string, content: list<u8> }
 send-with-attachment: func(msg: message, att: option<attachment>) -> bool;
 ```
 
-Rust and Go receive the native generated types (`smtp::Message`, `smtp::Attachment`); a
-TypeScript guest gets fully typed objects (`{ filename: string; content: number[] }`),
-marshaled via `serde_json`. For **Go specifically**, any `record`, `enum`, `variant`, or
-`result` param arrives as `json.RawMessage` in the generated dispatcher — the user's
-`host.go` function unmarshals into its own struct.
+Rust and Go receive native generated types (`smtp::Message`, `smtp::Attachment`); a
+TypeScript guest gets fully typed objects (`{ filename: string; content: number[] }`).
 
-## How it builds
+## What `rusm build` generates
 
-`rusm build` discovers `bridges/`, generates all host glue + per-guest bindings, vendors
-the contract into each granted component, and compiles the components **plus a small host
-binary** that wires the bridges. `rusm serve` runs that binary — same serve loop as a
-pure-guest app, bridges included.
+`rusm build` discovers `bridges/`, generates all host glue and per-guest bindings, vendors
+the contract into each granted component, and compiles a host binary that wires the bridges
+into the serve loop — same `rusm serve` command, bridges included.
 
-For a **Rust bridge** (`host.rs`): `rusm build` writes `src/bindings.rs`, `src/bridges.rs`,
-`wit/`, and the synthesized bindgen world. You author `host.rs`; everything else is
-generated.
+- **Rust bridge** — writes `src/bindings.rs`, `src/bridges.rs`, `wit/`, and the synthesized
+  bindgen world. You author `host.rs`; everything else is generated.
+- **TypeScript bridge** — additionally writes `src/bridge_<name>_delegate.rs` (the Rust
+  delegation shim), `bridges/<name>/_runner.ts` (the resident actor), and `src/main.rs` (if
+  absent). Bun bundles the runner to `wasm/bridge-<name>.js`.
+- **Go bridge** — additionally writes the delegation shim, `bridges/<name>/_runner.go`, a
+  minimal `go.mod` (if absent), and `src/main.rs` (if absent). TinyGo compiles the whole
+  package to `wasm/bridge-<name>.wasm`.
 
-For a **TS bridge** (`host.ts`), `rusm build` additionally writes:
-- `src/bridge_<name>_delegate.rs` — the Rust delegation shim (sends JSON over the actor
-  wire to the resident runner)
-- `bridges/<name>/_runner.ts` — the resident TS actor (`bridge:<name>`) that dispatches
-  to your `host.ts` exports
-- `src/main.rs` — a generated entry point calling `serve_with_init` (only if none exists)
+All three runners register as supervised resident actors at startup — they stay alive for the
+node's lifetime and are restarted by the supervisor on failure.
 
-Bun bundles the runner to `wasm/bridge-<name>.js`. It registers as a resident actor at
-startup and runs under a supervisor for the node's lifetime.
+## Go deeper
 
-For a **Go bridge** (`host.go`), `rusm build` additionally writes:
-- `src/bridge_<name>_delegate.rs` — the same Rust delegation shim (wire protocol is
-  identical for TS and Go)
-- `bridges/<name>/_runner.go` — the resident Go actor that dispatches to your exported
-  functions; WIT record/enum/variant params passed as `json.RawMessage`
-- `bridges/<name>/go.mod` — a minimal module file (only if none exists, so you can add
-  extra deps freely)
-- `src/main.rs` — a generated entry point (only if none exists)
-
-TinyGo compiles the whole `bridges/<name>/` package to `wasm/bridge-<name>.wasm` — a full
-Wasm component registered at startup under a supervisor.
-
-**Get a working skeleton in seconds** — two ready-to-run templates cover the bridge patterns:
-
-```sh
-# The `mailer` template — a TS host bridge calling Resend (exactly the example above).
-# Set RESEND_API_KEY in .env, then build and serve.
-rusm new myapp --template mailer --lang ts    # TypeScript guest
-rusm new myapp --template mailer --lang go    # Go guest
-rusm new myapp --template mailer --lang rust  # Rust guest
-
-# The `weather` template — a Rust host bridge; useful as a Rust-host starting point.
-rusm new myapp --template weather --lang ts   # TypeScript guest
-rusm new myapp --template weather --lang go   # Go guest
-rusm new myapp --template weather --lang rust # Rust guest (default)
-
-cd myapp && rusm build && rusm serve
-```
-
-## The platform / application split
-
-A Rust host impl is the zero-overhead choice: the host **is** Rust, so `host.rs` compiles
-directly into the binary — no delegation, no marshaling, just the WIT ABI boundary. A
-TypeScript or Go host impl trades a few microseconds per call for zero-Rust authoring: you
-write one `host.ts` or `host.go` and the platform generates the delegation shim, the
-dispatch runner, and all wiring. The TS and Go delegation paths share the same JSON wire
-protocol; only the runner language differs.
-
-For TS, the runner is the familiar js-runner environment — `fetch`, KV, the full actor
-world, and the entire Bun/Node ecosystem. For Go, the runner is a TinyGo Wasm component
-with the full rusm-go actor world (`rusm.KvGet`/`KvSet`, `rusm.Send`/`Receive`/`Spawn`,
-outbound `net/http`) and any Go stdlib that TinyGo supports for `wasm32-wasip2`.
-
-All three paths are **capability-gated and default-deny**: guests call the bridge as an
-ordinary typed import, and the operator decides which component profiles may reach it.
+- [Grant capabilities](/build-an-app/grant-capabilities) — the full capability model and custom profiles
+- [Runnable mailer example](https://github.com/archan937/rusm/tree/main/examples/mailer) — TS, Rust, and Go guests against a real Resend bridge
+- [Runnable weather-api example](https://github.com/archan937/rusm/tree/main/examples/weather-api) — Rust host bridge, all three guest languages
