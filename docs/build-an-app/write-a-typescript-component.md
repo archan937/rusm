@@ -6,8 +6,11 @@ No jco, no boilerplate, no raw WASM tooling. Write logic; RUSM handles the rest.
 
 ## Scaffold & run in 30 seconds
 
+`rusm new` creates a complete new RUSM project — `rusm.toml`, a `components/` folder, and
+a starter component ready to build and serve:
+
 ```sh
-rusm new myapp       # scaffold a TypeScript HTTP component
+rusm new myapp       # new project with a TypeScript HTTP component
 cd myapp
 rusm build           # bun build → wasm/api.js
 rusm serve           # live on http://127.0.0.1:8080
@@ -16,9 +19,15 @@ rusm serve           # live on http://127.0.0.1:8080
 Want WebSocket or SSE instead?
 
 ```sh
-rusm new myapp --protocol ws    # WebSocket component
-rusm new myapp --protocol sse   # Server-Sent Events component
+rusm new myapp --protocol ws    # new project with a WebSocket component
+rusm new myapp --protocol sse   # new project with an SSE component
 ```
+
+::: tip Adding a component to an existing project
+Use `rusm generate component <name> [--lang ts|rust|go] [--protocol http|ws|sse]` — it adds
+a new `components/<name>/` and the matching `rusm.toml` entry without touching anything
+else. `rusm generate bridge <name>` scaffolds a new host bridge the same way.
+:::
 
 A component is a folder under `components/` with a single `index.ts`:
 
