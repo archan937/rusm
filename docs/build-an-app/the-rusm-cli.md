@@ -1,23 +1,27 @@
-# The rusm CLI
+# The `rusm` CLI
 
-One binary, `rusm`, drives the whole lifecycle of a RUSM app. The arc:
+Most runtimes hand you primitives and step away. RUSM gives you the full lifecycle:
+scaffold a project, compile every component to Wasm, serve them on real ports, watch
+and reload while you iterate, publish bundles to the durable store, and attach to any
+live node — all through one binary.
 
 ```sh
-rusm new myapp     # scaffold
+rusm new myapp     # scaffold a project
 cd myapp
 rusm build         # components/* → ./wasm/*
-rusm serve         # host them on real ports     (or)   rusm run   # run as processes
-rusm dev           # build + run + watch & reload (iterate)
+rusm serve         # host them on real TCP ports
+rusm dev           # build + run + watch & reload (the inner loop)
 rusm attach        # live REPL into a running node
 ```
 
 Config comes from `rusm.toml` (see **[configuration](/deep-dive/configuration)**);
-the commands that start a node also accept the flags in the last section.
+commands that start a node also accept the flags in the last section.
 
-## `rusm new <name> [--rust|--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template todo-board|weather|mailer] [--bridges]`
+## `rusm new <name> [--lang ts|rust|go|generic] [--protocol http|sse|ws] [--template …] [--bridges]`
 
-Scaffold a new app in `./<name>` — a component, a `rusm.toml` with a `[[serve]]`
-entry, `.gitignore`, and a README. From nothing to a live server in three commands.
+Start from zero. `rusm new` scaffolds a complete project — component source, a
+`rusm.toml` with a `[[serve]]` entry, `.gitignore`, and a README — so the first
+thing you run actually works. No boilerplate to understand, no config to figure out.
 
 ```sh
 rusm new hello && cd hello
@@ -130,28 +134,66 @@ whichever reads better. `--bridges` can't be combined with `--template`.
 rusm new weatherapp --bridges --lang go   # a Go guest calling a native `weather` bridge
 ```
 
+## `rusm generate component|bridge <name> [options]`
+
+`rusm new` starts from zero. `rusm generate` grows an existing project — it adds one
+component or bridge without touching anything else already in the project.
+
+```sh
+rusm generate component payments --lang rust --protocol http  # add a Rust HTTP component
+rusm generate component feed --protocol sse                   # add a TS SSE component
+rusm generate bridge mailer --lang ts                         # add a TS host bridge
+```
+
+### `component <name> [--lang ts|rust|go] [--protocol http|sse|ws]`
+
+Creates `components/<name>/` with the appropriate source files and appends the correct
+`rusm.toml` entry — a `[[serve]]` block for TypeScript and for Rust/Go SSE/WS (standalone
+listeners), or a `[components.<name>]` section for Rust/Go HTTP handlers that route via
+`[serve.routes]` on an existing listener.
+
+Errors if `components/<name>/` already exists or if `<name>` is already declared in
+`rusm.toml`, so you can never silently clobber an existing component.
+
+### `bridge <name> [--lang ts|rust|go]`
+
+Creates `bridges/<name>/bridge.wit` (the WIT contract for the bridge) and
+`bridges/<name>/host.<ext>` (the host implementation in the chosen language), then appends
+an instructional comment to `rusm.toml` showing the exact `[capabilities.<name>]` snippet
+to grant the bridge to a component:
+
+```toml
+# Bridge 'mailer' — grant it in a capability to call it from a guest:
+#   [capabilities.my-cap]
+#   inherits = "sandboxed"
+#   bridges = ["mailer"]
+# Then set capability = "my-cap" on the component(s) that import it.
+```
+
+See [Add your own functions](/build-an-app/add-your-own-functions) for the full bridge workflow.
+
 ## `rusm build`
 
-Compile every `components/<name>/` into `./wasm/`, with **one toolchain each** — no
-jco, no cargo-component:
+There is no build system config to write. RUSM inspects each `components/<name>/` directory,
+detects the toolchain from the layout, and compiles it with the right tool:
 
-- a **Rust** component (`Cargo.toml`) → `cargo build --target wasm32-wasip2` → `wasm/<name>.wasm`;
-- a **TypeScript** component (`index.ts`) → `bun build --minify` → `wasm/<name>.js`,
-  then **precompiled to QuickJS bytecode** → `wasm/<name>.qjsbc` (the runner skips parsing);
-- a **Go** component (`go.mod`) → `tinygo build -target=wasip2 …` → `wasm/<name>.wasm`.
-  See [guests: Rust, TypeScript & Go](/deep-dive/guests).
-- a **generic** component (a pre-built `.wasm`, no `Cargo.toml`/`index.ts`) → copied
-  into `wasm/<name>.wasm` as-is. Prefers `<name>.wasm`; a lone `.wasm` also works, and
-  several `.wasm` files are an error (name the one to ship `<name>.wasm`).
+- a **Rust** component (`Cargo.toml`) → `cargo build --target wasm32-wasip2` → `wasm/<name>.wasm`
+- a **TypeScript** component (`index.ts`) → `bun build --minify` → `wasm/<name>.js`, then
+  **precompiled to QuickJS bytecode** → `wasm/<name>.qjsbc` (the runner skips JS parsing at spawn time)
+- a **Go** component (`go.mod`) → `tinygo build -target=wasip2 …` → `wasm/<name>.wasm`
+  (see [guests: Rust, TypeScript & Go](/deep-dive/guests))
+- a **generic** component (a pre-built `.wasm`, no `Cargo.toml`/`index.ts`) → copied into
+  `wasm/<name>.wasm` as-is; prefers `<name>.wasm`, a lone `.wasm` also works, multiple
+  `.wasm` files are an error (name the one to ship `<name>.wasm`)
 
-Emits a clear error if Bun / the `wasm32-wasip2` target is missing.
+Emits a clear error if Bun or the `wasm32-wasip2` target is missing.
 
 ## `rusm run`
 
-Load every `[components.<name>]` entry from `./wasm/` and register it under its
-capability profile so a route or sibling can `spawn` it by name; the `resident = true`
-entries are also boot-spawned and supervised. Waits for Ctrl-C. Loads `./.env` (process
-env wins).
+Host named components so other parts of your app — or other nodes — can `spawn` them.
+`rusm run` loads every `[components.<name>]` entry from `./wasm/`, registers each under its
+declared capability profile, and boot-spawns any `resident = true` entries under supervision.
+Use it when the app's value is in the services it provides, not in serving HTTP directly.
 
 ```sh
 rusm run
@@ -160,12 +202,13 @@ rusm run
 
 ## `rusm serve`
 
-Host every `[[serve]]` entry on its TCP `listen` address. Serving is always
-ephemeral: **HTTP/SSE** run a fresh sandboxed instance per request (`http_server`,
-dispatched through that listener's `[serve.routes]` table), **WS** runs one sandboxed process per
-connection (`ws_server`). Prints each bound endpoint; waits for Ctrl-C. This is the
-**server** side of a fair benchmark — the node only serves; drive load
-out-of-process with `rusm-loadtest`.
+Host HTTP/WS/SSE listeners on real TCP ports. Every `[[serve]]` entry in `rusm.toml` becomes
+a bound port; RUSM dispatches each incoming connection using the ephemeral model it was built
+around — a **fresh sandboxed instance per request** for HTTP/SSE (routed through
+`[serve.routes]` if declared), a **fresh sandboxed process per connection** for WS. A crash
+drops exactly one unit; head-of-line blocking is impossible by construction.
+
+Waits for Ctrl-C. The node only serves; drive load out-of-process with `rusm-loadtest`.
 
 ```sh
 rusm serve
@@ -175,8 +218,9 @@ rusm serve
 
 ## `rusm dev`
 
-`build` → `run` → **watch `./components`** and rebuild + hot-reload on any edit (a
-dependency-free mtime scan). The fast inner loop.
+The inner loop: `build` → `run` → **watch `./components` and rebuild + hot-reload on any
+edit**. Edit a file; RUSM detects the change (a dependency-free mtime scan), recompiles
+that component, and reloads it — without restarting the node or other components.
 
 ```sh
 rusm dev
@@ -186,9 +230,10 @@ rusm dev
 
 ## `rusm node start`
 
-Start an **attachable node**: host the app's `[components.<name>]` (like `rusm run`)
-**and** expose a live observe/attach endpoint on `listen`, so `rusm attach` can
-watch the node's processes. The hosted components keep running until Ctrl-C.
+The production-ready variant of `rusm run`: hosts all `[components.<name>]` entries **and**
+exposes the observe/attach WebSocket endpoint so `rusm attach` (or the dashboard) can
+connect to the live node. Use `rusm node start` whenever you want visibility into a running
+system; use `rusm run` for fully headless deployments.
 
 ```sh
 rusm node start
@@ -202,17 +247,15 @@ rusm node start
 
 ## `rusm kv`
 
-`rusm kv <set|get|list|rm> …` — read and write the node's durable store (the `[node] store`
-file) from the shell — chiefly
-to **publish a dynamic bundle** that a `source = "kv:<bucket>/<key>"` (or a guest's
-`spawn-from`) then loads: a compiled `.wasm` component or a JS bundle. The node must be
-**stopped** (the store is single-writer, and a running node holds the lock).
+Publish dynamic bundles to the node's durable store so a `source = "kv:<bucket>/<key>"`
+component or a guest's `spawn-from` can load them at runtime. The node must be **stopped**
+(the store is single-writer; a running node holds the lock).
 
 ```sh
 rusm kv set plugins/greeter wasm/greeter.wasm   # publish a bundle (file → key)
 rusm kv list plugins                            # greeter
 rusm kv get plugins/greeter ./out.wasm          # read a key back to a file
-rusm kv rm  plugins/greeter                      # delete a key
+rusm kv rm  plugins/greeter                     # delete a key
 ```
 
 The `<bucket>/<key>` ref splits on the **first** `/`, so a key may contain slashes
@@ -221,10 +264,9 @@ The `<bucket>/<key>` ref splits on the **first** `/`, so a key may contain slash
 
 ## `rusm attach [target]`
 
-Open a live REPL into a running node (defaults to `127.0.0.1:4000`; accepts
-`host`, `host:port`, or a full `ws://` URL — local or remote). Watch the node's
-live processes stream in (count + a per-process detail table), and toggle the
-detail table. See [live attach](/deep-dive/live-attach).
+Observe a live node without stopping it. `rusm attach` opens a REPL into a running node's
+process stream — defaults to `127.0.0.1:4000`; accepts `host`, `host:port`, or a full
+`ws://` URL — local or remote. See [live attach](/deep-dive/live-attach).
 
 ```sh
 rusm attach                 # local node
@@ -235,15 +277,16 @@ rusm attach 10.0.0.7:4000   # a remote node
 
 ## Flags
 
-Applied by the node-starting commands (layered over `rusm.toml`):
+The **node-starting commands** (`node start`, `run`, `serve`, `dev`) accept these flags,
+layered over `rusm.toml`:
 
 | Flag | Commands | Meaning |
 | --- | --- | --- |
 | `--config <file>` | `node start`, `run`, `serve`, `dev` | Use a specific manifest instead of `./rusm.toml`. |
 | `--listen <addr>` | `node start`, `run`, `serve`, `dev` | Override the node's `[node] listen` attach (WebSocket) address — most useful with `node start`, which exposes it. |
 
-> `rusm new` takes the app name; `rusm attach` takes the target as a positional
-> argument; `rusm build` takes no flags.
+> `rusm new` and `rusm generate` take the app/component name as a positional argument;
+> `rusm attach` takes the target as a positional argument; `rusm build` takes no flags.
 
 Two flags are **global** — they work with any command, or none:
 
