@@ -120,10 +120,14 @@ The full actor toolkit, all typed and serde-backed:
 | `send_bytes(pid, &[u8])` / `send(pid, &T)` | send a message |
 | `receive_bytes()` / `receive::<T>()` | wait for a message (parks the fiber) |
 | `spawn("name")` | spawn a component by `rusm.toml` name |
+| `svc::Client::connect(pid)` | typed cross-process call (the `#[service]`-generated client) |
 | `register("name")` / `whereis("name")` | named registry |
 | `register_tag("tag")` / `whereis_tag("tag")` | process-group tags |
 | `send_after(pid, ms, msg)` / `cancel_timer(h)` | timers |
-| `monitor(pid)` / `link(pid)` | lifecycle tracking |
+| `monitor(pid)` | watch for a process exit (a `__down` message) |
+| `kill(pid)` | terminate another process |
+| `Stream::open(pid)` / `Stream::accept()` | byte streams |
+| `set_label("label")` | a label for the observer |
 
 Errors are ordinary `Result`s. Logging is the standard `log` crate — `log::info!`,
 `log::error!` — routed to the node's unified stream by `#[rusm_rs::main]` / `#[handlers]`

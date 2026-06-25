@@ -117,11 +117,15 @@ The full actor toolkit — all typed by `rusm-ts`:
 | `Process.self()` | this process's pid |
 | `Process.send(pid, msg)` | send a message |
 | `Process.receive()` / `receiveText()` | wait for a message (suspends the fiber — cheap) |
-| `Process.spawn(name)` / `spawn<T>(name)` | spawn a component; typed client variant |
+| `Process.spawn(name)` | spawn a component by `rusm.toml` name |
+| `spawn<T>(name)` / `connect<T>(name)` | typed cross-process call (spawn a service / reach a running one) |
 | `Process.register(name)` / `whereis(name)` | named registry |
 | `Process.registerTag(tag)` / `whereisTag(tag)` | process-group tags |
-| `Process.kill(pid)` | exit another process |
-| `Process.openStream()` / `acceptStream()` | byte streams |
+| `Process.sendAfter(pid, ms, msg)` / `cancelTimer(h)` | timers |
+| `Process.monitor(pid)` | watch for a process exit (a `__down` message) |
+| `Process.kill(pid)` | terminate another process |
+| `Process.openStream(pid)` / `acceptStream()` | byte streams |
+| `Process.setLabel(label)` | a label for the observer |
 
 `receive` and `receiveText` are `async` — they suspend the fiber while waiting, freeing
 the scheduler for other work. No threads, no event loop fights.

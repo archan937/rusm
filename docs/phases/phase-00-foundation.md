@@ -1,5 +1,7 @@
 # Phase 0 — Observability foundation
 
+> **The Phase log is RUSM's build history.** These pages tell how the runtime was built, phase by phase — the why, the design, and what each phase shipped — not how to *use* a feature today. For that, start with [Build an app](/build-an-app/url-shortener); for the whole arc at a glance, see the [roadmap](/about/roadmap).
+
 You can't improve what you can't measure — Phase 0 built the benchmark harness, live observer, and dashboard *before a single line of runtime existed*, so every subsequent phase arrived to a waiting feedback loop.
 
 ## Why this phase

@@ -1,11 +1,16 @@
 # Distributed nodes
 
+Distributed Erlang's superpower is that scaling to many machines barely changes your code:
+a process sends to a peer the same way whether that peer is in the same node or across the
+network. RUSM brings that to WebAssembly — and makes the wire **secure by default** (QUIC +
+mutual TLS), which the BEAM never did.
+
 A single RUSM node is a host process running many lightweight processes. A **cluster**
 is several nodes — typically on different machines — connected so those processes can
-spawn and message across the boundary as if they were local. That's distributed Erlang's
-model: a process doesn't know (or care) which node a peer lives on. It ships in the
-Wasm-free [`rusm-cluster`](https://github.com/archan937/rusm) crate, layered over
-`rusm-otp` — so distribution never drags WebAssembly into the core.
+spawn and message across the boundary as if they were local: a process doesn't know (or
+care) which node a peer lives on. It ships in the Wasm-free
+[`rusm-cluster`](https://github.com/archan937/rusm) crate, layered over `rusm-otp` — so
+distribution never drags WebAssembly into the core.
 
 ## Connecting
 

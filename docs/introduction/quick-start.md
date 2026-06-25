@@ -14,6 +14,26 @@ curl http://127.0.0.1:8080/  # "Hello from RUSM 👋"
 `--protocol ws` or `--protocol sse` scaffolds a WebSocket or SSE handler instead of HTTP.
 See the [`rusm` CLI reference](/build-an-app/the-rusm-cli) for the full command set.
 
+## What just happened?
+
+Four commands, and you're serving real HTTP from a sandboxed WebAssembly component. Here's
+what each one did:
+
+- **`rusm new hello`** scaffolded a project: a `rusm.toml` manifest with a `[[serve]]` entry,
+  a TypeScript component at `components/api/index.ts` (a web-standard `fetch` handler), a
+  `.gitignore`, and a README — a working app, not an empty skeleton.
+- **`rusm build`** compiled that component to `./wasm/` — Bun bundles the TypeScript and it's
+  precompiled to QuickJS bytecode (no jco, no per-component engine). A Rust or Go component
+  would compile to `wasm32-wasip2` instead; same `wasm/` output either way.
+- **`rusm serve`** bound the `[[serve]]` listener to a real TCP port. Each request runs in a
+  **fresh sandboxed instance** — process-per-request, so one slow or crashing request can
+  never block or take down another.
+- **`curl`** hit that port and got the component's response back over a real socket.
+
+There's no resident request handler, no thread pool to size, no framework to learn — you
+wrote a `fetch` function and RUSM made it a server. From here, the same model scales to
+WebSocket and SSE, multiple components, supervision, and a cluster.
+
 ## Scaffold a real app — the TODO board
 
 Want a real app instead of hello world? Scaffold the full **TODO board** — HTTP CRUD, a

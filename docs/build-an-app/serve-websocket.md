@@ -144,6 +144,75 @@ impl Handler for Chat {
 fn run() { ws::serve(Chat::default()); }
 ```
 
+```go [Go]
+// components/chat/main.go
+package main
+
+import (
+	"encoding/json"
+
+	rusm "github.com/archan937/rusm/packages/rusm-go"
+	"github.com/archan937/rusm/packages/rusm-go/web"
+)
+
+func init() { rusm.Run(run) }
+func main() {}
+
+// frame is the inbound wire shape; pointers tell an absent field from an empty one.
+type frame struct {
+	Join *string `json:"join,omitempty"`
+	Say  *string `json:"say,omitempty"`
+	Text *string `json:"text,omitempty"`
+}
+
+func roomTag(room string) string { return "room:" + room }
+
+func reply(c web.Conn, text string) {
+	if b, err := json.Marshal(map[string]string{"reply": text}); err == nil {
+		c.Send(b)
+	}
+}
+
+func run() {
+	var room string // this connection's room (one handler instance per connection)
+
+	web.WebSocket{
+		Open: func(c web.Conn) { reply(c, "connected") },
+
+		Message: func(c web.Conn, data []byte) {
+			var f frame
+			if json.Unmarshal(data, &f) != nil {
+				return
+			}
+			switch {
+			case f.Join != nil:
+				// Client wants to join a room: tag this process so broadcasts reach it.
+				room = *f.Join
+				rusm.RegisterTag(roomTag(room))
+				reply(c, "welcome to #"+room) // e.g. "welcome to #general"
+			case f.Say != nil:
+				// Client sent a chat message: fan it out to every connection in this room.
+				if room == "" {
+					reply(c, "join a room first")
+					return
+				}
+				relay, _ := json.Marshal(map[string]string{
+					"from": rusm.Self().String(), "text": *f.Say,
+				})
+				for _, pid := range rusm.WhereisTag(roomTag(room)) {
+					rusm.SendBytes(pid, relay)
+				}
+			case f.Text != nil:
+				// A relay from a peer arrived in the mailbox — forward it to this client.
+				c.Send(data)
+			}
+		},
+
+		Close: func(_ web.Conn) {},
+	}.Serve()
+}
+```
+
 :::
 
 ## 3. Build, serve, test

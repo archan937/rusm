@@ -57,8 +57,8 @@ const sections = [
       {
         text: 'Processes & messaging',
         items: [
-          { text: 'Powered by Tokio', link: '/build-an-app/powered-by-tokio' },
           { text: 'What is a process?', link: '/build-an-app/what-is-a-process' },
+          { text: 'Powered by Tokio', link: '/build-an-app/powered-by-tokio' },
           { text: 'Pid & self', link: '/build-an-app/pid-and-self' },
           { text: 'Send & receive', link: '/build-an-app/send-and-receive' },
           { text: 'Spawn', link: '/build-an-app/spawn' },

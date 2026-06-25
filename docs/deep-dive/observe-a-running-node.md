@@ -21,5 +21,30 @@ make dashboard            # the benchmark node + the React dashboard ("the money
 
 The dashboard's **Observer** shows the live process count and per-tick activity;
 each scenario panel also unfolds its real engine source so you can see exactly how
-it's built. See [the benchmark dashboard](/about/benchmark-dashboard-and-observer) for the full
+it's built.
+
+## What you see
+
+Both front-ends stream the same shape: a **live process count** and a **per-process
+table** — each row is one live process with its label, any registry names it holds, its
+mailbox depth, and its links. In the REPL it looks like this (illustrative):
+
+```
+attached — type `help` for commands
+processes: 1,284
+  PID    LABEL          REGISTERED   MAILBOX   LINKS
+  42     api#req         —            0         0
+  43     store           store        2         1
+  44     chat#conn       room:general 0         0
+  …
+> detail off                # just the live count, no per-process table
+processes: 1,284
+```
+
+The view is a **periodic aggregated snapshot** (10–60 Hz), not an event per operation, so
+watching a node barely costs it anything — the per-process table is the only expensive part,
+which is why `detail off` exists for clean high-rate runs. See
+[observability must stay cheap](/about/benchmark-dashboard-and-observer#observability-must-stay-cheap).
+
+See [the benchmark dashboard](/about/benchmark-dashboard-and-observer) for the full
 walkthrough, and [live attach](/deep-dive/live-attach) for the attach protocol.

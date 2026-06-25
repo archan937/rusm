@@ -9,9 +9,12 @@ fast*. Elixir's concurrency and fault tolerance, in Rust, running Wasm.
 
 My Elixir years left me wanting one thing: the BEAM's process model, but able to run
 **any** language on infrastructure that is lightweight, optimal, and fast.
-[Lunatic](https://github.com/lunatic-solutions/lunatic) proved it was possible and
-pitched it perfectly — then it went quiet. **RUSM exists to carry that torch forward.**
-If Lunatic were still active and current, I'd just use it.
+[Lunatic](https://github.com/lunatic-solutions/lunatic) proved the idea — a Wasm instance
+as a process, with supervisors and a distributed registry — and pitched it perfectly.
+**RUSM takes that idea further**: the modern **component model** (not just core modules),
+guests in **Rust, TypeScript, and Go** (not Rust alone), first-class **HTTP/WS/SSE
+serving**, and a **QUIC + mutual-TLS cluster** — all on a current Wasmtime, and every
+claim on this page is measured on a live dashboard, not asserted.
 
 ## What a process should be
 

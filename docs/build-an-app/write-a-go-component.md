@@ -128,7 +128,10 @@ The full actor toolkit, idiomatic Go:
 | `rusm.Register("name")` / `Whereis("name")` | named registry |
 | `rusm.RegisterTag("tag")` / `WhereisTag("tag")` | process-group tags |
 | `rusm.SendAfter(pid, ms, msg)` / `CancelTimer(h)` | timers |
-| `rusm.Monitor(pid)` / `Link(pid)` | lifecycle tracking |
+| `rusm.Monitor(pid)` | watch for a process exit (a `__down` message) |
+| `rusm.Kill(pid)` | terminate another process |
+| `rusm.OpenStream(pid)` / `AcceptStream()` | byte streams |
+| `rusm.SetLabel("label")` | a label for the observer |
 
 Logging is the standard `log` / `log/slog` packages — routed to the node's unified log
 stream by the SDK automatically. The host stamps the time, `component#pid`, and severity.

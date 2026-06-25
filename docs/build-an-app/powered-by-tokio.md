@@ -1,8 +1,9 @@
 # Powered by Tokio
 
-Before diving into processes, mailboxes, and supervision, it's worth understanding what
-runs underneath all of it — because it's a big part of why RUSM's process model is
-trustworthy.
+Every RUSM process is a Tokio task. That single decision is why one machine runs *millions*
+of them, why blocking code becomes async for free, and why fairness is structural instead of
+bolted on. You just met the process; this page is the engine underneath it — and why that
+engine is one you can trust with production load.
 
 ## What is Tokio?
 
@@ -89,5 +90,4 @@ The transformation is transparent and zero-cost.
 
 ---
 
-Next: [What is a process?](/build-an-app/what-is-a-process) — how processes are modelled
-on top of this foundation.
+Next: [Pid & self](/build-an-app/pid-and-self) — the process identity in detail.
