@@ -149,30 +149,34 @@ memory pages until it writes to one, at which point only that page is copied for
 instance. The 920 KB engine image is never duplicated in full — you pay only for the pages
 each instance actually diverges from the snapshot.
 
-### RUSM TS components vs JCO
+### RUSM TS components vs ComponentizeJS
 
-JCO's direction is the opposite: it transpiles a compiled Wasm component *to
-JavaScript* so it can run inside an existing Node.js, Deno, or Bun process. That solves a
-different problem — and it means no Wasm sandbox, no capability gating, and the full weight
-of a V8 process for every deployment. RUSM runs JS *inside* the Wasm sandbox. Here is what
-that difference looks like end to end:
+The closest comparison for running TypeScript as a sandboxed Wasm process is
+[ComponentizeJS](https://github.com/bytecodealliance/ComponentizeJS) — the Bytecode Alliance
+tool that compiles JS/TS to a Wasm component by embedding
+[StarlingMonkey](https://github.com/bytecodealliance/StarlingMonkey) (a SpiderMonkey variant).
+[JCO](https://github.com/bytecodealliance/jco) then transpiles those components to run in
+Node.js or a browser.
 
-| | **RUSM + rquickjs** | **JCO** |
+Both approaches run JavaScript inside Wasm. The differences are in engine sharing, actor
+model, and operational model:
+
+| | **RUSM + rquickjs** | **ComponentizeJS + JCO** |
 |---|---|---|
-| **Direction** | JS runs *inside* Wasm | Wasm compiled *to* JS |
-| **Your component artifact** | `.js` bundle (your code only, 2–50 KB) | `.wasm` + JS glue (500 KB – 5 MB+) |
-| **Shared runtime** | ~920 KB js-runner, CoW-shared | 50–100 MB Node.js / Deno / Bun |
-| **Wasm sandbox** | ✓ real memory isolation | ✗ runs in host JS engine |
-| **Capability gating** | ✓ default-deny per process | ✗ none |
-| **Memory cap** | ✓ `StoreLimiter` per instance | ✗ none |
-| **Cold spawn** | Near-zero — CoW from wizer snapshot | Full JS engine boot per instance |
+| **JS engine** | QuickJS (~920 KB), shared across all TS components on a node | StarlingMonkey (~8 MB), embedded separately in **each** component |
+| **Your component artifact** | `.js` bundle of your code (2–50 KB) | `.wasm` with engine included (~8 MB per component) |
+| **Wizer pre-init** | ✓ engine + bridge snapshotted once at build time | ✓ per-component snapshot |
+| **Engine sharing** | ✓ CoW-shared; one copy in memory regardless of instance count | ✗ each component carries its own ~8 MB copy |
+| **Default-deny capabilities** | ✓ per-process, host-enforced | ✗ WASI shims in Node.js host; no default-deny model |
+| **Memory cap per instance** | ✓ `StoreLimiter` | ✗ |
 | **Epoch preemption** | ✓ a spinning guest can't starve others | ✗ |
-| **Actor model** | ✓ supervised, addressable, killable | ✗ |
+| **Actor model** | ✓ supervised, addressable, killable, mailbox | ✗ |
 
-The component artifact size gap is the starkest signal. A JCO-deployed component ships the
-entire compiled Wasm binary — a non-trivial Rust HTTP handler easily reaches 1–5 MB before
-optimization. A RUSM TypeScript component ships only your bundled application logic; the
-920 KB engine is shared across every component running on the node, loaded once.
+The engine-sharing gap is the headline. A node running ten RUSM TypeScript components holds
+one ~920 KB QuickJS image in memory, CoW-shared across all instances. Ten ComponentizeJS
+components each carry their own ~8 MB StarlingMonkey — 80 MB before a single line of your
+code. RUSM's approach keeps the total engine footprint fixed at ~920 KB regardless of how
+many TS components you deploy.
 
 ## Go deeper
 
