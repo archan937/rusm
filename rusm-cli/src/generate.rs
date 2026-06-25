@@ -201,7 +201,7 @@ fn component_source_files(gen: &GenerateComponent) -> Vec<(PathBuf, String)> {
             (base.join("go.mod"), go_mod(&gen.name)),
             (base.join("main.go"), go_component(gen.protocol).to_string()),
         ],
-        Lang::Generic => vec![], // rejected by parse_component_args
+        Lang::Generic => unreachable!("Generic rejected by parser"),
     }
 }
 
@@ -218,9 +218,10 @@ fn bridge_source_files(gen: &GenerateBridge) -> Vec<(PathBuf, String)> {
 
 fn host_filename(lang: Lang) -> &'static str {
     match lang {
+        Lang::TypeScript => "host.ts",
         Lang::Rust => "host.rs",
         Lang::Go => "host.go",
-        _ => "host.ts",
+        Lang::Generic => unreachable!("Generic rejected by parser"),
     }
 }
 
@@ -273,7 +274,7 @@ fn bridge_host(name: &str, lang: Lang) -> String {
              \n\
              var _ = json.RawMessage{{}} // suppress unused import until functions are added\n"
         ),
-        _ => format!(
+        Lang::TypeScript => format!(
             "// bridges/{name}/host.ts — the only file a TypeScript bridge must write.\n\
              // Export one async function per function declared in bridge.wit.\n\
              // `rusm build` generates the runner, dispatcher, and Rust glue from this file.\n\
@@ -288,6 +289,7 @@ fn bridge_host(name: &str, lang: Lang) -> String {
              //   return true;\n\
              // }}\n"
         ),
+        Lang::Generic => unreachable!("Generic rejected by parser"),
     }
 }
 

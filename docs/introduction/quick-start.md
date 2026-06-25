@@ -3,7 +3,7 @@
 From nothing to a live server in four commands:
 
 ```sh
-rusm new hello && cd hello   # new project with a TypeScript HTTP component
+rusm new hello               # new project with a TypeScript HTTP component
 cd hello
 rusm build                   # components/ → wasm/
 rusm serve                   # → http://127.0.0.1:8080
