@@ -32,7 +32,7 @@ env = ["OPENAI_API_KEY"]        # the only env keys it can read (values from pro
 preopen = [{ host = "./data", guest = "/data", read-only = false }]
 bridges = ["weather"]           # may call your own `weather` function (a custom bridge)
 
-[components.pages-agent]
+[components.assistant]
 capability = "agent"            # this component runs under that profile
 ```
 

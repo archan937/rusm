@@ -127,23 +127,23 @@ import type { Inventory } from "../inventory";
 // connect() resolves the name and gives back a typed client:
 const inv = connect<Inventory>("inventory");
 const available = await inv.check("ABC-1");    // typed call, reply awaited
-inv.cast.reserve("ABC-1", 3);                  // fire-and-forget cast
 ```
 
 ```rust [Rust]
 // Client::connect resolves the name and returns a typed client:
 let inv = inventory::Client::connect(rusm_rs::whereis("inventory").unwrap());
 let available = inv.check("ABC-1").unwrap();
-inv.cast_reserve("ABC-1", 3);
 ```
 
 ```go [Go]
 pid, _ := rusm.Whereis("inventory")
 available, _ := rusm.Call[bool](pid, "check", "ABC-1")
-rusm.Cast(pid, "reserve", "ABC-1", 3)
 ```
 
 :::
+
+The same client also does fire-and-forget casts, streaming results, and callbacks — the
+full typed-client surface is in [Call another component](/build-an-app/call-another-component).
 
 ::: warning connect resolves the name — it does not verify liveness
 `connect(name)` calls `whereis` once. If the service exits after that, subsequent calls

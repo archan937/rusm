@@ -56,8 +56,8 @@ import { sse, Process } from "rusm-ts";
 
 export default sse({
   open(stream) {
-    // Join the "todos" broadcast group. From now on, every Process.publishTag("todos", …)
-    // call from anywhere in the system delivers a message to this process's mailbox.
+    // Join the "todos" broadcast group. From now on, any broadcast to that tag — a
+    // publisher doing whereisTag("todos") + send — lands in this process's mailbox.
     Process.registerTag("todos");
   },
   message(stream, event) {

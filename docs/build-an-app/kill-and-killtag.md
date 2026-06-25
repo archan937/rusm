@@ -43,26 +43,39 @@ rusm.Kill(jobPid)
 
 After `kill` returns, the process is gone. Sending to its pid is a no-op.
 
-## shutdown — the graceful alternative
+## Stopping a process gracefully
 
-`kill` is immediate. If you want the process to finish its current message before
-stopping, use `shutdown` instead. `shutdown` signals the process to drain its mailbox
-and exit cleanly. Use it when a clean exit matters — flushing writes, closing external
-connections, emitting a final log line.
+`kill` is immediate and unconditional — it doesn't let the process finish its current
+message or clean up. When a clean exit matters (flushing writes, closing a connection,
+emitting a final log line), don't kill it: send a message it recognises as "stop" and let
+it leave its own receive loop. Cooperative shutdown is just an ordinary message the process
+chooses to act on.
 
 ::: code-group
 
 ```ts [TypeScript]
-// Graceful: let the process finish what it's doing, then stop:
-Process.shutdown(workerPid);
+// The worker treats a "stop" message as its cue to exit cleanly:
+const msg = JSON.parse(await Process.receiveText());
+if (msg.op === "stop") return;     // leaves the loop → the process ends here
+// ...otherwise do the work
+
+// To stop it, send that message instead of killing it:
+Process.send(workerPid, JSON.stringify({ op: "stop" }));
 ```
 
 ```rust [Rust]
-rusm_rs::shutdown(worker_pid);
+let msg: serde_json::Value = serde_json::from_slice(&rusm_rs::receive_bytes()).unwrap();
+if msg["op"] == "stop" { return; }  // clean exit
+
+rusm_rs::send_bytes(worker_pid, br#"{"op":"stop"}"#);
 ```
 
 ```go [Go]
-rusm.Shutdown(workerPid)
+var msg struct{ Op string `json:"op"` }
+json.Unmarshal(rusm.Receive(), &msg)
+if msg.Op == "stop" { return }      // clean exit
+
+rusm.Send(workerPid, []byte(`{"op":"stop"}`))
 ```
 
 :::
@@ -73,8 +86,8 @@ rusm.Shutdown(workerPid)
 |---|---|
 | User cancelled a request mid-flight | `kill` — stop immediately |
 | External connection dropped | `kill` — nothing to flush |
-| Worker needs to flush a buffer before stopping | `shutdown` |
-| Resident service being replaced on redeploy | `shutdown` |
+| Worker needs to flush a buffer before stopping | a cooperative `stop` message |
+| Resident service being replaced on redeploy | a cooperative `stop` message |
 | Something crashed and you need its resources released | `kill` |
 
 ## killTag — stop an entire group at once
@@ -135,7 +148,8 @@ To grant `kill` / `killTag` to a component, either use a profile that includes
 
 ```toml
 [capabilities.orchestrator]
-inherits = "trusted"           # trusted already includes process-control
+inherits = "sandboxed"
+allow-process-control = true   # may kill / killTag / list other processes
 
 [components.plan-coordinator]
 capability = "orchestrator"    # this component can kill

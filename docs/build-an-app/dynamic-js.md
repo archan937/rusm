@@ -3,7 +3,7 @@
 A RUSM TypeScript guest runs on a shared, predefined **js-runner** (a WASM component that
 evaluates a JS bundle). Because the *code* is just a bundle the runner loads, you don't have
 to bake it in at build time — you can supply it **at deploy time** or **at runtime**. That
-unlocks two powerful things:
+unlocks two things:
 
 - **Deploy JS live** — point a component at a URL or the durable KV store; replace the bundle
   there and the next instance runs the new code, **no node rebuild**.

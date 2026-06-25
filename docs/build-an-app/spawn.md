@@ -74,52 +74,48 @@ The spawned component (`image-resizer`) runs its own `default` export / `run` fu
 It reads from its mailbox, does work, and sends replies. It knows nothing about who
 spawned it — the only connection is the messages you exchange.
 
-## spawn_link — crash propagation
+## Know when a spawned child exits — monitor
 
-`spawn_link` is `spawn` with a **link** attached. A link is a bidirectional bond: if
-either process exits abnormally (crash, unhandled error, `kill`), the other receives an
-exit signal. By default that signal kills the receiver too.
-
-Use `spawn_link` when the child's failure makes the parent's work invalid — a
-coordinator that has no meaningful state without all its workers, for example. If the
-child dies, there's no point continuing; crashing together is the right behaviour.
+`spawn` gives you a child that runs independently; it doesn't tell you when that child
+stops. To find out, **monitor** it. After `monitor(pid)`, the moment that process exits —
+cleanly, by crash, or by `kill` — a `__down` message lands in your mailbox carrying its pid
+and exit reason. No polling, no watcher process.
 
 ::: code-group
 
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
-// Spawn a worker that's linked to this process.
-// If the worker crashes, this process will also receive an exit signal and crash
-// (unless this process has called Process.trapExit(true) — see Links & supervision).
-const workerPid = Process.spawnLink("data-pipeline");
+const worker = Process.spawn("data-pipeline");
+Process.monitor(worker);                       // a `__down` message arrives when it exits
 
-Process.send(workerPid, JSON.stringify({ dataset: "sales-q4", format: "parquet" }));
-const output = await Process.receiveText();
+Process.send(worker, JSON.stringify({ dataset: "sales-q4", format: "parquet" }));
+const msg = JSON.parse(await Process.receiveText());
+if (msg.__down) {
+  // the worker exited before replying — restart, log, or give up
+}
 ```
 
 ```rust [Rust]
-// Linked spawn — if the worker crashes, this process crashes too.
-let worker_pid = rusm_rs::spawn_link("data-pipeline").expect("spawn failed");
+let worker = rusm_rs::spawn("data-pipeline").expect("spawn failed");
+rusm_rs::monitor(worker);                       // a `__down` message arrives when it exits
 
-rusm_rs::send_bytes(worker_pid, b r#"{"dataset":"sales-q4","format":"parquet"}"#);
+rusm_rs::send_bytes(worker, br#"{"dataset":"sales-q4","format":"parquet"}"#);
 let output = rusm_rs::receive_bytes();
 ```
 
 ```go [Go]
-// Linked spawn — crash propagates both ways.
-workerPid, err := rusm.SpawnLink("data-pipeline")
-if err != nil {
-    panic(err)
-}
+worker, _ := rusm.Spawn("data-pipeline")
+rusm.Monitor(worker)                            // a `__down` message arrives when it exits
 
-rusm.Send(workerPid, []byte(`{"dataset":"sales-q4","format":"parquet"}`))
+rusm.Send(worker, []byte(`{"dataset":"sales-q4","format":"parquet"}`))
 output := rusm.Receive()
 ```
 
 :::
 
-To catch exit signals instead of dying, see [Links & supervision](/build-an-app/links-and-supervision).
+To turn a monitor into automatic restarts — a real supervision tree — use the in-guest
+`Supervisor`. See [Coordinate & supervise](/build-an-app/coordinate-and-supervise).
 
 ## spawn_from — dynamic components
 
@@ -132,14 +128,12 @@ code is allowed to do.
 ```ts [TypeScript]
 import { Process } from "rusm-ts";
 
+// `spawn` takes an optional source — that second argument turns it into spawn-from.
 // Run a compiled plugin from the node's durable KV store:
-const pluginPid = Process.spawnFrom("plugin-runner", "kv:plugins/greeter");
+const pluginPid = Process.spawn("plugin-runner", "kv:plugins/greeter");
 
-// Run a bundle fetched from a URL (re-fetched after TTL, cached by content hash):
-const remotePid = Process.spawnFrom("plugin-runner", "url:https://cdn.example/plugin.wasm");
-
-// Run an inline bundle (base64-encoded bytes — rare, but possible):
-const inlinePid = Process.spawnFrom("plugin-runner", "inline:<base64-bytes>");
+// Or a bundle fetched from a URL (re-fetched after TTL, cached by content hash):
+const remotePid = Process.spawn("plugin-runner", "url:https://cdn.example/plugin.wasm");
 
 Process.send(pluginPid, JSON.stringify({ name: "Alice" }));
 const greeting = await Process.receiveText();
@@ -191,7 +185,7 @@ call is refused at the ABI boundary before any guest code runs.
 ```toml
 [capabilities.orchestrator]
 inherits = "sandboxed"
-allow    = ["spawn"]       # this component may spawn others
+allow-spawn = true         # this component may spawn others
 
 [components.coordinator]
 capability = "orchestrator"

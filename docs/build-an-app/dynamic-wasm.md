@@ -158,7 +158,7 @@ and exits normally; `spawn-from` returns a pid you can monitor or ignore:
 import { Process } from "rusm-ts";
 
 // Run an image-processing binary stored in the node's kv store.
-const pid = Process.spawnFrom("image-processor", "kv:tools/img-proc.wasm");
+const pid = Process.spawn("image-processor", "kv:tools/img-proc.wasm");
 // Optionally monitor it — `__down` fires when it exits.
 const ref = Process.monitor(pid);
 ```

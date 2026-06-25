@@ -155,7 +155,7 @@ let result_str = String::from_utf8(result).unwrap();
 fn run() {
     let raw = rusm_rs::receive_bytes();
     let msg: serde_json::Value = serde_json::from_slice(&raw).unwrap();
-    let reply_to: rusm_rs::Pid = msg["replyTo"].as_str().unwrap().parse().unwrap();
+    let reply_to = rusm_rs::Pid(msg["replyTo"].as_str().unwrap().parse().unwrap());
     let output = msg["input"].as_str().unwrap().to_uppercase();
     rusm_rs::send_bytes(reply_to, output.as_bytes());
 }
@@ -164,7 +164,7 @@ fn run() {
 ```go [Go]
 // Process A — the caller:
 me := rusm.Self()
-req, _ := json.Marshal(map[string]any{"replyTo": me, "input": "hello world"})
+req, _ := json.Marshal(map[string]any{"replyTo": me.String(), "input": "hello world"})
 rusm.Send(workerPid, req)
 result := string(rusm.Receive())
 
@@ -177,7 +177,8 @@ func run() {
     }
     json.Unmarshal(raw, &msg)
     output := strings.ToUpper(msg.Input)
-    rusm.Send(rusm.Pid(msg.ReplyTo), []byte(output))
+    replyTo, _ := rusm.ParsePid(msg.ReplyTo)
+    rusm.Send(replyTo, []byte(output))
 }
 ```
 
@@ -192,20 +193,15 @@ above, hidden behind a regular function call. See
 
 ## Mailbox capacity
 
-By default, mailboxes are unbounded. A sender that fires faster than the recipient reads
-will cause the mailbox to grow without limit — a memory leak in disguise.
+By default mailboxes are **unbounded** — the Erlang-compatible default. A sender that fires
+faster than the recipient reads will grow the mailbox without limit, which is a memory leak
+in disguise.
 
-For production services, cap the mailbox in `rusm.toml`. When the cap is reached, new
-**user messages** are dropped (system signals like kill still get through). The service
-stays alive and responsive; it just sheds excess load rather than accumulating memory.
-
-```toml
-[components.event-processor]
-capability   = "sandboxed"
-mailbox_capacity = 1000    # drop user messages beyond 1000 queued
-```
-
-Set this on any service that could receive bursts from many callers.
+Bounding is opt-in at the runtime level when you embed RUSM: `Runtime::with_mailbox_capacity(n)`
+sheds **user messages** once a mailbox holds `n` (system signals like exits and kills are
+never dropped, so supervision keeps working). The process stays alive and responsive,
+shedding excess load rather than accumulating it. Default-bounded serve-path mailboxes are a
+planned hardening step — see the [roadmap](/about/roadmap).
 
 ---
 
