@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
@@ -8,7 +9,8 @@ use rusm_cli::{
     capabilities_for, command_help, exec_kv, generate_bridge, generate_component, host,
     node_overrides, normalize_target, parse, parse_generate_args, parse_kv, parse_new_args,
     prebuilt_wasm, render_message, scaffold, spawn_components, usage, version, wants_help,
-    wants_version, GenerateCommand, KvCommand, KvOutput, Protocol, ReplInput, DEFAULT_HOST, HELP,
+    wants_version, GenerateCommand, KvCommand, KvOutput, Protocol, ReplInput, WasmReplHost,
+    DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -441,10 +443,14 @@ async fn start_node(config: Option<&str>, listen: Option<&str>) -> anyhow::Resul
     let rt = Runtime::new();
     // `wasm` + `hosted` stay bound for the whole function: they own the hosted
     // components' runtime + resident supervisor, so they must outlive the server below.
-    let wasm = host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?;
+    // `wasm` is shared (Arc) with the REPL host, which spawns eval sessions on it.
+    let wasm = Arc::new(host::build_runtime(rt.clone(), &cfg, |_| Ok(()))?);
     let hosted =
         spawn_components(Path::new("."), &wasm, &cfg.components, &cfg.capabilities).await?;
-    let node = Node::new(rt.clone(), node_name(), cfg.node.ticks_per_second);
+    // The live JS shell behind `rusm attach`: eval is gated to loopback clients by the
+    // node, so wiring it in is safe by default for a locally-started node.
+    let repl = Arc::new(WasmReplHost::new(Arc::clone(&wasm), rt.clone()));
+    let node = Node::with_repl(rt.clone(), node_name(), cfg.node.ticks_per_second, repl);
     println!(
         "rusm node listening on ws://{} ({} component(s), {} Hz)",
         cfg.node.listen,
@@ -874,7 +880,12 @@ async fn attach(url: &str) -> Result<(), Box<dyn std::error::Error>> {
             incoming = read.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
                     if let Ok(message) = ServerMessage::from_json(text.as_str()) {
-                        println!("{}", render_message(&message));
+                        // A bare statement (e.g. `const p = …`) renders empty — don't
+                        // print a blank line for it.
+                        let line = render_message(&message);
+                        if !line.is_empty() {
+                            println!("{line}");
+                        }
                     }
                 }
                 Some(Ok(Message::Close(_))) | None => {

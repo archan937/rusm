@@ -96,6 +96,12 @@ const JS_RUNNER_WASM: &[u8] = include_bytes!("../runtimes/js_runner.wasm");
 /// `js-http-runner/Cargo.toml` to regenerate.
 const JS_HTTP_RUNNER_WASM: &[u8] = include_bytes!("../runtimes/js_http_runner.wasm");
 
+/// The built-in **REPL session** bundle: a JS worker (run on the shared js-runner)
+/// that evaluates `rusm attach` lines against the live node, with bindings that
+/// persist across lines. Built from `repl-session/` with Bun; checked in under
+/// `runtimes/`. See `repl-session/build.sh` to regenerate.
+const REPL_SESSION_JS: &[u8] = include_bytes!("../runtimes/repl_session.js");
+
 /// Counters shared by every instance of one [`WasmRuntime`], so host functions
 /// can report aggregate activity (e.g. guest progress for the fairness scenario).
 #[derive(Default)]
@@ -960,6 +966,16 @@ impl WasmRuntime {
         handle
     }
 
+    /// Spawn the built-in **REPL session** — a long-lived JS worker that evaluates
+    /// lines forwarded over its mailbox (`{code, replyTo}` → `{value, output,
+    /// error}`), keeping bindings between lines. One per `rusm attach` connection;
+    /// the caller (`rusm-cli`'s REPL host) drives it and tears it down. Grant
+    /// `Trusted` so the shell can inspect and message any process, as an operator
+    /// `iex --remsh` would.
+    pub fn spawn_repl_session(&self, caps: Capabilities) -> ProcessHandle {
+        self.spawn_js_with(REPL_SESSION_JS, caps)
+    }
+
     /// The shared, embedded rquickjs js-runner — compiled + prepared once (lazily)
     /// so non-JS nodes pay nothing. Backs `spawn_js` and TS-service registration.
     fn js_runner(&self) -> &PreparedComponent {
@@ -1002,5 +1018,61 @@ impl Drop for WasmRuntime {
         if let Some(ticker) = self.epoch_ticker.take() {
             let _ = ticker.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod repl_tests {
+    use super::*;
+    use rusm_otp::{Received, Runtime};
+    use std::time::Duration;
+    use tokio::sync::mpsc::UnboundedReceiver;
+
+    /// Generous deadline: the suite compiles the js-runner per process under load.
+    const BUDGET: Duration = Duration::from_secs(20);
+
+    /// A sink process whose pid stands in for the host's reply bridge: it forwards
+    /// every message it receives to the returned channel.
+    fn sink(rt: &Runtime) -> (rusm_otp::Pid, UnboundedReceiver<Vec<u8>>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let proc = rt.spawn(move |mut ctx| async move {
+            while let Received::Message(b) = ctx.recv().await {
+                if tx.send(b).is_err() {
+                    break;
+                }
+            }
+        });
+        (proc.pid(), rx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repl_session_evaluates_a_line_and_keeps_state() {
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let session = wr.spawn_repl_session(CapabilityProfile::Trusted.capabilities());
+        let (reply_pid, mut replies) = sink(&rt);
+        let reply_to = reply_pid.raw().to_string();
+
+        let eval = |code: &str| {
+            let req = serde_json::json!({ "code": code, "replyTo": reply_to }).to_string();
+            rt.send(session.pid(), req.into_bytes());
+        };
+
+        // A declaration yields no value; the binding it makes persists to the next line.
+        eval("const p = 41");
+        let first: serde_json::Value = serde_json::from_slice(&next(&mut replies).await).unwrap();
+        assert_eq!(first["value"], "");
+        assert_eq!(first["error"], serde_json::Value::Null);
+
+        eval("p + 1");
+        let second: serde_json::Value = serde_json::from_slice(&next(&mut replies).await).unwrap();
+        assert_eq!(second["value"], "42", "bindings persist across lines");
+    }
+
+    async fn next(rx: &mut UnboundedReceiver<Vec<u8>>) -> Vec<u8> {
+        tokio::time::timeout(BUDGET, rx.recv())
+            .await
+            .expect("a REPL reply within the budget")
+            .expect("the sink channel stays open")
     }
 }

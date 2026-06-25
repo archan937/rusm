@@ -1,12 +1,30 @@
 use rusm_node::{NodeSnapshot, ServerMessage};
 
 /// Renders a server message as a line (or block) for the `rusm attach` display.
+/// May be empty (a statement that yields no value) — the caller skips empty lines.
 pub fn render_message(message: &ServerMessage) -> String {
     match message {
         ServerMessage::Hello { node } => format!("connected to node '{node}'"),
         ServerMessage::Snapshot { snapshot } => render_snapshot(snapshot),
         ServerMessage::Error { message } => format!("error: {message}"),
+        ServerMessage::EvalResult {
+            value,
+            output,
+            error,
+        } => render_eval(value, output, error.as_deref()),
     }
+}
+
+/// A REPL eval result: captured console output first (as written), then either the
+/// error or the return value. A bare statement yields nothing → an empty string.
+fn render_eval(value: &str, output: &[String], error: Option<&str>) -> String {
+    let mut lines: Vec<String> = output.to_vec();
+    if let Some(error) = error {
+        lines.push(format!("error: {error}"));
+    } else if !value.is_empty() {
+        lines.push(value.to_string());
+    }
+    lines.join("\n")
 }
 
 /// A one-line header (live process count + uptime) followed by the per-process
@@ -74,5 +92,35 @@ mod tests {
             message: "nope".to_string(),
         };
         assert_eq!(render_message(&message), "error: nope");
+    }
+
+    #[test]
+    fn renders_eval_value_after_console_output() {
+        let message = ServerMessage::EvalResult {
+            value: "42".into(),
+            output: vec!["hi".into(), "there".into()],
+            error: None,
+        };
+        assert_eq!(render_message(&message), "hi\nthere\n42");
+    }
+
+    #[test]
+    fn renders_eval_error_over_value() {
+        let message = ServerMessage::EvalResult {
+            value: String::new(),
+            output: vec![],
+            error: Some("Error: boom".into()),
+        };
+        assert_eq!(render_message(&message), "error: Error: boom");
+    }
+
+    #[test]
+    fn a_statement_with_no_value_renders_empty() {
+        let message = ServerMessage::EvalResult {
+            value: String::new(),
+            output: vec![],
+            error: None,
+        };
+        assert_eq!(render_message(&message), "");
     }
 }

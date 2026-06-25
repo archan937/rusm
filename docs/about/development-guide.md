@@ -70,6 +70,10 @@ bunx prettier --check src
 ## Coverage notes
 
 `main.rs` files are thin CLI glue and excluded via `--ignore-filename-regex`.
-`server.rs` keeps a few defensive async arms (broadcast lag, peer mid-stream
-disconnect, accept failure) that only contrived tests could reach — these are the
-documented exception, not a gap to paper over with weak tests.
+`server.rs` and `rusm-node`'s `handle_connection` keep a few defensive async arms
+(broadcast lag, peer mid-stream disconnect, accept/send failure) that only contrived
+tests could reach — these are the documented exception, not a gap to paper over with
+weak tests. The **decision** logic those loops drive is always extracted into
+synchronous/`async` helpers that *are* unit-tested directly — e.g. `handle_text` and
+`eval_line` (the attach REPL's command routing and eval gating) are covered without a
+socket; only the raw `select!` over the WebSocket stays uncovered.

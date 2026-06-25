@@ -18,6 +18,9 @@ pub mod jsbuild;
 mod kv;
 mod render;
 mod repl;
+/// The live-attach JavaScript REPL host: evaluates lines against the node over the
+/// `WasmRuntime` (implements the `rusm_node::ReplHost` contract).
+mod repl_host;
 mod scaffold;
 mod template;
 /// WIT value-type → Rust/TS mapping for arbitrary-typed TS custom bridges.
@@ -36,5 +39,6 @@ pub use generate::{
 pub use kv::{exec_kv, parse_kv, KvCommand, KvOutput};
 pub use render::render_message;
 pub use repl::{parse, ReplInput, HELP};
+pub use repl_host::WasmReplHost;
 pub use scaffold::{parse_new_args, scaffold, Lang, NewApp, Protocol};
 pub use template::Template;

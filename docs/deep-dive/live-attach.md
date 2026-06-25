@@ -12,7 +12,11 @@ that attaches today can:
 - watch the live process count and a per-process table (label, registry names,
   mailbox depth, links) stream in;
 - toggle that detail table (`detail on|off`);
-- (later) send a message to a process or spawn one; hot-reload a module.
+- **evaluate JavaScript against the live node** — a stateful shell (bindings persist
+  across lines) with the full `Process` API, so you can `whereis` / `list` / `send` /
+  `kill` processes live. Gated to **loopback** clients until the channel is
+  authenticated; see [observe a running node](/deep-dive/observe-a-running-node#evaluate-javascript-live);
+- (later) hot-reload a module; spawn-through and remote eval over an authenticated channel.
 
 `rusm node start` serves this channel; the **`rusm attach <node>`** REPL renders
 it in the terminal. The **benchmark dashboard** is a *separate* node (`rusm-bench

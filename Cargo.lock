@@ -2695,6 +2695,8 @@ dependencies = [
  "rusm-node",
  "rusm-otp",
  "rusm-wasm",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.29.0",

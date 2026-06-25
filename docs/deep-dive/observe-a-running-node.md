@@ -46,5 +46,33 @@ watching a node barely costs it anything — the per-process table is the only e
 which is why `detail off` exists for clean high-rate runs. See
 [observability must stay cheap](/about/benchmark-dashboard-and-observer#observability-must-stay-cheap).
 
+## Evaluate JavaScript live
+
+`rusm attach` is also a **JavaScript shell** into the running node — RUSM's
+`iex --remsh`. Any line that isn't a built-in command (`detail`, `help`, `quit`) is
+evaluated against the live node, with the full `Process` API in scope and **bindings that
+persist across lines**:
+
+```
+> Process.list().length
+3
+> p = Process.whereis("store")
+43
+> Process.send(p, JSON.stringify({ op: "ping" }))
+> const before = Process.list().length
+> Process.kill(p); Process.list().length
+2
+```
+
+Each line runs inside a sandboxed REPL component (one per connection, `Trusted`), so the
+shell can inspect, message, and kill any process — `whereis` / `list` / `send` / `kill` /
+`killTag` all work, across Rust, TypeScript, and Go processes alike. `await` works at the
+top level, console output is echoed back, and a thrown error is reported without dropping
+your session.
+
+**Eval is local-only.** The node accepts it only from a loopback client — the interim
+security boundary until the attach channel is authenticated. A remote `rusm attach` can
+still observe (the process table streams), but its eval lines are refused.
+
 See [the benchmark dashboard](/about/benchmark-dashboard-and-observer) for the full
 walkthrough, and [live attach](/deep-dive/live-attach) for the attach protocol.

@@ -1,0 +1,13 @@
+{
+  "name": "rusm-repl-session",
+  "private": true,
+  "description": "The built-in REPL session bundle: evaluates `rusm attach` JS lines against a live node, with persistent bindings.",
+  "type": "module",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "acorn": "^8.14.0"
+  }
+}

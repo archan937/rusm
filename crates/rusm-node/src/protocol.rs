@@ -53,6 +53,11 @@ pub struct NodeSnapshot {
 pub enum ClientCommand {
     /// Include the per-process detail table in snapshots (counts are always sent).
     SetDetail { enabled: bool },
+    /// Evaluate a line of JavaScript inside the node's REPL session — the live
+    /// shell behind `rusm attach`. Stateful (bindings persist across lines) and
+    /// gated: the node only honours it from a loopback client and only when a
+    /// REPL host is wired in (see [`crate::repl::ReplHost`]).
+    Eval { code: String },
 }
 
 /// A message from the node to an attached client.
@@ -65,6 +70,14 @@ pub enum ServerMessage {
     Snapshot { snapshot: NodeSnapshot },
     /// A rejected command, with a human-readable reason.
     Error { message: String },
+    /// The result of an [`ClientCommand::Eval`]: the rendered return `value`,
+    /// any captured console `output` lines, and `error` (the thrown message) when
+    /// evaluation failed. A failed eval still leaves the session alive.
+    EvalResult {
+        value: String,
+        output: Vec<String>,
+        error: Option<String>,
+    },
 }
 
 impl ClientCommand {
@@ -118,6 +131,37 @@ mod tests {
     #[test]
     fn rejects_malformed_command() {
         assert!(ClientCommand::from_json("{\"type\":\"nope\"}").is_err());
+    }
+
+    #[test]
+    fn eval_command_round_trips_tagged() {
+        let cmd = ClientCommand::Eval {
+            code: "const p = Process.self()".into(),
+        };
+        let json = cmd.to_json();
+        assert!(json.contains("\"type\":\"eval\""));
+        assert!(json.contains("Process.self()"));
+        assert_eq!(ClientCommand::from_json(&json).unwrap(), cmd);
+    }
+
+    #[test]
+    fn eval_result_round_trips_with_value_output_and_error() {
+        let ok = ServerMessage::EvalResult {
+            value: "42".into(),
+            output: vec!["hello".into(), "world".into()],
+            error: None,
+        };
+        assert!(ok.to_json().contains("\"type\":\"eval_result\""));
+        assert_eq!(ServerMessage::from_json(&ok.to_json()).unwrap(), ok);
+        // An eval result is neither a snapshot nor a hello.
+        assert!(ok.snapshot().is_none() && ok.node().is_none());
+
+        let failed = ServerMessage::EvalResult {
+            value: String::new(),
+            output: Vec::new(),
+            error: Some("ReferenceError: x is not defined".into()),
+        };
+        assert_eq!(ServerMessage::from_json(&failed.to_json()).unwrap(), failed);
     }
 
     #[test]

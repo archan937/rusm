@@ -264,9 +264,9 @@ The `<bucket>/<key>` ref splits on the **first** `/`, so a key may contain slash
 
 ## `rusm attach [target]`
 
-Observe a live node without stopping it. `rusm attach` opens a REPL into a running node's
-process stream — defaults to `127.0.0.1:4000`; accepts `host`, `host:port`, or a full
-`ws://` URL — local or remote. See [live attach](/deep-dive/live-attach).
+Observe — and script — a live node without stopping it. `rusm attach` opens a REPL into a
+running node's process stream — defaults to `127.0.0.1:4000`; accepts `host`, `host:port`,
+or a full `ws://` URL — local or remote. See [live attach](/deep-dive/live-attach).
 
 ```sh
 rusm attach                 # local node
@@ -274,6 +274,20 @@ rusm attach 10.0.0.7:4000   # a remote node
 # attached — type `help` for commands
 > detail off                # just the live count, no per-process table
 ```
+
+Any line that isn't a built-in command is **evaluated as JavaScript** against the live
+node — a stateful shell (bindings persist across lines) with the full `Process` API, so
+you can inspect, message, and kill processes from the prompt:
+
+```sh
+> p = Process.whereis("store")
+43
+> Process.send(p, JSON.stringify({ op: "ping" }))
+```
+
+JS eval is **local-only** (loopback clients only) until the attach channel is
+authenticated; a remote attach can still observe. See
+[evaluate JavaScript live](/deep-dive/observe-a-running-node#evaluate-javascript-live).
 
 ## Flags
 
