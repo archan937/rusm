@@ -84,10 +84,12 @@ TS service interoperate over one wire. Each process is a **sandboxed WASM instan
 supervised and hot-reloadable, and you never write `async` in a guest. Or skip
 components entirely and use the pure-Rust [`rusm-otp`](crates/rusm-otp) core directly.
 
-**New here?** The [Getting Started guide](docs/introduction/install.md) walks from the
-pure-Rust OTP core to hosting a `.wasm`, the app model, and writing components in
-TypeScript and Rust — then the [Concepts](docs/) and the
-[`rusm` CLI reference](docs/build-an-app/the-rusm-cli.md). `make help` lists every dev command.
+**New here?** [Install](docs/introduction/install.md) the CLI, then the
+[Quick start](docs/introduction/quick-start.md) goes from nothing to a live server in four
+commands. From there, [Build an app](docs/build-an-app/url-shortener.md) walks writing
+components in Rust, TypeScript, or Go, serving the web, calling other components, and
+supervising — with the [`rusm` CLI reference](docs/build-an-app/the-rusm-cli.md) alongside.
+`make help` lists every dev command.
 
 ## Why
 
@@ -104,8 +106,9 @@ builds them in pure Rust, and uses WebAssembly purely as the per-process sandbox
 - **Write blocking code, get async for free** — Wasmtime fibers suspend a guest's
   "blocking" call while the host awaits; you never write `async` in a guest.
 - **Fault tolerance** — links and supervisors, Erlang-style.
-- **Secure clusters you can hook into** — nodes connect over TLS, and you can
-  attach a live REPL/observer to a running node (like `iex --remsh`).
+- **Secure clusters you can hook into** — nodes connect over TLS, and you can attach a
+  **live JavaScript REPL**/observer to a running node (like `iex --remsh`): inspect,
+  message, and kill processes from a prompt.
 
 See [`docs/introduction/why-rusm.md`](docs/introduction/why-rusm.md) for the full rationale,
 [`docs/about/architecture.md`](docs/about/architecture.md) for how Rust + Tokio +
@@ -129,13 +132,14 @@ beat the runtime that inspired this.
   [`rusm-rs`](crates/rusm-rs) crate, [`rusm-ts`](packages/rusm-ts) npm package, and
   [`rusm-go`](packages/rusm-go) SDK share one wire and interoperate.
 - **An app model** — `rusm.toml [components.<name>]`, source under `components/`, built to
-  `./wasm/`, spawned under their capabilities; env the Rust way (process env, then
-  `.env`).
+  `./wasm/`, spawned under their capabilities; env the Rust way (process env, then `.env`).
+  `rusm new` scaffolds a project; `rusm generate component|bridge` adds to an existing one.
 - **Serving** — a component runs as a high-throughput **HTTP / WS / SSE** server
   (`rusm serve` + `rusm.toml [[serve]]`), and `rusm new <name>` scaffolds a
   ready-to-serve app. Guests get a capability-gated, streaming **`fetch`** + **`crypto`**.
 - **Distributed clusters** (`rusm-cluster`) — nodes connect over **QUIC + TLS**:
-  cross-node `send`, a gossiped global registry, remote spawn, and live attach.
+  cross-node `send`, a gossiped global registry, remote spawn, and live attach — including
+  a **live JavaScript REPL** into a running node (RUSM's `iex --remsh` for Wasm).
 - **Hardened for scale** — an on-demand instance tier (bounded by RAM, not a fixed
   pool), opt-in bounded mailboxes, per-node certs under a cluster CA + mutual TLS, and
   windowed supervisor restart-intensity.
@@ -231,10 +235,12 @@ by construction** — Wasm lives only in the `rusm-wasm` backend.
 | `rusm-metrics` | lib | Counters, HdrHistogram-backed latency percentiles, ring-buffer time-series. |
 | `rusm-observer` | lib | Low-overhead live-observer snapshots — aggregate counters plus a sampled per-instance table, with a detail on/off toggle. |
 | `rusm-logfmt` | lib | **The shared log format** — the single source for the log palette, column widths, timestamp, and tty-gated colour. Formats both `rusm-otp`'s lifecycle lines and every **guest** log line (the host's `log` op stamps a guest's `console.*` / `log::*` through `line()`), so platform and app logs read as one aligned stream. Pure (std only); compiles for the host and `wasm32-wasip2`. **No `wasmtime` dependency.** |
-| `rusm-node` | lib | **The node layer** — the `rusm.toml` app manifest, resource-tier profiles, and the live **attach** protocol + node (streams `rusm-otp` process introspection to `rusm attach`). What the `rusm` CLI builds on; **no `wasmtime` dependency**. |
+| `rusm-wire` | lib | **Shared host/guest serving wire types** — one definition of the HTTP/SSE request/response shapes that cross the JSON actor wire (base64 bodies), shared by `rusm-wasm` and `rusm-rs` so host and guest can't drift. Pure (serde only), **no `wasmtime` dependency**. |
+| `rusm-jsc` | lib | **Build-time QuickJS bytecode compiler** — `rusm build` precompiles each TS bundle to QuickJS bytecode (`wasm/<name>.qjsbc`) so the js-runner skips parsing at spawn / per request. Version-locked to the runner's rquickjs. |
+| `rusm-node` | lib | **The node layer** — the `rusm.toml` app manifest, resource-tier profiles, and the live **attach** protocol + node (streams `rusm-otp` process introspection to `rusm attach`, and hosts its loopback JavaScript REPL). What the `rusm` CLI builds on; **no `wasmtime` dependency**. |
 | `rusm-bench` | lib + bin | *(repo-only, unpublished)* Scenarios, the deterministic preview source, twenty-one real engines — the ten core engines (spawn-storm, ping-pong, fault-recovery, connection-storm, connection-scale, fairness, module-storm, component-storm, stream-pipe, distributed-fanout), the six co-resident serving demos (`http-throughput`, `ws-echo`, `sse-fanout` and their `*-ts` twins, each a real in-process WASM server driven through the same load path as `rusm-loadtest`), three platform-primitive scenarios (`kv-storm` durable read-modify-writes over redb, `pubsub-fanout` 1→N broadcast, `crypto-ops` `crypto.subtle` from a TS guest), and two extension-primitive scenarios (`custom-bridge` a guest calling an app's native bridge, `dynamic-wasm` a runtime-loaded compiled component through the compile cache) — the run aggregator, the wire protocol, and the WebSocket node behind the dashboard. Binary: `rusm-bench start` / `run`. |
 | `rusm-loadtest` | bin | *(repo-only, unpublished)* **Out-of-process serving load test** — drives a live `rusm serve` port across a real socket in four modes: `http` (balter fixed-rate sweep), `ws` / `sse` (a tokio-native connection-capacity harness), and `conn` (a connection-establishment storm — sandboxed-process-per-connection WS establishments). Reports achieved throughput, tail latency, and error rate. |
-| `rusm-cli` | bin (`rusm`) | The `rusm` command: `new <name>` (scaffold an app), the app model — `build` / `run` / `serve` / `dev` over `rusm.toml` — plus `node start` (host the app as an attachable node) and `attach <url>` (observe a running node's processes). |
+| `rusm-cli` | bin (`rusm`) | The `rusm` command: `new <name>` (scaffold an app) and `generate component\|bridge` (add to an existing one), the app model — `build` / `run` / `serve` / `dev` over `rusm.toml` — plus `node start` (host the app as an attachable node) and `attach <url>` (observe a running node's processes + a live JavaScript REPL into it). |
 | `rusm-rs` | lib (guest) | **The Rust guest crate** — write a component/service in Rust over the actor world: `Pid`/`send`/`receive` (serde, + `receive_timeout`)/`spawn`/registry/`Stream`, the `#[rusm_rs::service]` macro (dispatch loop + typed `Client`), plus modules for serving (`http`/`ws`, incl. offloaded SSE fan-out), durable storage (`kv`), pub/sub (`pubsub::Topics`), and a `log`-crate sink (`log::info!`/etc → the platform logger, installed by the entry macros). Wasm-only (built for `wasm32-wasip2`), excluded from the host workspace. |
 | `rusm-rs-macros` | proc-macro | The `#[rusm_rs::service]` macro behind `rusm-rs`. |
 
@@ -263,10 +269,11 @@ My Elixir years left me with a clear itch: I wanted Elixir's concurrency and
 process model, but in Rust, running WebAssembly — on infrastructure that's
 lightweight, optimal, and *crazy fast*.
 [**Lunatic**](https://github.com/lunatic-solutions/lunatic) by Bernard Kolobara
-nailed exactly that pitch — its whole message and how it profiled itself was spot
-on (Wasmtime + Tokio + stack switching, processes as Wasm instances). Honestly,
-**if Lunatic were still active and up to date, RUSM would never have been built**
-— I'd just use it. RUSM exists to carry that torch forward.
+proved the idea and pitched it perfectly (Wasmtime + Tokio + stack switching,
+processes as Wasm instances) — it's the project that inspired this one. RUSM carries
+that idea further: the WebAssembly **component model** (not just core modules), guests
+in **Rust, TypeScript, and Go**, first-class **HTTP/WS/SSE serving**, and a **QUIC +
+mutual-TLS** cluster — all on a current Wasmtime.
 
 ## License
 

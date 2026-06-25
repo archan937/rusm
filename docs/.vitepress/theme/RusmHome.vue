@@ -9,7 +9,7 @@ const eyebrow = ['erlang-inspired', 'webassembly', 'rust']
 const kicker = 'RUSM'
 const headline = 'An Erlang-inspired WebAssembly runtime in Rust'
 const tagline =
-  'Isolated lightweight processes, fault tolerance, per-actor sandboxing, and secure clusters you can hook into live — on WebAssembly.'
+  'Isolated lightweight processes, fault tolerance, per-actor sandboxing, HTTP/WS/SSE serving, and secure clusters you can hook into live — written in Rust, TypeScript, or Go.'
 
 const actions = [
   { text: 'Get started', link: '/introduction/install', primary: true },
@@ -20,7 +20,8 @@ const actions = [
 
 const stats = [
   { value: '~2.4M', highlight: true, label: 'spawns / sec' },
-  { value: '1 : 1', label: 'process : sandbox' },
+  { value: '~21M', label: 'msgs / sec' },
+  { value: '3', label: 'guest languages' },
   { value: 'deny', label: 'by default' },
 ]
 
@@ -34,10 +35,16 @@ const features = [
     body: 'Tokio tasks multiplexed over a few threads, with epoch interruption for BEAM-like fairness. <b>~2.4M spawns/sec.</b>' },
   { icon: 'M12 3v6m0 0 3-3m-3 3L9 6M5 14a7 7 0 0 0 14 0', title: 'Fault tolerance',
     body: 'Traps become process exits; links and monitors propagate failure so <b>supervisors restart exactly what broke.</b>' },
-  { icon: 'M7 8h10M7 12h10M7 16h6M4 4h16v16H4z', title: 'The OTP core stands alone',
-    body: 'Processes, mailboxes, links, and supervisors — <b>implemented as a runtime-agnostic core.</b>' },
+  { icon: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18', title: 'Serve HTTP, WebSocket & SSE',
+    body: 'A component becomes a high-throughput web server — a fresh sandboxed instance per request, one process per connection. <b>Head-of-line blocking is impossible by construction.</b>' },
+  { icon: 'M8 8l-4 4 4 4M16 8l4 4-4 4M13 6l-2 12', title: 'Rust, TypeScript & Go',
+    body: 'Write a component in any of three languages over one actor wire, and they interoperate. <b>A Rust client calls a TypeScript service, fully typed.</b>' },
+  { icon: 'M12 4a2 2 0 1 0 0 4a2 2 0 1 0 0-4M6 16a2 2 0 1 0 0 4a2 2 0 1 0 0-4M18 16a2 2 0 1 0 0 4a2 2 0 1 0 0-4M11 8l-4 6M13 8l4 6M8 18h8', title: 'Hook into a live cluster',
+    body: 'Nodes connect over QUIC + mutual TLS for cross-node messaging — and you attach a <b>live JavaScript REPL</b> to a running node, like iex&nbsp;--remsh.' },
   { icon: 'M12 3 4 7v5c0 5 8 9 8 9s8-4 8-9V7l-8-4zM9 12l2 2 4-4', title: 'Default-deny capabilities',
     body: 'Every process gets nothing unless granted — <b>capabilities are explicit, scoped, revocable.</b>' },
+  { icon: 'M7 8h10M7 12h10M7 16h6M4 4h16v16H4z', title: 'The OTP core stands alone',
+    body: 'Processes, mailboxes, links, and supervisors — <b>implemented as a runtime-agnostic core.</b>' },
 ]
 /* ───────────────────────────────────────────────────────────── */
 
@@ -165,7 +172,7 @@ onBeforeUnmount(() => {
 .r-btn:hover { border-color: var(--r-copper); color: var(--r-copper); transform: translateY(-1px); }
 .r-btn.primary { background: var(--r-copper); color: var(--r-on-copper); border-color: var(--r-copper); }
 .r-btn.primary:hover { background: var(--r-copper-soft); border-color: var(--r-copper-soft); color: var(--r-on-copper); }
-.r-stats { display: flex; gap: 34px; border-top: 1px solid var(--r-line); padding-top: 22px; }
+.r-stats { display: flex; flex-wrap: wrap; gap: 20px 34px; border-top: 1px solid var(--r-line); padding-top: 22px; }
 .r-stat .n { font-family: var(--r-display); font-weight: 700; font-size: 24px; color: var(--r-text); }
 .r-stat .n b { color: var(--r-signal); font-weight: 700; }
 .r-stat .l { font-family: var(--r-mono); font-size: 11px; letter-spacing: .04em; color: var(--r-text-3); margin-top: 2px; text-transform: uppercase; }
