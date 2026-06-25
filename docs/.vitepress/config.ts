@@ -135,6 +135,7 @@ const sections = [
           { text: 'The distributed model', link: '/deep-dive/the-distributed-model' },
           { text: 'Live attach', link: '/deep-dive/live-attach' },
           { text: 'Observe a node', link: '/deep-dive/observe-a-running-node' },
+          { text: 'The live REPL', link: '/deep-dive/the-live-repl' },
           { text: 'Embedding RUSM as a library', link: '/deep-dive/embedding-rusm-as-a-library' },
         ],
       },

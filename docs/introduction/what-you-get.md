@@ -109,8 +109,9 @@ One CLI from scaffold to live node, plus cross-node clustering and live attach:
 - **Distributed clustering** — `ClusterNode::connect` (the `Node.connect` equivalent),
   cross-node send, a gossiped global registry, remote spawn, all over QUIC + **mutual
   TLS**. → [distributed nodes](/deep-dive/distributed-nodes)
-- **Live attach** — inspect/control a running node's processes live. →
-  [live attach](/deep-dive/live-attach)
+- **Live attach + a JS REPL** — inspect *and drive* a running node: a stateful JavaScript
+  shell into the live process table (`whereis`/`send`/`kill`/`connect`), like Erlang's
+  `iex --remsh`. → [the live REPL](/deep-dive/the-live-repl), [live attach](/deep-dive/live-attach)
 - **DX: infra never bothers you** — you write *application functions*; RUSM owns
   *all* the infrastructure (spawn/receive/reply/supervise/sockets).
 - **No funky rules** — no execution-time cap, no "this must be a service," no

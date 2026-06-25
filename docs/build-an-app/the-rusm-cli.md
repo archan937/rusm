@@ -277,17 +277,18 @@ rusm attach 10.0.0.7:4000   # a remote node
 
 Any line that isn't a built-in command is **evaluated as JavaScript** against the live
 node — a stateful shell (bindings persist across lines) with the full `Process` API, so
-you can inspect, message, and kill processes from the prompt:
+you can inspect, message, kill, and `connect()` to processes from the prompt:
 
 ```sh
 > p = Process.whereis("store")
 43
-> Process.send(p, JSON.stringify({ op: "ping" }))
+> await connect("store").list()
+[{"id":1,"text":"ship the docs"}]
 ```
 
 JS eval is **local-only** (loopback clients only) until the attach channel is
-authenticated; a remote attach can still observe. See
-[evaluate JavaScript live](/deep-dive/observe-a-running-node#evaluate-javascript-live).
+authenticated; a remote attach can still observe. See **[the live REPL](/deep-dive/the-live-repl)**
+for the full tour.
 
 ## Flags
 

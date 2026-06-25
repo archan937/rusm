@@ -10,7 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use rusm_cli::WasmReplHost;
 use rusm_node::{serve_on, ClientCommand, Node, ServerMessage};
 use rusm_otp::Runtime;
-use rusm_wasm::WasmRuntime;
+use rusm_wasm::{CapabilityProfile, WasmRuntime};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
@@ -89,5 +89,35 @@ async fn attach_evaluates_javascript_statefully_over_loopback() {
     assert_eq!(value, "82");
 
     // Keep the runtime alive until the end of the test.
+    drop(wasm);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_can_call_a_resident_service_with_the_typed_client() {
+    let rt = Runtime::new();
+    let wasm = Arc::new(WasmRuntime::new(rt.clone()).unwrap());
+
+    // A minimal resident "calc" service (CJS, as `rusm build` would emit): one
+    // exported function the runner dispatches as an RPC handler.
+    let caps = CapabilityProfile::Trusted.capabilities();
+    wasm.register_js_component_with("calc", b"exports.add = (a, b) => a + b;".to_vec(), caps);
+    let calc = wasm.spawn_registered("calc").expect("calc is registered");
+    rt.register("calc", calc.pid());
+
+    let repl = Arc::new(WasmReplHost::new(Arc::clone(&wasm), rt.clone()));
+    let node = Node::with_repl(rt.clone(), "test", 50, repl);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(serve_on(listener, node));
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+
+    // The killer demo: reach the running service by name and call it — a real
+    // request/reply over the actor wire, driven from the shell.
+    send_eval(&mut ws, "await connect('calc').add(2, 3)").await;
+    let (value, _output, error) = next_eval_result(&mut ws).await;
+    assert_eq!(error, None);
+    assert_eq!(value, "5");
+
     drop(wasm);
 }

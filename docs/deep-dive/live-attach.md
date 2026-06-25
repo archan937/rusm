@@ -14,8 +14,8 @@ that attaches today can:
 - toggle that detail table (`detail on|off`);
 - **evaluate JavaScript against the live node** — a stateful shell (bindings persist
   across lines) with the full `Process` API, so you can `whereis` / `list` / `send` /
-  `kill` processes live. Gated to **loopback** clients until the channel is
-  authenticated; see [observe a running node](/deep-dive/observe-a-running-node#evaluate-javascript-live);
+  `kill` processes and even `connect()` to a service live. Gated to **loopback** clients
+  until the channel is authenticated; see [the live REPL](/deep-dive/the-live-repl);
 - (later) hot-reload a module; spawn-through and remote eval over an authenticated channel.
 
 `rusm node start` serves this channel; the **`rusm attach <node>`** REPL renders
