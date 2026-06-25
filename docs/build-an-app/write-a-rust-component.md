@@ -1,83 +1,135 @@
 # Write a Rust component
 
-Write the source, let RUSM build it. A component lives under `components/<name>/`:
+You write Rust. RUSM compiles it to `wasm32-wasip2` and runs it as a **sandboxed,
+supervised process** — isolated memory, capability-gated I/O, crash-recovered by the
+supervisor. No cargo-component, no jco, no manual WIT plumbing. Write logic; RUSM
+handles the rest.
+
+## Scaffold & run in 30 seconds
+
+```sh
+rusm new myapp --rust   # scaffold a Rust HTTP component
+cd myapp
+rusm build              # cargo build --target wasm32-wasip2 → wasm/api.wasm
+rusm serve              # live on http://127.0.0.1:8080
+```
+
+Want WebSocket or SSE instead?
+
+```sh
+rusm new myapp --rust --protocol ws    # WebSocket component
+rusm new myapp --rust --protocol sse   # Server-Sent Events component
+```
+
+A component is a folder under `components/` with its own `Cargo.toml` and `src/lib.rs`:
 
 ```
 my-app/
 ├── rusm.toml
 ├── components/
-│   └── worker/
-│       ├── Cargo.toml      # crate-type = ["cdylib"], wit-bindgen
-│       ├── wit/            # the rusm:runtime world (vendored from crates/rusm-wasm/wit)
+│   └── api/
+│       ├── Cargo.toml      # rusm-rs dep, crate-type = ["cdylib"]
 │       └── src/lib.rs
-└── wasm/                   # rusm build writes worker.wasm here
+└── wasm/                   # rusm build writes api.wasm here
 ```
 
-`src/lib.rs` binds the `rusm:runtime` actor world with `wit-bindgen` and exports
-`run`:
+## Two shapes
+
+### Service — a module of functions
+
+Annotate a module with `#[rusm_rs::service]`. RUSM generates the receive → dispatch →
+reply loop **and** a typed `Client` — so callers reach it with ordinary method calls that
+are actually cross-process messages:
 
 ```rust
-wit_bindgen::generate!({ world: "process", path: "wit" });
-
-use rusm::runtime::actor;
-
-struct Component;
-
-impl Guest for Component {
-    fn run() {
-        actor::set_label("worker");
-        let msg = actor::receive();              // block for a message (bytes)
-        actor::send(actor::own_pid(), &msg);     // echo to self, etc.
-    }
-}
-
-export!(Component);
-```
-
-Build and run the whole app:
-
-```sh
-rusm build        # cargo build --target wasm32-wasip2 per components/* → ./wasm/
-rusm run          # spawn them per rusm.toml
-rusm dev          # build + run, then watch ./components and reload on edit
-```
-
-One toolchain, no jco, no cargo-component — `cargo build --target wasm32-wasip2`
-componentizes directly. **`rusm dev`** keeps running: edit a component and save,
-and it rebuilds + reloads it automatically (a dependency-free mtime watch).
-
-## A service + typed client
-
-The raw `wit-bindgen` shell above is the floor; for real components the **`rusm-rs`** crate
-gives the ergonomic surface — `Pid` / `send` / `receive` (serde) / `spawn` / registry /
-`Stream`. A **service** is a module of free functions under `#[rusm_rs::service]`: the macro
-generates the receive → dispatch → reply loop **and** a typed `Client`, so a caller reaches it
-with an ordinary method call that's really a cross-process message:
-
-```rust
+// components/calc/src/lib.rs
 #[rusm_rs::service]
 pub mod calc {
     pub fn add(a: i64, b: i64) -> i64 { a + b }
-    pub fn count_to(n: i64) -> impl Iterator<Item = i64> { 1..=n }   // streaming
-    pub fn work(progress: rusm_rs::Callback<i64>) -> String {        // callback
+
+    pub fn count_to(n: i64) -> impl Iterator<Item = i64> { 1..=n } // streaming
+
+    pub fn work(progress: rusm_rs::Callback<i64>) -> String {      // callback
         for pct in [25, 50, 100] { progress.call(pct); }
         "done".into()
     }
 }
-
-// caller (another component):
-//   let calc = calc::Client::spawn("calc")?;   // spawn-from-guest, capability-gated
-//   let sum  = calc.add(2, 3)?;                 // call: spawn + send + receive, hidden
 ```
 
-Declare both in `rusm.toml` under `[components.<name>]` (the caller needs the `allow-spawn`
-capability). It's the **same JSON wire** as `rusm-ts` and `rusm-go`, so a Rust client and a TS
-or Go service interoperate. Errors are ordinary `Result`s; logging is the standard `log` crate,
-routed to the node's log stream — the `#[rusm_rs::main]` / `#[handlers]` entry points install
-the sink for you, and the host stamps the time, `component#pid`, and severity (no name/pid
-wiring, no `allow-stdio`).
+### Worker — a `#[rusm_rs::main]` fn
 
-To serve a Rust component over HTTP/WS/SSE, see
-[Serve HTTP](/build-an-app/serve-http). The runnable
-[`rust`](https://github.com/archan937/rusm/tree/main/examples/todo-board/rust) todo-board example wires
-the same model end to end.
+A one-shot entry point: runs once, does the job, exits. Use `calc::Client::spawn` to reach
+the service — the typed client hides spawn + send + receive behind a plain method call:
+
+```rust
+// components/commander/src/lib.rs
+use calc::calc::Client as CalcClient;
+
+#[rusm_rs::main]
+fn run() {
+    let calc = CalcClient::spawn("calc").unwrap();
+
+    println!("2 + 3 = {}", calc.add(2, 3).unwrap());             // typed call
+    for n in calc.count_to(3).unwrap() { println!("{n}"); }       // streaming
+    calc.work(|pct| println!("progress {pct}")).unwrap();         // callback
+}
+```
+
+The `calc` crate is a path dependency — the `Client` type lives there (generated by the
+macro), and `commander` imports it. Neither component shares runtime memory; they share only
+the type.
+
+## Declare in `rusm.toml`
+
+```toml
+[components.calc]
+capability = "sandboxed"
+
+[components.commander]
+capability = "trusted"   # inherits allow-spawn
+```
+
+## Build & run
+
+```sh
+rusm build   # cargo build --target wasm32-wasip2 per component → wasm/*.wasm
+rusm run     # spawn them per rusm.toml
+rusm dev     # build + run, then watch ./components and hot-reload on every save
+```
+
+One toolchain, no extra steps — `cargo build --target wasm32-wasip2` componentizes
+directly. **`rusm dev`** keeps running: save a file and the component rebuilds and reloads
+automatically.
+
+## What `rusm-rs` gives you
+
+The full actor toolkit, all typed and serde-backed:
+
+| | |
+|---|---|
+| `rusm_rs::me()` | this process's `Pid` |
+| `send_bytes(pid, &[u8])` / `send(pid, &T)` | send a message |
+| `receive_bytes()` / `receive::<T>()` | wait for a message (parks the fiber) |
+| `spawn("name")` | spawn a component by `rusm.toml` name |
+| `register("name")` / `whereis("name")` | named registry |
+| `register_tag("tag")` / `whereis_tag("tag")` | process-group tags |
+| `send_after(pid, ms, msg)` / `cancel_timer(h)` | timers |
+| `monitor(pid)` / `link(pid)` | lifecycle tracking |
+
+Errors are ordinary `Result`s. Logging is the standard `log` crate — `log::info!`,
+`log::error!` — routed to the node's unified stream by `#[rusm_rs::main]` / `#[handlers]`
+automatically. The host stamps the time, `component#pid`, and severity. No setup, no
+`allow-stdio`.
+
+::: tip Same wire as TypeScript and Go
+A Rust service and a TypeScript or Go caller interoperate out of the box — they speak the
+same JSON wire. Mix languages freely; the type system keeps each component honest within its
+own boundary.
+:::
+
+## Go deeper
+
+- [Call another component](/build-an-app/call-another-component) — `Client::spawn`, `connect` to a resident, call with a deadline
+- [Serve HTTP / WS / SSE](/build-an-app/serve-http) — `#[rusm_rs::handlers]` for routed HTTP, `ws::serve`, `sse::serve`
+- [Coordinate & supervise](/build-an-app/coordinate-and-supervise) — links, monitors, `#[rusm_rs::supervisor]`
+- [Runnable todo-board](https://github.com/archan937/rusm/tree/main/examples/todo-board/rust) — service + worker + streaming + callback, end to end
