@@ -5,10 +5,10 @@ use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
-    capabilities_for, command_help, exec_kv, host, node_overrides, normalize_target, parse,
-    parse_kv, parse_new_args, prebuilt_wasm, render_message, scaffold, spawn_components, usage,
-    version, wants_help, wants_version, KvCommand, KvOutput, Protocol, ReplInput, DEFAULT_HOST,
-    HELP,
+    capabilities_for, command_help, exec_kv, generate_bridge, generate_component, host,
+    node_overrides, normalize_target, parse, parse_generate_args, parse_kv, parse_new_args,
+    prebuilt_wasm, render_message, scaffold, spawn_components, usage, version, wants_help,
+    wants_version, GenerateCommand, KvCommand, KvOutput, Protocol, ReplInput, DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -41,6 +41,7 @@ async fn main() {
             None => unknown_command(name),
         },
         Some("new") => cmd_new(args),
+        Some("generate") => cmd_generate(args),
         Some("build") => cmd_build(),
         Some("node") => cmd_node(args).await,
         Some("run") => cmd_run(args).await,
@@ -101,6 +102,44 @@ fn cmd_new(args: Arguments) {
     println!("  rusm build      # compile components/ -> wasm/");
     println!("  rusm serve      # http://127.0.0.1:8080");
     println!("  {probe}");
+}
+
+/// `rusm generate component|bridge`: add to an existing project.
+fn cmd_generate(args: Arguments) {
+    let root = Path::new(".");
+    match parse_generate_args(args).unwrap_or_else(|e| die(e, 2)) {
+        GenerateCommand::Component(gen) => {
+            let created = generate_component(root, &gen)
+                .unwrap_or_else(|e| die(format!("generate failed: {e}"), 1));
+            println!("added component {}/", gen.name);
+            for f in &created {
+                println!("  {}", f.display());
+            }
+            let probe = match gen.protocol {
+                Protocol::Http => "curl http://127.0.0.1:8080/".to_string(),
+                Protocol::Sse => "curl -N http://127.0.0.1:8080/".to_string(),
+                Protocol::Ws => "websocat ws://127.0.0.1:8080/".to_string(),
+            };
+            println!("\nnext:");
+            println!("  rusm build");
+            println!("  rusm serve      # then: {probe}");
+        }
+        GenerateCommand::Bridge(gen) => {
+            let created = generate_bridge(root, &gen)
+                .unwrap_or_else(|e| die(format!("generate failed: {e}"), 1));
+            println!("added bridge {}/", gen.name);
+            for f in &created {
+                println!("  {}", f.display());
+            }
+            println!("\nTo use this bridge, add to rusm.toml:");
+            println!("  [capabilities.my-cap]");
+            println!("  inherits = \"sandboxed\"");
+            println!("  bridges = [\"{}\"]", gen.name);
+            println!();
+            println!("Then set capability = \"my-cap\" on the component(s) that call it.");
+            println!("Run `rusm build` to regenerate the glue.");
+        }
+    }
 }
 
 /// `rusm build`: compile every `./components/*` crate to `./wasm`, and — for a

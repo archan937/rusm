@@ -102,6 +102,25 @@ const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "generate",
+        usage:
+            "rusm generate component <name> [--lang ts|rust|go] [--protocol http|sse|ws]\n       \
+                rusm generate bridge <name> [--lang ts|rust|go]",
+        summary: "add a component or bridge to an existing project",
+        details: "Adds to an existing project (must already have a rusm.toml). \
+                  `generate component` creates components/<name>/ with the right source and \
+                  appends the matching rusm.toml entry — ready to build immediately with \
+                  `rusm build`. `generate bridge` creates bridges/<name>/bridge.wit and a host \
+                  stub (host.ts by default, or host.rs/host.go with --lang); grant it in a \
+                  [capabilities.*] `bridges = [\"<name>\"]` list to expose it to components.",
+        examples: &[
+            "rusm generate component chat --lang ts --protocol ws",
+            "rusm generate component feed --lang rust",
+            "rusm generate bridge mailer",
+            "rusm generate bridge payments --lang ts",
+        ],
+    },
+    CommandSpec {
         name: "attach",
         usage: "rusm attach [<host | host:port | ws-url>]",
         summary: "observe a running node (defaults to 127.0.0.1:4000)",
@@ -220,7 +239,7 @@ mod tests {
         assert!(u.contains("-V, --version"), "documents the version flag");
         assert!(u.contains(DOCS_URL));
         for name in [
-            "new", "node", "build", "run", "dev", "serve", "kv", "attach",
+            "new", "node", "build", "run", "dev", "serve", "kv", "attach", "generate",
         ] {
             assert!(u.contains(name), "usage missing `{name}`");
         }
@@ -242,6 +261,17 @@ mod tests {
         assert!(
             new.contains("rusm new board --template"),
             "new help has a template example"
+        );
+
+        let gen = command_help("generate").expect("generate is a command");
+        assert!(
+            gen.contains("component"),
+            "generate help mentions component"
+        );
+        assert!(gen.contains("bridge"), "generate help mentions bridge");
+        assert!(
+            gen.contains("rusm generate component chat"),
+            "generate help has a component example"
         );
 
         assert!(command_help("frobnicate").is_none());

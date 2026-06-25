@@ -8,6 +8,7 @@ pub mod bridges;
 mod cli;
 mod component;
 mod endpoint;
+mod generate;
 /// Hosting an app's node — the construction + serve loop shared by the `rusm` CLI and an
 /// app's own generated host crate (the custom-bridge model). Public so a host crate can
 /// `rusm_cli::host::serve(root, &cfg, |l| my_bridge::add_to_linker(l))`.
@@ -28,6 +29,10 @@ pub use cli::{
 };
 pub use component::prebuilt_wasm;
 pub use endpoint::{normalize_target, DEFAULT_HOST};
+pub use generate::{
+    generate_bridge, generate_component, parse_generate_args, GenerateBridge, GenerateCommand,
+    GenerateComponent,
+};
 pub use kv::{exec_kv, parse_kv, KvCommand, KvOutput};
 pub use render::render_message;
 pub use repl::{parse, ReplInput, HELP};

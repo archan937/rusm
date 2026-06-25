@@ -40,7 +40,7 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Protocol::Http => "http",
             Protocol::Sse => "sse",
@@ -161,7 +161,7 @@ pub fn parse_new_args(mut args: pico_args::Arguments) -> Result<NewApp> {
     })
 }
 
-fn parse_lang(value: &str) -> Result<Lang> {
+pub(crate) fn parse_lang(value: &str) -> Result<Lang> {
     match value {
         "ts" | "typescript" => Ok(Lang::TypeScript),
         "rust" | "rs" => Ok(Lang::Rust),
@@ -171,7 +171,7 @@ fn parse_lang(value: &str) -> Result<Lang> {
     }
 }
 
-fn parse_protocol(value: &str) -> Result<Protocol> {
+pub(crate) fn parse_protocol(value: &str) -> Result<Protocol> {
     match value {
         "http" => Ok(Protocol::Http),
         "sse" => Ok(Protocol::Sse),
@@ -245,14 +245,17 @@ fn files(app: &NewApp) -> Vec<(PathBuf, String)> {
             }
         }
         Lang::Rust => {
-            out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
+            out.push((
+                PathBuf::from("components/api/Cargo.toml"),
+                cargo_toml("api"),
+            ));
             out.push((
                 PathBuf::from("components/api/src/lib.rs"),
-                rust_component(app.protocol).to_string(),
+                rust_component(app.protocol, "api"),
             ));
         }
         Lang::Go => {
-            out.push((PathBuf::from("components/api/go.mod"), go_mod()));
+            out.push((PathBuf::from("components/api/go.mod"), go_mod("api")));
             out.push((
                 PathBuf::from("components/api/main.go"),
                 go_component(app.protocol).to_string(),
@@ -358,12 +361,15 @@ fn bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
             out.push((PathBuf::from("tsconfig.json"), TSCONFIG.to_string()));
         }
         Lang::Go => {
-            out.push((PathBuf::from("components/api/go.mod"), go_mod()));
+            out.push((PathBuf::from("components/api/go.mod"), go_mod("api")));
             out.push((PathBuf::from("components/api/main.go"), go_bridge_guest()));
         }
         // Rust is the default; `Generic` is rejected in `parse_new_args`.
         _ => {
-            out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
+            out.push((
+                PathBuf::from("components/api/Cargo.toml"),
+                cargo_toml("api"),
+            ));
             out.push((
                 PathBuf::from("components/api/src/lib.rs"),
                 BRIDGE_RUST_GUEST.to_string(),
@@ -401,14 +407,17 @@ fn mailer_bridge_files(app: &NewApp) -> Vec<(PathBuf, String)> {
             ));
         }
         Lang::Go => {
-            out.push((PathBuf::from("components/api/go.mod"), go_mod()));
+            out.push((PathBuf::from("components/api/go.mod"), go_mod("api")));
             out.push((
                 PathBuf::from("components/api/main.go"),
                 mailer_go_guest(app),
             ));
         }
         _ => {
-            out.push((PathBuf::from("components/api/Cargo.toml"), cargo_toml()));
+            out.push((
+                PathBuf::from("components/api/Cargo.toml"),
+                cargo_toml("api"),
+            ));
             out.push((
                 PathBuf::from("components/api/src/lib.rs"),
                 MAILER_RUST_GUEST.to_string(),
@@ -622,10 +631,10 @@ pub(crate) const SDK_VERSION: &str = "0.5.0";
 
 /// The Rust component crate — one `cdylib`, the `rusm-rs` guest crate, and
 /// `wit-bindgen` (which `#[rusm_rs::main]` drives so the source carries no `wit/`).
-fn cargo_toml() -> String {
+pub(crate) fn cargo_toml(name: &str) -> String {
     format!(
         "[package]\n\
-         name = \"api\"\n\
+         name = \"{name}\"\n\
          version = \"0.1.0\"\n\
          edition = \"2021\"\n\
          \n\
@@ -644,7 +653,7 @@ fn cargo_toml() -> String {
     )
 }
 
-fn ts_component(protocol: Protocol) -> &'static str {
+pub(crate) fn ts_component(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Http => {
             "\
@@ -697,9 +706,9 @@ export default websocket({
 /// The Go component module: the rusm-go guest SDK (its `web` subpackage provides the
 /// HTTP/SSE/WebSocket handler surface). TinyGo + wit-bindgen-go are driven by `rusm
 /// build`, so the source carries no bindings boilerplate and no `wit/` dir.
-fn go_mod() -> String {
+pub(crate) fn go_mod(name: &str) -> String {
     format!(
-        "module api\n\
+        "module {name}\n\
          \n\
          go 1.24\n\
          \n\
@@ -707,7 +716,7 @@ fn go_mod() -> String {
     )
 }
 
-fn go_component(protocol: Protocol) -> &'static str {
+pub(crate) fn go_component(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Http => {
             "\
@@ -796,29 +805,26 @@ func run() {
     }
 }
 
-fn rust_component(protocol: Protocol) -> &'static str {
+pub(crate) fn rust_component(protocol: Protocol, name: &str) -> String {
     match protocol {
-        Protocol::Http => {
-            "\
-//! A RUSM HTTP component: a module of named handler **actions**. The `[routes]` table
-//! in rusm.toml maps `METHOD /path` to `api#<action>`; the host spawns a fresh
-//! sandboxed instance per request and dispatches the matched action here — no `main`,
-//! no router, no request/reply plumbing.
-use rusm_rs::http::{Params, Request, Response};
-
-#[rusm_rs::handlers]
-pub mod api {
-    use super::*;
-
-    pub fn home(request: Request, _params: Params) -> Response {
-        let url = request.url;
-        Response::text(format!(\"Hello from RUSM \u{1F44B}  (you asked for {url})\\n\"))
-    }
-}
-"
-        }
-        Protocol::Sse => {
-            "\
+        Protocol::Http => format!(
+            "//! A RUSM HTTP component: a module of named handler **actions**. The `[routes]` table\n\
+             //! in rusm.toml maps `METHOD /path` to `{name}#<action>`; the host spawns a fresh\n\
+             //! sandboxed instance per request and dispatches the matched action here — no `main`,\n\
+             //! no router, no request/reply plumbing.\n\
+             use rusm_rs::http::{{Params, Request, Response}};\n\
+             \n\
+             #[rusm_rs::handlers]\n\
+             pub mod {name} {{\n\
+             \u{20}\u{20}\u{20}\u{20}use super::*;\n\
+             \n\
+             \u{20}\u{20}\u{20}\u{20}pub fn home(request: Request, _params: Params) -> Response {{\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}let url = request.url;\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}Response::text(format!(\"Hello from RUSM \u{1F44B}  (you asked for {{url}})\\n\"))\n\
+             \u{20}\u{20}\u{20}\u{20}}}\n\
+             }}\n"
+        ),
+        Protocol::Sse => "\
 //! A RUSM SSE component: a per-connection handler (like WebSocket). The host runs one
 //! instance per connection; `open` emits initial events and `message` emits each event
 //! pushed to this process's mailbox (typically via a process-group tag subscribed to in
@@ -844,9 +850,8 @@ fn main() {
     sse::serve(Api::default());
 }
 "
-        }
-        Protocol::Ws => {
-            "\
+        .to_string(),
+        Protocol::Ws => "\
 //! A RUSM WebSocket component: the host runs one instance **per connection**, so the
 //! handler is naturally isolated. Reply with `conn.send(...)`; keep shared state in a
 //! `[components.<name>]` service or `kv` (not in this per-connection process).
@@ -869,7 +874,7 @@ fn main() {
     ws::serve(Api::default());
 }
 "
-        }
+        .to_string(),
     }
 }
 
@@ -1017,7 +1022,7 @@ fn mailer_readme(app: &NewApp) -> String {
 
 /// A project name must be a single safe path segment (no separators, no `..`), so
 /// scaffolding can never escape the target directory.
-fn validate_name(name: &str) -> Result<()> {
+pub(crate) fn validate_name(name: &str) -> Result<()> {
     if name.is_empty()
         || name.starts_with('-')
         || name == "."
