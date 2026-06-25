@@ -1,38 +1,57 @@
 # Architecture — Rust + Tokio + Wasmtime, mapped to the BEAM
 
-Three layers, each with one job; together they reproduce (and in places beat) the
-BEAM.
+RUSM rebuilds Erlang's actor model — lightweight processes, message passing,
+supervision — on a modern Rust foundation. The bet is in the choice of layers:
+**Rust** gives native speed with no garbage collector (so no stop-the-world pauses
+on tail latency), **Tokio** gives an M:N scheduler that already does what the BEAM's
+schedulers do, and **Wasmtime** gives each actor *real* memory isolation rather than
+the BEAM's softer task-level boundary. Three layers, each with one job; together they
+reproduce — and in places beat — the BEAM.
+
+This page maps that correspondence layer by layer, then states the one architectural
+invariant the whole design rests on. For where each capability lands in the build, see
+[the roadmap](/about/roadmap); for an honest assessment of the trade-offs, see the
+[design analysis](/about/design-analysis).
 
 ## Rust → the fast, safe host
 
-Native speed with **no garbage collector**, so no stop-the-world pauses hurting
-tail latency, and a tiny per-process footprint — what lets the spawn storm
-sustain **~2.4M spawns/sec**. Rust's speed is the *host*: the scheduler, cross-memory message
-copying, networking, and host functions. Guest actor code is **Wasm**, compiled
-to native by Wasmtime's Cranelift JIT — so guest speed is Wasmtime's.
+The host is Rust because the host work is unforgiving: the scheduler, cross-memory
+message copying, networking, and host functions all sit on the hot path. Native speed
+with **no garbage collector** means no stop-the-world pauses hurting tail latency, and
+a tiny per-process footprint — what lets the spawn storm sustain **~2.4M spawns/sec**.
+
+Note the boundary, though: Rust's speed is the *host*. Guest actor code is **Wasm**,
+compiled to native by Wasmtime's Cranelift JIT — so guest speed is Wasmtime's, not the
+host's.
 
 ## Tokio → the process scheduler + async I/O
 
-A multi-threaded **work-stealing** runtime that multiplexes millions of
-lightweight tasks over a few OS threads (M:N) — exactly what BEAM schedulers do.
-**One RUSM process (a Wasm instance) = one Tokio task.** Tokio also gives us async
-networking (TCP, and QUIC for the cluster) and timers.
+A multi-threaded **work-stealing** runtime that multiplexes millions of lightweight
+tasks over a few OS threads (M:N) — exactly what BEAM schedulers do. The mapping is
+direct: **one RUSM process (a Wasm instance) = one Tokio task.** Tokio also gives us
+async networking (TCP, and QUIC for the cluster) and timers, so the whole I/O surface
+is one runtime rather than a patchwork.
 
 ## Wasmtime → fast, isolated, sandboxed guests
 
-Compiles and sandboxes each actor — isolation gives fault tolerance and
-per-actor permissions. Its **fiber-based async support** suspends a guest's
-"blocking" call so the Tokio task can `await`: the blocking→async trick. See
+Where the BEAM isolates actors at the task level, RUSM isolates them at the *memory*
+level. Wasmtime compiles and sandboxes each actor — isolation gives both fault
+tolerance and per-actor permissions. Its **fiber-based async support** is what lets a
+guest write straight-line blocking code: a "blocking" call is suspended so the Tokio
+task can `await` underneath it — the blocking→async trick. See
 [fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async).
 
 ## Beyond plain Tokio: fair preemption
 
-Tokio is *cooperative* — a tight `loop {}` would hog a worker. The BEAM avoids
-this with reduction counting; RUSM uses **Wasmtime epoch interruption** to force
-even an infinite-loop guest to yield. See
-[epoch preemption](/deep-dive/epoch-preemption).
+One gap remains between Tokio and the BEAM, and RUSM closes it. Tokio is
+*cooperative* — a tight `loop {}` would hog a worker and starve its neighbours. The
+BEAM avoids this with reduction counting; RUSM uses **Wasmtime epoch interruption** to
+force even an infinite-loop guest to yield, so a misbehaving actor can't take the
+scheduler hostage. See [epoch preemption](/deep-dive/epoch-preemption).
 
 ## Mapping table
+
+Put together, every BEAM concept has a concrete RUSM counterpart:
 
 | BEAM | RUSM |
 | --- | --- |
@@ -47,8 +66,11 @@ even an infinite-loop guest to yield. See
 
 ## Architectural invariant — a Wasm-free core
 
-RUSM's heart is the **Erlang/OTP actor model in pure Rust**, and it must stay that
-way: **Wasm must not bleed into code where it is irrelevant.**
+The mapping table makes the layers look co-equal, but they are not: one of them is the
+heart, and the rest are swappable around it. RUSM's heart is the **Erlang/OTP actor
+model in pure Rust**, and it must stay that way — **Wasm must not bleed into code where
+it is irrelevant.** This is RUSM's single most consequential design decision, because
+it is enforced by the compiler rather than by convention:
 
 - **`crates/rusm-otp`** — the core: processes, mailboxes, `Signal`s, links,
   monitors, supervisors, registry, scheduler, and native connectivity. Generic
@@ -69,6 +91,9 @@ stay Wasm-agnostic: bytes plus opaque resource handles (`Arc<dyn Any + Send +
 Sync>`), no Wasm types.
 
 ## How the crates stack up
+
+That invariant shows up directly in the dependency layout — `rusm-wasm` depends on
+`rusm-otp`, never the reverse, and everything else plugs in around the core:
 
 ```
                        ┌─ bridges/wasip1 (core modules + raw rusm::* ABI + byte streams)

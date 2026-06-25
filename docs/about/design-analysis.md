@@ -1,8 +1,11 @@
 # Design analysis
 
-An honest assessment of RUSM's design — what's superior, how it performs, where
-the opportunities are, and the known lackings (with their current status). Updated
-as lackings are closed.
+A runtime is only as trustworthy as it is honest about itself. This page is RUSM's
+self-assessment, kept current as the project evolves: what the design genuinely gets
+right, how it performs, where the real opportunities are, and the known lackings —
+each with its status, so nothing is quietly swept aside. The "lackings" table below
+is the part to read first if you're sceptical; most of what it once tracked has since
+shipped, and the rows that haven't are stated plainly.
 
 ## Where it's superior
 

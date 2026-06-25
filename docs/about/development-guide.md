@@ -1,5 +1,12 @@
 # Development guide
 
+This page is for anyone contributing to RUSM — or building on its core — and it
+captures how the project is actually built day to day: the toolchains, the commands,
+where the tests live, and the recipe for extending the host. The rigor here is the
+point, not paperwork: TDD-always, a ≥98% coverage floor, and a strict Wasm-free-core
+boundary are exactly what keep the codebase reference-quality and trustworthy as it
+grows. Read this before your first change and the rest of the repo will feel familiar.
+
 ## Principles
 
 - **TDD always.** Write the failing test first, then implement until green. Baby
@@ -8,6 +15,10 @@
   guards are acceptable gaps, and they should be obvious from the code.
 - **Comments only for critical info.** No comments restating obvious code.
 - **Senior, idiomatic, DRY, well-separated.** Self-review every change.
+- **Respect the Wasm-free-core boundary.** The `rusm-otp` core (processes,
+  messaging, supervision, registry, scheduler) must never depend on Wasmtime — all
+  Wasm lives in `rusm-wasm`. The dependency graph enforces it; see
+  [architecture](/about/architecture) for why this invariant matters.
 
 ## Platform
 

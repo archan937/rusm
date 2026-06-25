@@ -1,5 +1,11 @@
 # How RUSM compares — hydra, Lunatic & wasmCloud
 
+If you're sizing RUSM up against the alternatives, this page is the honest map. It
+places RUSM next to three neighbours — a native-Rust OTP library, a WebAssembly actor
+runtime, and a distributed component platform — and reasons through where each one
+genuinely leads. It is deliberately even-handed: RUSM's strengths are stated plainly,
+and so is the fact that it is young and unproven at scale.
+
 *A runtime, a library, and a platform — so this is a cross-category comparison, not a
 like-for-like one (see [They are different categories](#they-are-different-categories)).*
 

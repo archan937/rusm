@@ -1,8 +1,17 @@
 # Benchmark dashboard & observer
 
-The dashboard (`bench/dashboard`, React on Bun, uPlot charts) is the north-star
-artifact — how we *see* every phase's progress. It has two views fed by one
-WebSocket stream from a node.
+Every performance claim in these docs is something you can watch happen. The
+dashboard (`bench/dashboard`, React on Bun, uPlot charts) runs the real runtime,
+live, and streams its numbers as they're produced — so you never have to take a
+figure on trust. It's also how the project keeps itself honest: each phase
+"graduates" its scenario from synthetic placeholder data to a real measurement,
+and the dashboard is where that switch is visible. Open it and you're watching
+RUSM's actual machinery — spawns, messages, supervision, streaming, serving — in
+motion.
+
+It has two views fed by one WebSocket stream from a node: a **benchmark view**
+that drives scenarios and charts their throughput and latency, and a **live
+observer** that shows the node's processes the way Erlang's `observer` does.
 
 ## Running it
 
@@ -57,8 +66,11 @@ A menu of scenarios and a **Run** button. Each tick streams: throughput
 
 All **twenty-one** scenarios above run **real** engines — none are synthetic
 (`Runner::start_synthetic` keeps a runtime-free deterministic preview only for UI
-development). The **six serving scenarios are co-resident live demos**: each spins up
-the same real in-process WASM server and drives it through the same load path as the
+development).
+
+How a number is measured is part of the number, so the dashboard is explicit about
+it. The **six serving scenarios are co-resident live demos**: each spins up the
+same real in-process WASM server and drives it through the same load path as the
 out-of-process `rusm-loadtest` (balter for HTTP request-rate, a connection-capacity
 harness for WS/SSE held connections), with the load generator and server sharing the
 node process. Because they share CPU and hide the network behind loopback, the
@@ -84,11 +96,13 @@ running/waiting, scheduler load bars, total memory, and a per-instance table.
 
 ## Observability must stay cheap
 
-Counters are relaxed atomics; the node pushes a **periodic aggregated snapshot**
-(10–60 Hz), never an event per operation. The per-instance detail table is the
-only costly part of a snapshot, so it is **toggleable** — off for clean
-benchmark runs. We prove the overhead is negligible by running a high-rate
-benchmark **observer-on vs observer-off** (toggle it live with `detail off` in `rusm attach`, or the dashboard's detail switch).
+Watching a node should never change what you're watching. Counters are relaxed
+atomics; the node pushes a **periodic aggregated snapshot** (10–60 Hz), never an
+event per operation. The per-instance detail table is the only costly part of a
+snapshot, so it is **toggleable** — off for clean benchmark runs. We prove the
+overhead is negligible by running a high-rate benchmark **observer-on vs
+observer-off** (toggle it live with `detail off` in `rusm attach`, or the
+dashboard's detail switch).
 
 ## Spawn-storm: how the number is produced (read this)
 

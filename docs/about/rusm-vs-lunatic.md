@@ -1,5 +1,14 @@
 # RUSM vs Lunatic — comparison & efficiency playbook
 
+Lunatic is RUSM's closest peer — the project that first made "a Wasm instance is a
+process" real, with supervisors and a distributed registry. That makes it the most
+useful mirror RUSM has: studying it carefully shows both the ideas worth being inspired
+by and the places where a fresh implementation, on a modern Wasmtime, can do better.
+This page is two things at once — an honest, phase-by-phase comparison of where the two
+runtimes stand today, and a working **efficiency playbook**: for each phase, the smart
+Lunatic technique to borrow (with file evidence), why it helps, and where RUSM
+deliberately aims to be faster, leaner, or more stable.
+
 > **Living document.** RUSM is built in phases; Lunatic is a complete (but dormant,
 > v0.13.0 / May 2023) runtime. We keep this doc current as each RUSM phase closes a
 > gap. It exists to (a) honestly track where RUSM stands, (b) capture the smart

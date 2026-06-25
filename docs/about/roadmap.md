@@ -1,5 +1,15 @@
 # Roadmap — TDD baby steps
 
+This page is the build log: how RUSM was assembled in twelve disciplined phases, what
+each one shipped, and what still lies ahead. The interesting decision is the *ordering*.
+RUSM is built foundation-first — the Erlang/OTP actor model in pure Rust comes first
+(Phases 1–5, on native process bodies), so the actor core is real, tested, and
+measurable on the dashboard *before any WebAssembly exists*. Wasmtime slots in only at
+Phase 6, as a swappable execution backend rather than the foundation; distribution,
+scale, and serving build on top from there. The payoff of that order is concrete: the
+hardest part — a correct, fast actor runtime — is proven on its own before isolation is
+layered on, and the compiler enforces that the core never grows a Wasm dependency.
+
 Each phase writes the failing test first, then implements until green, and leaves
 `cargo test` passing. Every phase "graduates" a dashboard scenario from synthetic
 data to real measurements.
