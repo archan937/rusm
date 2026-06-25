@@ -16,7 +16,7 @@ opt-level = "z"
 strip = true
 
 [dependencies]
-rusm-rs = "0.5.0"
+rusm-rs = "0.6.0"
 store-svc = { path = "../../store-svc" }
 wit-bindgen = "0.46"
 log = "0.4"

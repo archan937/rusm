@@ -1,1 +1,1 @@
-{ "name": "todo-board", "private": true, "dependencies": { "rusm-ts": "^0.5.0" } }
+{ "name": "todo-board", "private": true, "dependencies": { "rusm-ts": "^0.6.0" } }

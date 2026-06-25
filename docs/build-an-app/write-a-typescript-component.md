@@ -95,7 +95,7 @@ capability = "trusted"   # inherits allow-spawn
 ## Add the SDK
 
 ```json
-{ "dependencies": { "rusm-ts": "^0.5.0" } }
+{ "dependencies": { "rusm-ts": "^0.6.0" } }
 ```
 
 `rusm build` runs `bun install` automatically before bundling.

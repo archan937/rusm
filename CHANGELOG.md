@@ -6,6 +6,46 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.6.0] — 2026-06-25
+
+A live JavaScript REPL into a running node, a `rusm generate` command, and a
+top-to-bottom documentation pass that corrected a backlog of stale/invented API
+references in the guide.
+
+### Added
+- **Live JavaScript REPL over `rusm attach`** — a stateful JS shell into a running node
+  (RUSM's `iex --remsh`): the full `Process` API in scope, `connect()` to call a resident
+  service and get the reply, `send`/`sendAfter`/`kill`/`killTag`, bindings that persist
+  across lines, top-level `await`, and captured console output. Each connection gets its own
+  sandboxed REPL process; eval is **loopback-only** (the interim security boundary until the
+  attach channel is authenticated). New public API: `WasmRuntime::spawn_repl_session`,
+  `Node::with_repl`, the `ReplHost`/`ReplSession` traits + `EvalOutcome` (`rusm-node`), and
+  the `Eval` / `EvalResult` attach-protocol messages.
+- **`rusm generate component|bridge <name>`** — add a component or bridge to an *existing*
+  project (vs `rusm new`, which scaffolds a whole project), with the correct `rusm.toml`
+  wiring (`[[serve]]` vs `[components.<name>]`) and guards that never clobber an existing
+  component.
+
+### Changed
+- **Homepage & README broadened** — the front door now surfaces serving, the three guest
+  languages, clustering, and the live REPL, not just the actor core.
+
+### Docs
+- A full mindset + accuracy pass across every section — Introduction, Build an app (29
+  pages), Deep dive (23 pages), About (7 pages), and the Phase log (12 pages, including the
+  new **Phase 11** page) — plus a dedicated **The live REPL** showcase page. Soft-landing
+  intros and one consistent voice throughout.
+
+### Fixed
+- **Guide accuracy** — corrected a backlog of hallucinated/stale API references: non-existent
+  guest `link`/`spawnLink`/`trapExit`/`demonitor`/`shutdown`; the invented `rusm::message::*`
+  ABI path, `Process.publishTag`, and TS `Process.spawnFrom`; fabricated manifest/capability
+  keys; and missing reference-spec entries (`[capabilities].bridges`, `[components].entry`,
+  `dynamic = "wasi-cli"`, host-ABI `spawn-from` / `send-after` / `cancel-timer`). Every guide
+  example is now verified against the SDK/config source.
+- `rusm-cli` `generate.rs` — explicit match arms / `unreachable!` in place of silent
+  wildcards for the parser-rejected `Generic` language.
+
 ## [0.5.0] — 2026-06-24
 
 The bridge authoring model is now three-way: **Rust**, **TypeScript**, and **Go** bridge

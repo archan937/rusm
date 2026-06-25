@@ -5,7 +5,7 @@
 # guest, which is excluded from the workspace, builds it without friction.
 [package]
 name = "rusm-wire"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 description = "Shared host/guest wire types for RUSM resident serving."
