@@ -1,4 +1,7 @@
 import { defineConfig } from 'vitepress';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // One source of truth for navigation: the same grouped structure drives both the
 // top nav (as dropdowns) and the sidebar (as sections), so they never diverge.
@@ -244,6 +247,13 @@ export default defineConfig({
         'one-light',
         'one-dark-pro',
       );
+      const witGrammar = JSON.parse(
+        readFileSync(
+          resolve(fileURLToPath(import.meta.url), '../wit.tmLanguage.json'),
+          'utf-8',
+        ),
+      );
+      await highlighter.loadLanguage({ ...witGrammar, name: 'wit' } as any);
     },
   },
   // The RUSM theme's fonts (display / base / mono), loaded with preconnect for

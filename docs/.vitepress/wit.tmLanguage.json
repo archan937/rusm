@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "WIT",
+  "scopeName": "source.wit",
+  "fileTypes": ["wit"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#keyword" },
+    { "include": "#type-builtin" },
+    { "include": "#identifier" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.wit",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.wit",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.wit",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.wit", "match": "\\\\." }]
+    },
+    "keyword": {
+      "name": "keyword.control.wit",
+      "match": "\\b(package|world|interface|import|export|use|include|type|record|variant|enum|flags|resource|func|constructor|static|method|own|borrow)\\b"
+    },
+    "type-builtin": {
+      "name": "support.type.wit",
+      "match": "\\b(u8|u16|u32|u64|s8|s16|s32|s64|f32|f64|bool|char|string|tuple|list|option|result|error-context|future|stream)\\b"
+    },
+    "identifier": {
+      "name": "entity.name.type.wit",
+      "match": "%?[a-z][a-z0-9]*(-[a-z0-9]+)*"
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.separator.wit", "match": "[,;]" },
+        { "name": "punctuation.definition.wit", "match": "[{}()<>]" },
+        { "name": "keyword.operator.wit", "match": "->|:|\\." }
+      ]
+    }
+  }
+}
