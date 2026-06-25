@@ -163,20 +163,25 @@ model, and operational model:
 
 | | **RUSM + rquickjs** | **ComponentizeJS + JCO** |
 |---|---|---|
-| **JS engine** | QuickJS (~920 KB), shared across all TS components on a node | StarlingMonkey (~8 MB), embedded separately in **each** component |
-| **Your component artifact** | `.js` bundle of your code (2–50 KB) | `.wasm` with engine included (~8 MB per component) |
+| **JS engine** | QuickJS (~920 KB), shared across all TS components on a node | StarlingMonkey (8–20 MB+), embedded separately in **each** component |
+| **Your component artifact** | `.js` bundle of your code (2–50 KB) | `.wasm` with engine included (8–20 MB+ per component) |
 | **Wizer pre-init** | ✓ engine + bridge snapshotted once at build time | ✓ per-component snapshot |
-| **Engine sharing** | ✓ CoW-shared; one copy in memory regardless of instance count | ✗ each component carries its own ~8 MB copy |
+| **Engine sharing** | ✓ CoW-shared; one copy in memory regardless of instance count | ✗ each component carries its own full engine copy |
 | **Default-deny capabilities** | ✓ per-process, host-enforced | ✗ WASI shims in Node.js host; no default-deny model |
 | **Memory cap per instance** | ✓ `StoreLimiter` | ✗ |
 | **Epoch preemption** | ✓ a spinning guest can't starve others | ✗ |
 | **Actor model** | ✓ supervised, addressable, killable, mailbox | ✗ |
 
-The engine-sharing gap is the headline. A node running ten RUSM TypeScript components holds
-one ~920 KB QuickJS image in memory, CoW-shared across all instances. Ten ComponentizeJS
-components each carry their own ~8 MB StarlingMonkey — 80 MB before a single line of your
-code. RUSM's approach keeps the total engine footprint fixed at ~920 KB regardless of how
-many TS components you deploy.
+The engine-sharing gap is the headline. A real TypeScript component with real dependencies
+ships at 17–19 MB with ComponentizeJS — and that cost multiplies. The ~920 KB js-runner is
+QuickJS bytecode (engine + full bridge, pre-compiled by wizer). Each RUSM component adds
+only its `.js` bundle, which QuickJS compiles to bytecode in memory at spawn time. The
+engine cost is fixed; only your code scales with component count:
+
+| | **1 component** | **10 components** |
+|---|---|---|
+| **RUSM** | ~920 KB engine + ~10–50 KB code | ~920 KB engine + ~100–500 KB code |
+| **ComponentizeJS** | ~17–19 MB | **~170–190 MB** |
 
 ## Go deeper
 
