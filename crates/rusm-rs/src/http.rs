@@ -83,6 +83,9 @@ pub fn serve_request(dispatch: impl FnOnce(&str, Request, Params) -> Option<Resp
 
 /// Split a URL into its `(scheme, authority, path-with-query)` parts; `None` without a
 /// `scheme://`. Authority is `host[:port]`; the path defaults to `/`. Pure — host-tested.
+/// Compiled only where it's used: the wasm32 `fetch` below and the host unit tests (a plain
+/// host, non-test build — e.g. `cargo publish`'s verify — has neither, so it isn't dead there).
+#[cfg(any(target_arch = "wasm32", test))]
 fn split_url(url: &str) -> Option<(&str, String, String)> {
     let (scheme, rest) = url.split_once("://")?;
     let (authority, path) = match rest.find('/') {
