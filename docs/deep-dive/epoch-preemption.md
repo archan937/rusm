@@ -8,9 +8,10 @@ scheduling even when a guest never cooperates.
 
 ## How it works
 
-Wasmtime compiles guest code with periodic **epoch checks**. A background timer bumps a
-global epoch counter on a fixed cadence; when a running guest crosses an epoch boundary,
-Wasmtime interrupts it. RUSM yields the fiber back to the scheduler (see
+Wasmtime compiles guest code with periodic **epoch checks**. A **dedicated background
+thread** bumps a global epoch counter on a fixed cadence (~10 ms) — on its own thread so a
+CPU-pinned guest can't starve the bump itself; when a running guest crosses an epoch
+boundary, Wasmtime interrupts it. RUSM yields the fiber back to the scheduler (see
 [fibers & blocking→async](/deep-dive/fibers-and-blocking-to-async)) and resumes it later.
 The upshot: even an infinite loop yields its fair share of the CPU.
 

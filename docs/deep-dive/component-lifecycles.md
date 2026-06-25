@@ -47,7 +47,7 @@ domain*.
 | **Dispatch** | match the route, own the socket, spawn the handler, send the request over the actor wire, run the ephemeral reply *responder* | — |
 | **Run** | suspend/resume the fiber on every blocking call (`receive`, `Stream::read`, a service `call`); enforce [epoch preemption](/deep-dive/epoch-preemption) on CPU-bound guests | your action / service / worker body — straight-line, blocking-looking code |
 | **Reply / stream** | turn your `Response` into the HTTP response; drain your byte stream into the chunked body with back-pressure; own the WS socket sink | `return` a `Response`, or `sse.data(…)`, or `conn.send(…)` |
-| **Exit** | classify the exit (Normal / Crashed / Killed), reclaim the instance + mailbox + streams, fire links and monitors, drive the supervisor | optionally `monitor` / `Supervisor` / `trap_exit` |
+| **Exit** | classify the exit (Normal / Crashed / Killed), reclaim the instance + mailbox + streams, fire links and monitors, drive the supervisor | optionally `monitor` / `Supervisor` |
 
 **Blocking is async, for free.** In the Run phase your code can call `receive` or read
 a stream and *block* — the platform suspends the [fiber](/deep-dive/fibers-and-blocking-to-async)

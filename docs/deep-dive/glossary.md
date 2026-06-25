@@ -9,10 +9,10 @@ Erlang/Elixir concepts you already know onto their RUSM equivalents.
 | scheduler | a Tokio worker thread (work-stealing) | M:N over a few OS threads |
 | reduction counting | Wasmtime epoch interruption | forces fair yields, even in tight loops |
 | mailbox | per-process async channel | host copies message bytes across memories |
-| `send/2` | `rusm::message::send(pid)` | fire-and-forget to a mailbox |
-| `receive` | `rusm::message::receive()` | suspends the process until a message arrives |
-| link | bidirectional failure propagation | a crash signals linked peers |
-| monitor | one-way failure notification | observe without dying together |
+| `send/2` | `send(pid, msg)` | fire-and-forget to a mailbox (`Process.send` / `send_bytes` / `Send`) |
+| `receive` | `receive()` | suspends the process until a message arrives (`Process.receive` / `receive_bytes` / `Receive`) |
+| link | bidirectional failure propagation (OTP core) | a crash signals linked peers; guests use `monitor` + an in-guest `Supervisor` |
+| monitor | one-way failure notification | observe without dying together; a `__down` message, no polling |
 | supervisor | a process that restarts crashing children | "let it crash" |
 | `:global` | distributed registry | cluster-wide name → pid |
 | `Node.connect/1`, epmd | QUIC + TLS node transport | secure node-to-node links |

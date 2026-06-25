@@ -24,7 +24,9 @@ into the one `process` world:
 | `is-alive(pid) -> bool` / `kill(pid) -> bool` | liveness / forced termination |
 | `register(name) / whereis(name) / unregister(name)` | the named registry (1 name → 1 pid) |
 | `set-label(label)` | a human-readable label for the observer |
+| `send-after(to, delay-ms, msg) -> timer-id` / `cancel-timer(id) -> bool` | a delayed send (Erlang's `send_after`) and its cancellation |
 | `spawn(name) / monitor(pid) / supervise(…)` | start, watch, and supervise child components (capability-gated) |
+| `spawn-from(name, source) -> pid` | spawn a **dynamic** runner-template instance from a runtime source (`inline:` / `kv:` / `url:`) under the template's declared profile — see [dynamic JS](/build-an-app/dynamic-js) (capability-gated) |
 
 ### The `kv` interface — durable storage (a platform bridge)
 

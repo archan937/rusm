@@ -277,6 +277,7 @@ operator never declared). See [permissions & sandboxing](/deep-dive/permissions-
 | `allow-stdio` | bool? | from base | Inherit the host's raw stdout/stdin (a `wasi:cli` command, a raw `print!`). **Not** needed for logging — `console.*` / `log::*` route to the platform logger, gated by `[log]` (above). |
 | `allow-storage` | bool? | from base | May use durable key-value storage (the `kv-*` ABI); needs a node `store`. Granted by `trusted`. |
 | `max-memory-mb` | int? | from base | Per-process heap ceiling (MiB). |
+| `bridges` | string[] | `[]` | Names of **custom application bridges** (`bridges/<name>/` dirs in the app) this profile may import — default-deny per bridge. Built-in bridges have their own grants (e.g. `allow-storage`) and never appear here. See [add your own functions](/build-an-app/add-your-own-functions). |
 | `env` | string[] | `[]` | Env-var **keys** to grant; values resolved from the process env / `.env`. |
 | `preopen` | table[] | `[]` | Host dirs mounted in the sandbox: `{ host, guest, read-only }`. |
 
@@ -315,7 +316,8 @@ up, like a daemon — whereas the default component exists only while something 
 | `capability` | string | `"sandboxed"` | A built-in profile or a `[capabilities.<name>]` id. |
 | `resident` | bool | `false` | `true` = the component *resides* in the node (one always-up instance): boot-spawned at startup and supervised (auto-restarted on crash). Default = spawn-by-name only — nothing runs until something spawns it. |
 | `source` | string? | none | Load the bundle from a `url:`/`http(s)://` URL or `kv:<bucket>/<key>` instead of the local `./wasm/<name>` artifact — deploy a JS bundle **or a compiled `.wasm` component** (told apart by the WASM magic) live, no node rebuild (re-fetched on each spawn / `rusm dev` reload). See [dynamic bundle sourcing](#dynamic-bundle-sourcing). |
-| `dynamic` | string? | none | Marks a **dynamic runner template** — a capability profile with no fixed bundle: `"js"` runs a runtime-chosen JS bundle, `"wasm"` a runtime-chosen (compile-cached) WASM component. A guest can't `spawn` it; it runs only via `spawn-from(name, source)`, which loads the chosen bundle and runs it under this profile. Mutually exclusive with `source`; can't be `resident`. See [dynamic JS](/build-an-app/dynamic-js) / [dynamic WASM](/build-an-app/dynamic-wasm). |
+| `dynamic` | string? | none | Marks a **dynamic runner template** — a capability profile with no fixed bundle: `"js"` runs a runtime-chosen JS bundle, `"wasm"` a runtime-chosen (compile-cached) RUSM actor component, `"wasi-cli"` a runtime-chosen stock `wasi:cli/run` component (any `wasm32-wasip2` binary; no `rusm:runtime` needed). A guest can't `spawn` it; it runs only via `spawn-from(name, source)`, which loads the chosen bundle and runs it under this profile. Mutually exclusive with `source`. See [dynamic JS](/build-an-app/dynamic-js) / [dynamic WASM](/build-an-app/dynamic-wasm). |
+| `entry` | string? | `"run"` | Override the WIT entry-point export name for a static component or a `dynamic = "wasm"` template — e.g. `entry = "handle"` for a component exporting `handle: func()`. No effect on `"js"` / `"wasi-cli"` (their protocols are fixed). Omitted → `"run"`. |
 
 ## A complete manifest
 
@@ -441,11 +443,12 @@ The loaded JS always runs under the template's **declared** profile — so untru
 generated code is boxed by the operator, never by the caller. Capability-gated: the
 spawner needs `spawn`, plus its own `storage` for a `kv:` source or `network` for a `url:`
 (an `inline:` bundle needs no extra I/O). The fetch for `url:` is a host action (the node
-owns egress), so `rusm-wasm` stays HTTP-free. Two template kinds exist: `dynamic = "js"`
-(a runtime-chosen **JS** bundle, the focus here) and `dynamic = "wasm"` (a runtime-chosen
-**compiled WASM component**, compiled once then cached for hot re-spawns — see
-[dynamic WASM](/build-an-app/dynamic-wasm)). A compiled `.wasm` can also still ship the
-ordinary way, via `rusm build` into `./wasm/`.
+owns egress), so `rusm-wasm` stays HTTP-free. Three template kinds exist: `dynamic = "js"`
+(a runtime-chosen **JS** bundle, the focus here), `dynamic = "wasm"` (a runtime-chosen
+**compiled RUSM actor component**, compiled once then cached for hot re-spawns — see
+[dynamic WASM](/build-an-app/dynamic-wasm)), and `dynamic = "wasi-cli"` (a runtime-chosen
+stock `wasi:cli/run` component — any `wasm32-wasip2` binary, no `rusm:runtime` needed). A
+compiled `.wasm` can also still ship the ordinary way, via `rusm build` into `./wasm/`.
 
 ## Environment variables
 

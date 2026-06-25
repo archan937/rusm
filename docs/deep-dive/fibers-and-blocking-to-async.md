@@ -25,9 +25,8 @@ call simply returns, none the wiser that it was ever parked.
 ## Relation to Lunatic's stack switching
 
 Lunatic cites a libfringe-inspired custom stack switcher. Wasmtime's fiber support is the
-same idea — stack switching — but battle-tested and memory-safe, so RUSM uses it first (a
-hand-rolled version is a Phase 10 stretch). For *fair* scheduling on top of this — so a
-guest that never makes a host call still can't hog a thread — see
-[epoch preemption](/deep-dive/epoch-preemption).
+same idea — stack switching — but battle-tested and memory-safe, so RUSM builds on it rather
+than hand-rolling its own. For *fair* scheduling on top of this — so a guest that never makes
+a host call still can't hog a thread — see [epoch preemption](/deep-dive/epoch-preemption).
 
 > Shipped in Phase 6 (the Wasmtime backend).

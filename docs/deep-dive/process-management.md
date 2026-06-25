@@ -46,15 +46,21 @@ timer wheel, so millions of outstanding timers cost almost nothing.
 ## Introspection
 
 `list()` enumerates live pids; `info(pid)` returns a process's links, monitors, names,
-label, mailbox depth, and status; `set_label(..)` tags a process for the observer. This is
-exactly what the [live-attach](/deep-dive/live-attach) REPL and the dashboard observer read —
-nothing is hidden from you.
+label, mailbox depth, and whether it traps exits; `set_label(..)` tags a process for the
+observer. This is exactly what the [live-attach](/deep-dive/live-attach) REPL and the
+dashboard observer read — nothing is hidden from you.
 
-## Lifecycle: graceful shutdown vs kill
+## Lifecycle: kill and shutdown
 
-`shutdown` drains and stops a process in order; `kill` aborts it immediately via a `futures`
-abort handle (no second signal channel — kill rides that handle, exit signals ride the
-mailbox). Crashes and exits flow through [links & supervision](/deep-dive/links-and-supervision).
+`kill(pid)` stops one process immediately via a `futures` **abort handle** — no second
+signal channel: kill rides that handle while exit and down signals ride the mailbox. The
+process still runs its normal teardown, so linked and monitoring peers are notified and its
+names are released.
+
+`shutdown()` is the runtime-wide kill switch: it signals **every** live process to stop
+(each running that same orderly teardown) and returns how many it signalled. Teardown is
+asynchronous, so poll `process_count()` to wait for the drain. Crashes and exits flow
+through [links & supervision](/deep-dive/links-and-supervision).
 
 > Registry, timers, and graceful shutdown shipped in Phase 4; introspection, labels, and
 > mailbox depth surface in the observer snapshot.

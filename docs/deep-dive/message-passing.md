@@ -7,12 +7,13 @@ until a message arrives. It's Erlang's model, made airtight by Wasm's memory bou
 
 ## The flow of a message
 
-1. The sender builds a message in its own linear memory and calls
-   `rusm::message::send(pid)`.
+1. The sender builds a message in its own linear memory and calls the host **`send`** op
+   (`send: func(to: pid, message: list<u8>)` in the `rusm:runtime` actor interface; raw
+   core modules call the equivalent `rusm.send`).
 2. The host **copies** those bytes out of the sender's memory and pushes them onto the
    target's mailbox (a Tokio channel). No memory is ever shared.
-3. The target calls `rusm::message::receive()`, which awaits the mailbox; the host copies
-   the bytes **into** the target's memory.
+3. The target calls **`receive`** (`receive: func() -> list<u8>`), which awaits the
+   mailbox; the host copies the bytes **into** the target's memory.
 
 ## Why copy, not share
 
