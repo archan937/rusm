@@ -27,7 +27,7 @@ your guest, in any language — `rusm new forecast --template weather --lang ts`
 `--lang rust` (or `--lang go`) scaffolds a single Rust or Go component instead of TypeScript;
 `--protocol ws` (or `sse`) scaffolds a WebSocket or SSE handler instead of HTTP.
 
-## Add to an existing project
+## Add components and bridges
 
 Once you have a project, `rusm generate` adds to it without touching anything else:
 
