@@ -8,6 +8,8 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
 use wasmtime::component::Component;
 use wasmtime::Store;
 use wasmtime_wasi::ResourceTable;
@@ -18,8 +20,10 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::WasiHttpView;
 use wasmtime_wasi_http::WasiHttpCtx;
 
+use super::auth::{AuthHook, AuthRequest, AuthVerdict};
 use super::{HttpCaps, WasiHost};
 use crate::caps::Capabilities;
+use crate::context::ProcessContext;
 use crate::{Spawner, WasmRuntime};
 
 /// A `wasi:http` component with its imports resolved and pre-instantiated — the
@@ -46,6 +50,11 @@ pub struct HttpServer {
     /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
     /// before hyper (`https`). `None` = plain HTTP.
     tls: Option<Arc<super::tls::TlsAcceptor>>,
+    /// The listener's auth hook (`[[serve]] authentication`); when set, each request is
+    /// validated before the handler instance runs — claims seed the request instance's
+    /// host-only context (this is the one serving path with no actor message, so the
+    /// context is seeded onto the per-request store directly), a denial is `401`.
+    auth: Option<AuthHook>,
 }
 
 impl WasmRuntime {
@@ -64,6 +73,7 @@ impl WasmRuntime {
             headers: Arc::new(Vec::new()),
             max_connections: None,
             tls: None,
+            auth: None,
         }
     }
 
@@ -119,6 +129,40 @@ impl HttpServer {
         self
     }
 
+    /// Authenticate each request with this hook (`[[serve]] authentication`); `None` = no
+    /// authentication. The hook runs before the handler instance does: claims seed the
+    /// request instance's host-only context, a denial short-circuits to `401`.
+    pub fn with_auth(mut self, auth: Option<AuthHook>) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    /// Run the listener's auth hook on the request, if configured. `Ok(context)` carries the
+    /// seeded claims (empty when no hook is set); `Err(())` is a rejection (the caller answers
+    /// `401`). Host code; the request it sees never includes guest-controlled state.
+    async fn authenticate(
+        &self,
+        req: &hyper::Request<hyper::body::Incoming>,
+    ) -> Result<ProcessContext, ()> {
+        let Some(hook) = &self.auth else {
+            return Ok(ProcessContext::new());
+        };
+        let request = AuthRequest {
+            method: req.method().as_str().to_string(),
+            path: req.uri().path().to_string(),
+            query: req.uri().query().unwrap_or("").to_string(),
+            headers: req
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect(),
+        };
+        match hook(request).await {
+            AuthVerdict::Allow(claims) => Ok(ProcessContext::from_iter(claims)),
+            AuthVerdict::Deny => Err(()),
+        }
+    }
+
     /// Serve HTTP/1.1 on `listener` until it closes (one connection per task, one
     /// component instance per request). Abort the task driving this to stop.
     pub async fn serve(self, listener: tokio::net::TcpListener) {
@@ -160,8 +204,9 @@ impl HttpServer {
     }
 
     /// A fresh per-request store: a new sandboxed `WasiHost` under this server's
-    /// capability profile, with the memory limiter and epoch deadline set.
-    fn fresh_store(&self) -> Result<Store<WasiHost>> {
+    /// capability profile, seeded with `context` (the request's authenticated claims, empty
+    /// when unauthenticated), with the memory limiter and epoch deadline set.
+    fn fresh_store(&self, context: ProcessContext) -> Result<Store<WasiHost>> {
         let host = WasiHost {
             wasi: self.caps.build_wasi()?,
             table: ResourceTable::new(),
@@ -184,6 +229,7 @@ impl HttpServer {
             next_stream: 0,
             timers: Default::default(),
             next_timer: 0,
+            context,
         };
         let mut store = Store::new(self.pre.engine(), host);
         store.limiter(|host| host as &mut dyn wasmtime::ResourceLimiter);
@@ -197,7 +243,7 @@ impl HttpServer {
     /// a measurement hook to separate per-request instantiation cost from the
     /// handler's own work (see the `http_bench` example).
     pub async fn instantiate_once(&self) -> Result<()> {
-        let mut store = self.fresh_store()?;
+        let mut store = self.fresh_store(ProcessContext::new())?;
         self.pre.instantiate_async(&mut store).await?;
         Ok(())
     }
@@ -244,7 +290,15 @@ impl HttpServer {
         &self,
         req: hyper::Request<hyper::body::Incoming>,
     ) -> Result<hyper::Response<HyperOutgoingBody>> {
-        let mut store = self.fresh_store()?;
+        // Authenticate before the handler runs: a denied request is `401` and never reaches
+        // the guest. On success the claims seed the per-request instance's host-only context
+        // (this path has no actor message, so the seed goes onto the store directly), so a
+        // bridge the handler calls acts for the authenticated tenant.
+        let context = match self.authenticate(&req).await {
+            Ok(context) => context,
+            Err(()) => return Ok(unauthorized()),
+        };
+        let mut store = self.fresh_store(context)?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         let request = store
@@ -275,6 +329,19 @@ impl HttpServer {
             },
         }
     }
+}
+
+/// A `401` for a request the listener's auth hook rejected — a plain buffered body, the
+/// guest handler never runs.
+fn unauthorized() -> hyper::Response<HyperOutgoingBody> {
+    let body = Full::new(Bytes::from_static(b"unauthorized"))
+        .map_err(|e| match e {})
+        .boxed_unsync();
+    hyper::Response::builder()
+        .status(401)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(body)
+        .expect("401 response builds")
 }
 
 #[cfg(test)]

@@ -3,6 +3,10 @@
 //! parsing, and live-message formatting.
 
 mod app;
+/// Discovery + host-glue codegen for an app's serving **auth hooks** (`auth/<name>/host.*`):
+/// host code that validates a request and seeds its host-only claims context (multi-tenant
+/// bridges). Sibling of [`bridges`], woven into the same generated host crate.
+pub mod auth;
 /// Discovery of an app's custom `bridges/<name>/` directories (the custom-bridge feature).
 pub mod bridges;
 mod cli;
@@ -33,8 +37,8 @@ pub use cli::{
 pub use component::prebuilt_wasm;
 pub use endpoint::{normalize_target, DEFAULT_HOST};
 pub use generate::{
-    generate_bridge, generate_component, parse_generate_args, GenerateBridge, GenerateCommand,
-    GenerateComponent,
+    generate_authentication, generate_bridge, generate_component, parse_generate_args,
+    GenerateAuth, GenerateBridge, GenerateCommand, GenerateComponent,
 };
 pub use kv::{exec_kv, parse_kv, KvCommand, KvOutput};
 pub use render::render_message;

@@ -84,6 +84,9 @@ pub async fn serve_with_init(
 ) -> Result<()> {
     let rt = Runtime::new();
     let wasm = build_runtime(rt.clone(), cfg, extend)?;
+    // `init` registers an app's resident bridge runners *and* its serving auth hooks
+    // (via [`WasmRuntime::register_auth_hook`]) — both after the runtime exists, before
+    // serving, so a `[[serve]] authentication` can resolve its hook in `serve_apps`.
     init(&wasm)?;
     let hosted = spawn_components(root, &wasm, &cfg.components, &cfg.capabilities).await?;
     let endpoints = serve_apps(root, &wasm, &cfg.serve, &cfg.components, &cfg.capabilities).await?;

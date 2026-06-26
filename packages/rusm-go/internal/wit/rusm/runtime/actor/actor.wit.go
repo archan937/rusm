@@ -187,6 +187,42 @@ func ReceiveTimeout(timeoutMs uint64) (result cm.Option[cm.List[uint8]]) {
 	return
 }
 
+// Stash represents the imported function "stash".
+//
+// **Set aside** the message just `receive`d while awaiting a different one (an
+// RPC client holding unrelated mail until its reply arrives) — Erlang's selective
+// `receive`. The host keeps it *with its metadata*, apart from the live queue (so
+// an
+// intervening `receive` never re-reads it), until [`unstash`] returns it. Stashing
+// host-side (not in the guest) is what keeps each message bound to its own request
+// on
+// replay — a guest cannot carry the host-managed metadata itself. `message` is the
+// bytes just received.
+//
+//	stash: func(message: list<u8>)
+//
+//go:nosplit
+func Stash(message cm.List[uint8]) {
+	message0, message1 := cm.LowerList(message)
+	wasmimport_Stash((*uint8)(message0), (uint32)(message1))
+	return
+}
+
+// Unstash represents the imported function "unstash".
+//
+// Return everything [`stash`]ed (in stash order) to the **front** of the queue, so
+// the
+// next `receive`s re-deliver it — each rebound to its own request — before any newer
+// mail. Call once the awaited reply has arrived. A no-op if nothing was stashed.
+//
+//	unstash: func()
+//
+//go:nosplit
+func Unstash() {
+	wasmimport_Unstash()
+	return
+}
+
 // ListProcesses represents the imported function "list-processes".
 //
 // Every live pid (Erlang's `Process.list/0`).

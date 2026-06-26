@@ -1,0 +1,17 @@
+/// The fixture's own package — an *application* world (not `rusm:runtime`). It mixes the
+/// standard rusm interfaces (mapped to `rusm-rs`) with a **custom application bridge**
+/// (`demo:bridge/whoami`, wired in at startup via `WasmRuntime::with_bridges`). It is a
+/// per-request HTTP handler (`run` drives `rusm_rs::http::serve_request`) that reflects the
+/// request's tenant — which only the host knows, via the claims context an auth hook seeded.
+package fixture:authdemo@0.1.0;
+
+world auth-demo {
+    import rusm:runtime/actor@0.1.0;
+    import rusm:runtime/kv@0.1.0;
+    import rusm:runtime/log@0.1.0;
+    import rusm:runtime/pg@0.1.0;
+    import rusm:runtime/serve@0.1.0;
+    import rusm:runtime/streams@0.1.0;
+    import demo:bridge/whoami@0.1.0;
+    export run: func();
+}

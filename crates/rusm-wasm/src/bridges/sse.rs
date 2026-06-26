@@ -26,9 +26,11 @@ use tokio::net::TcpListener;
 
 use std::collections::HashMap;
 
+use super::auth::{AuthHook, AuthRequest, AuthVerdict};
 use super::conn::Source;
 use super::routed::Resolver;
 use crate::caps::Capabilities;
+use crate::context::ProcessContext;
 use crate::{PreparedComponent, Spawner, WasmRuntime};
 
 /// The response body type — a boxed `StreamBody` fed by the writer process.
@@ -73,6 +75,10 @@ pub struct SseServer {
     /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
     /// before hyper (`https`/SSE-over-TLS). `None` = plain.
     tls: Option<Arc<super::tls::TlsAcceptor>>,
+    /// The listener's auth hook (`[[serve]] authentication`); when set, the request is
+    /// validated before the stream opens — claims seed the connection's host-only context
+    /// (carried to the handler), a denial is `401` (no stream). `None` = no authentication.
+    auth: Option<AuthHook>,
 }
 
 impl WasmRuntime {
@@ -90,6 +96,7 @@ impl WasmRuntime {
             max_connections: None,
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 
@@ -108,6 +115,7 @@ impl WasmRuntime {
             max_connections: None,
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 
@@ -131,6 +139,7 @@ impl WasmRuntime {
             max_connections: None,
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 }
@@ -160,6 +169,40 @@ impl SseServer {
     pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
         self.tls = tls;
         self
+    }
+
+    /// Authenticate each request with this hook (`[[serve]] authentication`); `None` = no
+    /// authentication. The hook runs before the stream opens: claims seed the connection's
+    /// host-only context (carried to the handler), a denial short-circuits to `401`.
+    pub fn with_auth(mut self, auth: Option<AuthHook>) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    /// Run the listener's auth hook on the request, if configured. `Ok(context)` carries the
+    /// seeded claims (empty when no hook is set); `Err(())` is a rejection (the caller answers
+    /// `401`). Host code; for SSE the token usually arrives as a query param.
+    async fn authenticate(
+        &self,
+        req: &hyper::Request<hyper::body::Incoming>,
+    ) -> Result<ProcessContext, ()> {
+        let Some(hook) = &self.auth else {
+            return Ok(ProcessContext::new());
+        };
+        let request = AuthRequest {
+            method: req.method().as_str().to_string(),
+            path: req.uri().path().to_string(),
+            query: req.uri().query().unwrap_or("").to_string(),
+            headers: req
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect(),
+        };
+        match hook(request).await {
+            AuthVerdict::Allow(claims) => Ok(ProcessContext::from_iter(claims)),
+            AuthVerdict::Deny => Err(()),
+        }
     }
 
     /// Serve SSE on `listener` until it closes — one connection per task. Abort the task
@@ -250,6 +293,17 @@ impl SseServer {
             .map(|pq| pq.as_str())
             .unwrap_or("/")
             .to_string();
+
+        // Authenticate before opening a stream: a denied request is `401` and never spawns a
+        // handler. On success the claims seed the connection's host-only context, carried to
+        // the handler on its writer-pid handshake message.
+        let context = match self.authenticate(&req).await {
+            Ok(context) => context,
+            Err(()) => {
+                super::access::log_request(&self.spawner.rt, "sse", &method, &path, 401);
+                return Ok(unauthorized());
+            }
+        };
 
         // Resolve which handler serves this connection (and capture its route params).
         // An unrouted listener always matches its one handler; a routed listener answers
@@ -349,10 +403,17 @@ impl SseServer {
         let component =
             self.spawner
                 .spawn_connection(&prepared, caps, connection, None, Some(sse_tx));
+        // The connection's claims context rides every message to the handler as opaque
+        // mailbox meta, so a bridge the handler calls acts for the authenticated tenant.
+        let meta = context.into_meta();
         if let Some(bundle) = &bundle {
-            rt.send(component.pid(), bundle.as_ref().clone());
+            rt.send_with_meta(component.pid(), bundle.as_ref().clone(), meta.clone());
         }
-        rt.send(component.pid(), writer.pid().raw().to_string().into_bytes());
+        rt.send_with_meta(
+            component.pid(),
+            writer.pid().raw().to_string().into_bytes(),
+            meta,
+        );
         // Mutual teardown: the writer ends the body when the handler exits (self-close or
         // crash); the handler (monitoring the writer in its SDK loop) ends when the writer
         // dies on client disconnect (its `closed()` arm). Neither side leaks.
@@ -408,6 +469,16 @@ fn not_found() -> Response<ResBody> {
         .header("content-type", "text/plain; charset=utf-8")
         .body(http_body_util::Full::new(Bytes::from_static(b"not found")).boxed())
         .expect("404 response builds")
+}
+
+/// A `401` for a request the listener's auth hook rejected — a plain buffered body, no event
+/// stream opened (no handler spawned).
+fn unauthorized() -> Response<ResBody> {
+    Response::builder()
+        .status(401)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(http_body_util::Full::new(Bytes::from_static(b"unauthorized")).boxed())
+        .expect("401 response builds")
 }
 
 /// Frame a raw event payload as one SSE event — each line its own `data:` field, a blank

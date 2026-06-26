@@ -1,3 +1,6 @@
+use std::any::Any;
+use std::sync::Arc;
+
 use crate::exit::{ExitReason, MonitorRef};
 use crate::pid::Pid;
 use crate::stream::StreamHandle;
@@ -9,6 +12,36 @@ use crate::stream::StreamHandle;
 /// unbounded (also like Erlang). Phase 2 carries raw bytes; the Wasm backend
 /// (Phase 6) will copy these across isolated guest memories unchanged.
 pub type Message = Vec<u8>;
+
+/// **Opaque** per-message metadata that rides *beside* a [`Received`] item through the
+/// mailbox — never inside the payload, so a guest can neither read nor forge it.
+///
+/// It is `Arc<dyn Any>` on purpose: the Wasm-free core moves it without ever
+/// interpreting it, keeping `rusm-otp` free of any Wasm/host concept. A host layer
+/// (`rusm-wasm`) attaches a boxed value when it sends and downcasts it after it
+/// receives; the runtime is none the wiser. `None` for plain sends and every system
+/// signal — the hot path pays nothing (no allocation, a single `None` word).
+pub type Meta = Option<Arc<dyn Any + Send + Sync>>;
+
+/// A mailbox entry: a [`Received`] item plus its opaque [`Meta`] sidecar. The channel
+/// carries this; [`recv`](crate::Context::recv) hands back the `Received` and stashes
+/// the meta for [`current_meta`](crate::Context::current_meta). Keeping meta *out* of
+/// `Received` is deliberate — the public receive API and every native process body are
+/// unchanged, and meta can never be mistaken for message bytes.
+pub struct Envelope {
+    pub received: Received,
+    pub meta: Meta,
+}
+
+impl Envelope {
+    /// An entry with no metadata — plain sends and every system signal use this.
+    pub fn bare(received: Received) -> Self {
+        Self {
+            received,
+            meta: None,
+        }
+    }
+}
 
 /// What a process pulls from its mailbox with [`recv`](crate::Context::recv): an
 /// ordinary message, a byte **stream**, or a system notification the runtime

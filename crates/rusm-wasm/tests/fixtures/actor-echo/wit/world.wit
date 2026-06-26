@@ -53,6 +53,20 @@ interface actor {
     /// first. A monitored `__down` counts as a message (as it does for `receive`).
     receive-timeout: func(timeout-ms: u64) -> option<list<u8>>;
 
+    /// **Set aside** the message just `receive`d while awaiting a different one (an
+    /// RPC client holding unrelated mail until its reply arrives) — Erlang's selective
+    /// `receive`. The host keeps it *with its metadata*, apart from the live queue (so an
+    /// intervening `receive` never re-reads it), until [`unstash`] returns it. Stashing
+    /// host-side (not in the guest) is what keeps each message bound to its own request on
+    /// replay — a guest cannot carry the host-managed metadata itself. `message` is the
+    /// bytes just received.
+    stash: func(message: list<u8>);
+
+    /// Return everything [`stash`]ed (in stash order) to the **front** of the queue, so the
+    /// next `receive`s re-deliver it — each rebound to its own request — before any newer
+    /// mail. Call once the awaited reply has arrived. A no-op if nothing was stashed.
+    unstash: func();
+
     /// Every live pid (Erlang's `Process.list/0`).
     list-processes: func() -> list<pid>;
 

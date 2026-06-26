@@ -15,13 +15,10 @@
 // Pids cross the boundary as decimal strings (a u64 doesn't fit a JS number) and surface as
 // BigInt; messages/chunks are Uint8Array, with text helpers.
 
-// Messages the RPC client set aside while awaiting a reply (so a typed call never
-// swallows the app's own mail). `Process.receive*` drains this before the host. The client
-// holds set-aside mail in a LOCAL buffer during the call and restores it to the FRONT here
-// afterward — never re-inserting mid-call, since `receive` drains __inbox first and would
-// otherwise re-read the same message forever (a spin/hang).
-const __inbox = [];
-globalThis.__rusm_unstash_front = (saved) => __inbox.unshift(...saved);
+// Selective receive (a typed call holding the app's own mail aside until its reply arrives) is
+// done HOST-SIDE via the `__stash`/`__unstash` mailbox primitives — see bridge/rpc.js. The host
+// keeps each set-aside message's metadata with it, so on replay it stays bound to its own
+// request, not the reply's (a guest-side buffer could not preserve that — a cross-tenant leak).
 
 // `Stream` (the cross-process byte stream) is the stream bridge's binding — defined as a
 // global in bridge/stream.js (eval'd before this); Process.openStream/acceptStream below
@@ -57,14 +54,12 @@ if (has("__receive")) {
   // `receive … after`: resolves to null if the deadline passes first. Set-aside RPC mail
   // is delivered immediately (a pending message can't time out).
   P.receive = (timeoutMs) => {
-    if (__inbox.length) return Promise.resolve(__inbox.shift());
     if (timeoutMs === undefined) return Promise.resolve(__receive());
     const m = __receive_timeout(timeoutMs);
     return Promise.resolve(m === undefined ? null : m);
   };
   // Resolves to the next message decoded as UTF-8 (null on `timeoutMs` timeout).
   P.receiveText = (timeoutMs) => {
-    if (__inbox.length) return Promise.resolve(new TextDecoder().decode(__inbox.shift()));
     if (timeoutMs === undefined) return Promise.resolve(__receive_text());
     const m = __receive_timeout(timeoutMs);
     return Promise.resolve(m === undefined ? null : new TextDecoder().decode(m));

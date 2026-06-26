@@ -36,6 +36,14 @@ func wasmimport_Receive(result *cm.List[uint8])
 //go:noescape
 func wasmimport_ReceiveTimeout(timeoutMs0 uint64, result *cm.Option[cm.List[uint8]])
 
+//go:wasmimport rusm:runtime/actor@0.1.0 stash
+//go:noescape
+func wasmimport_Stash(message0 *uint8, message1 uint32)
+
+//go:wasmimport rusm:runtime/actor@0.1.0 unstash
+//go:noescape
+func wasmimport_Unstash()
+
 //go:wasmimport rusm:runtime/actor@0.1.0 list-processes
 //go:noescape
 func wasmimport_ListProcesses(result *cm.List[Pid])

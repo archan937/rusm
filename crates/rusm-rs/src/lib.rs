@@ -42,10 +42,10 @@ pub mod ws;
 /// public path stays `rusm_rs::Stream`.
 pub use streams::Stream;
 
-pub(crate) use actor::unstash_front;
 /// The Erlang Process core, re-exported at the crate root so the public paths stay
 /// `rusm_rs::{Pid, send, receive, spawn, monitor, register, …}`.
 pub use actor::*;
+pub(crate) use actor::{stash, unstash};
 
 /// Process-group tag ops, re-exported at the crate root so the public paths stay
 /// `rusm_rs::{register_tag, unregister_tag, whereis_tag, kill_tag}`.

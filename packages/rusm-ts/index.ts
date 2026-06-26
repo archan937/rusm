@@ -204,6 +204,16 @@ const g = globalThis as unknown as {
 /** The actor API for this process. */
 export const Process: ProcessApi = g.Process;
 
+/** The **host-only claims context** of the current bridge/auth call — the tenant identity an
+ *  auth hook established for the request (e.g. `context().app_id`), forwarded host-side to your
+ *  bridge's `host.ts`. Read it to make a bridge multi-tenant (act for client X vs Y) with no
+ *  cooperation from the guest. Returns `{}` in an ordinary guest component — which has no host
+ *  context, by design — so guest application code never learns the tenant. */
+export function context(): Record<string, string> {
+  return (globalThis as { __rusm_bridge_context?: Record<string, string> })
+    .__rusm_bridge_context ?? {};
+}
+
 /** The node's durable key-value store (gated by the `storage` capability). */
 export const kv: Kv = g.kv;
 

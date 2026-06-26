@@ -74,15 +74,16 @@ async function __call(pid, op, args, expectReply) {
   if (expectReply) msg.ref = ref;
   const ids = __sendRequest(pid, msg);
   if (!expectReply) return undefined; // cast: fire-and-forget
-  // Hold non-matching mail in a LOCAL buffer for the duration of the call, restored to the
-  // inbox front in `finally` — never re-stashing mid-loop, since `receive` drains the inbox
-  // first and a re-stashed message would be re-read forever while the reply waits behind it.
-  const setAside = [];
+  // Set non-matching mail aside HOST-SIDE (`__stash`), restored on return (`__unstash`). The
+  // host holds it apart from the live queue (so re-stashing mid-loop never re-reads it) AND
+  // keeps each message's metadata with it — so when the app handles it later it's still bound to
+  // its own request, not this call's reply. A guest buffer couldn't preserve that, which would
+  // let one request run under another's identity (a cross-tenant leak).
   try {
     for (;;) {
       const raw = await Process.receive();
       let m;
-      try { m = JSON.parse(__td.decode(raw)); } catch { setAside.push(raw); continue; }
+      try { m = JSON.parse(__td.decode(raw)); } catch { __stash(raw); continue; }
       if (m && m.op === "__cb") { __callbacks[m.cbref]?.(...(m.args || [])); continue; }
       // A reply carries `ok`/`err`; match by ref AND shape so a concurrent inbound request
       // whose per-process `ref` collides with ours isn't mis-read as the reply.
@@ -91,11 +92,11 @@ async function __call(pid, op, args, expectReply) {
         if ("err" in m) throw new Error(m.err);
         return m.ok;
       }
-      setAside.push(raw); // not our reply — hold locally for the app
+      __stash(raw); // not our reply — hold for the app, bound to its own request
     }
   } finally {
     for (const id of ids) delete __callbacks[id];
-    if (setAside.length) __rusm_unstash_front(setAside);
+    __unstash();
   }
 }
 
@@ -108,7 +109,7 @@ async function __callTimeout(pid, op, args, timeoutMs) {
   const msg = { op, args, from: Process.self().toString(), ref };
   const ids = __sendRequest(pid, msg);
   const deadline = Date.now() + timeoutMs;
-  const setAside = [];
+  // Stash non-matching mail host-side (metadata preserved), restored on return — see __call.
   try {
     for (;;) {
       const remaining = deadline - Date.now();
@@ -116,18 +117,18 @@ async function __callTimeout(pid, op, args, timeoutMs) {
       const raw = await Process.receive(remaining);
       if (raw === null) throw new Error("timeout");
       let m;
-      try { m = JSON.parse(__td.decode(raw)); } catch { setAside.push(raw); continue; }
+      try { m = JSON.parse(__td.decode(raw)); } catch { __stash(raw); continue; }
       if (m && m.op === "__cb") { __callbacks[m.cbref]?.(...(m.args || [])); continue; }
       const isReply = m && typeof m === "object" && ("ok" in m || "err" in m);
       if (isReply && m.ref === ref) {
         if ("err" in m) throw new Error(m.err);
         return m.ok;
       }
-      setAside.push(raw);
+      __stash(raw);
     }
   } finally {
     for (const id of ids) delete __callbacks[id];
-    if (setAside.length) __rusm_unstash_front(setAside);
+    __unstash();
   }
 }
 

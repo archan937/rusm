@@ -351,6 +351,14 @@ pub struct ServeSpec {
     /// Omitted (default) = plain TCP.
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+    /// Authenticate every request on this listener with the named **auth hook** (the
+    /// `[[serve]]` `authentication`), host code at `auth/<name>/host.{rs,ts,go}`. It runs
+    /// before any handler is spawned: it validates the request host-side (a token in a
+    /// header or query param) and either seeds the request's host-only **claims context**
+    /// (reaching every bridge the handler's call graph hits) or rejects it with `401`.
+    /// Omitted (default) = no authentication; the request's claims context starts empty.
+    #[serde(default)]
+    pub authentication: Option<String>,
 }
 
 /// A listener's TLS material — PEM file paths for the certificate chain + private key (the

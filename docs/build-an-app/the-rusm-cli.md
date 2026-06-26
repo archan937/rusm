@@ -134,15 +134,16 @@ whichever reads better. `--bridges` can't be combined with `--template`.
 rusm new weatherapp --bridges --lang go   # a Go guest calling a native `weather` bridge
 ```
 
-## `rusm generate component|bridge <name> [options]`
+## `rusm generate component|bridge|authentication <name> [options]`
 
 `rusm new` starts from zero. `rusm generate` grows an existing project — it adds one
-component or bridge without touching anything else already in the project.
+component, bridge, or auth hook without touching anything else already in the project.
 
 ```sh
 rusm generate component payments --lang rust --protocol http  # add a Rust HTTP component
 rusm generate component feed --protocol sse                   # add a TS SSE component
 rusm generate bridge mailer --lang ts                         # add a TS host bridge
+rusm generate authentication jwt --lang rust                  # add a serving auth hook
 ```
 
 ### `component <name> [--lang ts|rust|go] [--protocol http|sse|ws]`
@@ -171,6 +172,22 @@ to grant the bridge to a component:
 ```
 
 See [Add your own functions](/build-an-app/add-your-own-functions) for the full bridge workflow.
+
+### `authentication <name> [--lang ts|rust|go]`
+
+Creates `auth/<name>/host.<ext>` (a starter `authenticate` that denies by default — fail-closed),
+then appends a comment to `rusm.toml` showing how to apply it to a listener:
+
+```toml
+# Auth hook 'jwt' — apply it to a listener by adding to its [[serve]] entry:
+#   authentication = "jwt"
+```
+
+The hook runs before each request: it validates the request host-side and seeds the request's
+host-only claims context (read by a [multi-tenant bridge](/build-an-app/multi-tenant-bridges)),
+or rejects it with `401`. A Rust hook compiles into the host binary; a TS/Go hook runs as a
+supervised resident runner. See [Multi-tenant bridges](/build-an-app/multi-tenant-bridges) for
+the full flow.
 
 ## `rusm build`
 

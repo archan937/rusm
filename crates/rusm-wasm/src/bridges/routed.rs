@@ -23,7 +23,9 @@ use rusm_otp::{ProcessHandle, Received, Runtime};
 use serde::Deserialize;
 use wasmtime_wasi_http::io::TokioIo;
 
+use crate::bridges::auth::{AuthHook, AuthRequest, AuthVerdict};
 use crate::caps::Capabilities;
+use crate::context::ProcessContext;
 use crate::{Spawner, WasmRuntime};
 
 /// The response body type the gateway produces — a boxed body, so a buffered (`Full`)
@@ -68,6 +70,10 @@ pub struct RoutedHttpServer {
     /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
     /// before hyper (`https`). `None` = plain HTTP.
     tls: Option<Arc<super::tls::TlsAcceptor>>,
+    /// The listener's auth hook (`[[serve]] authentication`); when set, each request is
+    /// validated before a handler is spawned — claims seed the request's context, a denial
+    /// is `401`. `None` = no authentication (the request's context starts empty).
+    auth: Option<AuthHook>,
 }
 
 impl WasmRuntime {
@@ -90,6 +96,7 @@ impl WasmRuntime {
             max_connections: None,
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 }
@@ -111,6 +118,14 @@ impl RoutedHttpServer {
     /// Terminate TLS on each connection with this acceptor (`https`); `None` = plain HTTP.
     pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
         self.tls = tls;
+        self
+    }
+
+    /// Authenticate each request with this hook (`[[serve]] authentication`); `None` = no
+    /// authentication. The hook runs before the handler spawns: claims seed the request's
+    /// host-only context, a denial short-circuits to `401`.
+    pub fn with_auth(mut self, auth: Option<AuthHook>) -> Self {
+        self.auth = auth;
         self
     }
 
@@ -198,6 +213,31 @@ impl RoutedHttpServer {
         Ok(response)
     }
 
+    /// Run the listener's auth hook, if configured. `Ok(context)` carries the seeded
+    /// claims (an empty context when no hook is set); `Err(response)` is a `401` that
+    /// short-circuits dispatch — no handler is spawned. The hook is host code; the request
+    /// it sees never includes guest-controlled state.
+    async fn authenticate(
+        &self,
+        method: &str,
+        uri: &hyper::Uri,
+        headers: &[(String, String)],
+    ) -> Result<ProcessContext, Response<ResBody>> {
+        let Some(hook) = &self.auth else {
+            return Ok(ProcessContext::new());
+        };
+        let request = AuthRequest {
+            method: method.to_string(),
+            path: uri.path().to_string(),
+            query: uri.query().unwrap_or("").to_string(),
+            headers: headers.to_vec(),
+        };
+        match hook(request).await {
+            AuthVerdict::Allow(claims) => Ok(ProcessContext::from_iter(claims)),
+            AuthVerdict::Deny => Err(error_response(StatusCode::UNAUTHORIZED, "unauthorized")),
+        }
+    }
+
     /// Resolve one request, spawn the matched handler fresh, dispatch the action over
     /// the `"fetch"` wire, and turn the reply into the response. Always `Ok` — every
     /// failure becomes a status code.
@@ -211,7 +251,22 @@ impl RoutedHttpServer {
             .path_and_query()
             .map(|pq| pq.as_str())
             .unwrap_or("/");
-        let (component, action, params) = match (self.resolve)(parts.method.as_str(), target) {
+        let method = parts.method.as_str().to_string();
+        let headers: Vec<(String, String)> = parts
+            .headers
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        // Authenticate before routing: a denied request is `401` and never spawns a handler
+        // or reveals whether a route exists. On success the claims seed this request's
+        // host-only context (empty when no hook is configured).
+        let context = match self.authenticate(&method, &parts.uri, &headers).await {
+            Ok(context) => context,
+            Err(response) => return Ok(response),
+        };
+
+        let (component, action, params) = match (self.resolve)(&method, target) {
             Routed::Found {
                 component,
                 action,
@@ -241,13 +296,7 @@ impl RoutedHttpServer {
             ));
         };
 
-        let method = parts.method.as_str().to_string();
         let url = target.to_string();
-        let headers: Vec<(String, String)> = parts
-            .headers
-            .iter()
-            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
         let body = match body.collect().await {
             Ok(collected) => collected.to_bytes().to_vec(),
             Err(_) => {
@@ -293,9 +342,14 @@ impl RoutedHttpServer {
             "params": params,
             "request": request,
         });
-        self.spawner.rt.send(
+        // The request rides to the handler with the auth-seeded claims context as its
+        // mailbox meta (never in the payload); the handler binds it on receive, so any
+        // bridge it — or a sub-component it spawns and calls — reaches acts for the
+        // authenticated tenant. Guest code neither sees nor sets it.
+        self.spawner.rt.send_with_meta(
             child_pid,
             serde_json::to_vec(&envelope).expect("envelope serializes"),
+            context.into_meta(),
         );
 
         Ok(match rx.await {
@@ -505,6 +559,127 @@ mod tests {
                 .await
                 .starts_with("HTTP/1.1 405"),
             "matched path + wrong method is 405"
+        );
+    }
+
+    /// Host bindings for the `whoami` custom bridge the `auth_demo` handler imports — it
+    /// reflects the request's tenant straight out of the host-only claims context, which
+    /// only an auth hook can have seeded. The mirror of an app's `bridges/whoami/host.rs`.
+    mod whoami_bridge {
+        wasmtime::component::bindgen!({
+            inline: "
+                package demo:bridge@0.1.0;
+                interface whoami { tenant: func() -> string; }
+                world whoami-host { import whoami; }
+            ",
+            imports: { default: async },
+        });
+    }
+
+    impl whoami_bridge::demo::bridge::whoami::Host for crate::BridgeHost {
+        async fn tenant(&mut self) -> String {
+            // The request's authenticated tenant — host-only, never guest-supplied.
+            self.context().get("app_id").unwrap_or("-").to_string()
+        }
+    }
+
+    /// A serving server wired with the `auth_demo` handler, the `whoami` bridge, and an
+    /// auth hook that only accepts `Authorization: Bearer good` (→ `app_id=acme`). `GET /me`
+    /// reflects the tenant.
+    async fn auth_server(with_hook: bool) -> SocketAddr {
+        const AUTH_DEMO: &[u8] = include_bytes!("../../tests/fixtures/auth_demo.wasm");
+        let wr = WasmRuntime::with_bridges(Runtime::new(), |linker| {
+            whoami_bridge::demo::bridge::whoami::add_to_linker::<
+                _,
+                wasmtime::component::HasSelf<crate::BridgeHost>,
+            >(linker, |host| host)
+        })
+        .unwrap();
+        let prepared = wr
+            .prepare_component(&wr.compile_component(AUTH_DEMO).unwrap(), "run")
+            .unwrap();
+        wr.register_component("api", prepared);
+        let table = RouteTable::from_map(&HashMap::from([(
+            "GET /me".to_string(),
+            "api#me".to_string(),
+        )]))
+        .unwrap();
+        let caps = HashMap::from([(
+            "api".to_string(),
+            CapabilityProfile::Sandboxed.capabilities(),
+        )]);
+        let mut server = wr.routed_http_server(resolver(table), caps);
+        if with_hook {
+            // Built via the public `auth_hook` constructor — the exact shape the codegen emits
+            // (`rusm_wasm::auth_hook(authenticate)`), so this exercises that path end to end.
+            let hook = crate::auth_hook(|req: AuthRequest| async move {
+                match req.header("authorization") {
+                    Some("Bearer good") => {
+                        AuthVerdict::Allow(vec![("app_id".to_string(), "acme".to_string())])
+                    }
+                    _ => AuthVerdict::Deny,
+                }
+            });
+            server = server.with_auth(Some(hook));
+        }
+        serve_on(server).await
+    }
+
+    /// One raw HTTP/1.1 request carrying an `Authorization` header → the full response text.
+    async fn request_with_auth(addr: SocketAddr, path: &str, authorization: &str) -> String {
+        let req = format!(
+            "GET {path} HTTP/1.1\r\nHost: rusm\r\nConnection: close\r\nAuthorization: {authorization}\r\nContent-Length: 0\r\n\r\n"
+        );
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        conn.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_auth_hook_seeds_the_tenant_a_bridge_reads_and_rejects_a_bad_token() {
+        // The multi-tenant serving seam, end to end over real HTTP. A valid token makes the
+        // hook seed `app_id=acme`; that context rides the request message to the handler,
+        // which calls the `whoami` bridge — the response is the *host-decided* tenant. An
+        // invalid/missing token is `401` and the handler never runs. The guest code is
+        // identical across tenants and never sees the identity.
+        let addr = auth_server(true).await;
+
+        let ok = request_with_auth(addr, "/me", "Bearer good").await;
+        assert!(
+            ok.starts_with("HTTP/1.1 200"),
+            "valid token is served: {ok}"
+        );
+        assert!(
+            ok.trim_end().ends_with("acme"),
+            "bridge read the seeded tenant: {ok}"
+        );
+
+        let denied = request_with_auth(addr, "/me", "Bearer nope").await;
+        assert!(
+            denied.starts_with("HTTP/1.1 401"),
+            "an invalid token is rejected before any handler runs: {denied}"
+        );
+
+        let missing = request(addr, "GET", "/me", "").await;
+        assert!(
+            missing.starts_with("HTTP/1.1 401"),
+            "a missing token is rejected: {missing}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn without_an_auth_hook_the_context_is_empty_and_the_request_passes_through() {
+        // No `authentication` configured: every request is served (no 401), and the bridge
+        // sees an empty claims context — the handler returns the `-` sentinel. Proves the
+        // hook is strictly opt-in and adds nothing to the unauthenticated path.
+        let addr = auth_server(false).await;
+        let resp = request_with_auth(addr, "/me", "Bearer good").await;
+        assert!(resp.starts_with("HTTP/1.1 200"), "no hook → served: {resp}");
+        assert!(
+            resp.trim_end().ends_with('-'),
+            "no hook → empty context (the `-` sentinel): {resp}"
         );
     }
 

@@ -49,41 +49,26 @@ func Send(to Pid, msg any) error {
 	return nil
 }
 
-// inbox holds messages the RPC client set aside while awaiting a reply, restored to the FRONT
-// after the call so the app's own Receive sees them next (the guest is single-threaded — one
-// mailbox).
-var inbox [][]byte
+// Stash sets the just-received message aside HOST-SIDE while the RPC client awaits its reply,
+// keeping the host-managed metadata with it. The host holds it apart from the live queue (so
+// the next ReceiveBytes never re-reads it), until Unstash returns it. Stashing host-side — not
+// in a guest slice — is what keeps each set-aside message bound to its own request on replay;
+// a guest cannot carry the host-only metadata itself.
+func Stash(message []byte) { actor.Stash(cm.ToList(message)) }
 
-// unstashFront returns messages the wire client set aside (in arrival order) to the front of
-// the inbox, so the app's own Receive sees them next, before newer mail. The client holds them
-// in a local slice DURING the call — never re-inserting mid-call, since ReceiveBytes drains the
-// inbox first and would otherwise re-read the same message forever (a spin/hang).
-func unstashFront(saved [][]byte) {
-	if len(saved) == 0 {
-		return
-	}
-	inbox = append(saved, inbox...)
-}
+// Unstash returns every stashed message (in arrival order) to the front of the mailbox, so the
+// app's own Receive sees it next — each rebound to its own request — before newer mail.
+func Unstash() { actor.Unstash() }
 
-// ReceiveBytes blocks until the next message arrives and returns its raw bytes (FIFO),
-// draining any mail the wire client set aside first.
+// ReceiveBytes blocks until the next message arrives and returns its raw bytes (FIFO). The host
+// delivers any stashed-then-unstashed mail first (arrival order preserved, metadata intact).
 func ReceiveBytes() []byte {
-	if len(inbox) > 0 {
-		raw := inbox[0]
-		inbox = inbox[1:]
-		return raw
-	}
 	return actor.Receive().Slice()
 }
 
 // ReceiveBytesTimeout is ReceiveBytes with a deadline: ok is false after timeoutMs
-// with no message (Erlang's `receive … after`). Stashed mail returns immediately.
+// with no message (Erlang's `receive … after`). Stashed-then-unstashed mail returns immediately.
 func ReceiveBytesTimeout(timeoutMs uint64) (msg []byte, ok bool) {
-	if len(inbox) > 0 {
-		raw := inbox[0]
-		inbox = inbox[1:]
-		return raw, true
-	}
 	o := actor.ReceiveTimeout(timeoutMs)
 	if o.None() {
 		return nil, false

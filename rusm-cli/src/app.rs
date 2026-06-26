@@ -410,6 +410,20 @@ pub async fn serve_apps(
         // Build the listener's TLS acceptor (when it declares `[serve.tls]`) once, shared by
         // every connection it serves — a bad cert/key path fails here, before we claim "up".
         let tls = build_serve_tls(dir, spec)?;
+        // Resolve this listener's auth hook (`authentication = "<name>"`) to the host hook the
+        // app registered on the runtime (`register_auth_hook`). A declared-but-unregistered
+        // name fails here, before we claim "up" — never a silent no-op. `None` (the default)
+        // = no authentication on this listener.
+        let auth = match &spec.authentication {
+            Some(name) => Some(wasm.auth_hook(name).ok_or_else(|| {
+                anyhow!(
+                    "the `{}` listener sets `authentication = \"{name}\"`, but no auth hook \
+                     `{name}` is registered (add auth/{name}/host.{{rs,ts,go}})",
+                    spec.listen
+                )
+            })?),
+            None => None,
+        };
         // Build the server up front so a load/compile error surfaces here (before we
         // claim the endpoint is up), then drive the accept loop on its own task.
         let task = if routed {
@@ -428,6 +442,7 @@ pub async fn serve_apps(
                         .with_max_connections(spec.max_connections)
                         .with_compression(spec.compression)
                         .with_tls(tls.clone())
+                        .with_auth(auth.clone())
                         .serve(listener),
                 ),
                 // Per-connection SSE: resolve the path to a handler component, capturing params.
@@ -437,6 +452,7 @@ pub async fn serve_apps(
                         .with_max_connections(spec.max_connections)
                         .with_compression(spec.compression)
                         .with_tls(tls.clone())
+                        .with_auth(auth.clone())
                         .serve(listener),
                 ),
                 // Per-connection WebSocket: same; an unmatched path refuses with 404.
@@ -448,6 +464,7 @@ pub async fn serve_apps(
                         .with_allowed_origins(spec.allowed_origins.clone())
                         .with_compression(spec.compression)
                         .with_tls(tls.clone())
+                        .with_auth(auth.clone())
                         .serve(listener),
                 ),
             }
@@ -481,6 +498,7 @@ pub async fn serve_apps(
                         .with_max_connections(spec.max_connections)
                         .with_compression(spec.compression)
                         .with_tls(tls.clone())
+                        .with_auth(auth.clone())
                         .serve(listener),
                 ),
                 ServeProtocol::Ws => tokio::spawn(
@@ -491,6 +509,7 @@ pub async fn serve_apps(
                         .with_allowed_origins(spec.allowed_origins.clone())
                         .with_compression(spec.compression)
                         .with_tls(tls.clone())
+                        .with_auth(auth.clone())
                         .serve(listener),
                 ),
                 ServeProtocol::Http => tokio::spawn(
@@ -498,6 +517,7 @@ pub async fn serve_apps(
                         .with_headers(headers)
                         .with_max_connections(spec.max_connections)
                         .with_tls(tls.clone())
+                        .with_auth(auth.clone())
                         .serve(listener),
                 ),
             }
@@ -877,6 +897,7 @@ mod tests {
             allowed_origins: Vec::new(),
             compression: false,
             tls: None,
+            authentication: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -932,6 +953,7 @@ mod tests {
             allowed_origins: Vec::new(),
             compression: false,
             tls: None,
+            authentication: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -974,6 +996,7 @@ mod tests {
             allowed_origins: Vec::new(),
             compression: false,
             tls: None,
+            authentication: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await
@@ -1071,6 +1094,7 @@ mod tests {
             allowed_origins: Vec::new(),
             compression: false,
             tls: None,
+            authentication: None,
         }];
         let endpoints = serve_apps(dir.path(), &wasm, &specs, &handlers, &HashMap::new())
             .await
@@ -1118,6 +1142,7 @@ mod tests {
             allowed_origins: Vec::new(),
             compression: false,
             tls: None,
+            authentication: None,
         }];
         let err = serve_apps(dir.path(), &wasm, &specs, &BTreeMap::new(), &HashMap::new())
             .await

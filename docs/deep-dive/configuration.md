@@ -144,6 +144,7 @@ one of two ways:
 | `allowed_origins` | string[] | `[]` | *(ws)* `Origin` values permitted on the handshake — **CSWSH protection**. An unlisted/absent `Origin` is refused **`403`** before any process spawns. Empty = any origin. |
 | `compression` | bool | `false` | Compress eligible replies the client accepts: **gzip** for routed HTTP handler responses + the SSE event stream, **permessage-deflate** for WebSocket. The handler-less `wasi:http` path sets its own encoding. |
 | `tls` | table | none | Serve this listener over **TLS** (`https`/`wss`) — a [`[serve.tls]`](#servetls-listener-tls) subtable with `cert`/`key` PEM paths. Omitted = plain TCP. |
+| `authentication` | string? | none | Authenticate every request with the named **auth hook** — host code at `auth/<name>/host.{rs,ts,go}` ([`rusm generate authentication`](/build-an-app/the-rusm-cli)). It runs before any handler is spawned: it validates the request (a token in a header or query param) and either seeds the request's host-only **claims context** (read by a [multi-tenant bridge](/build-an-app/multi-tenant-bridges)) or rejects it with `401`. Omitted = no authentication. |
 
 See [Resource & security controls](/deep-dive/serving-http-ws-and-sse#resource-security-controls) for the
 WebSocket cap/size/origin details, [Compression](/deep-dive/serving-http-ws-and-sse#compression) for what

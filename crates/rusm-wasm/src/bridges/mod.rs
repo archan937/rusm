@@ -8,6 +8,7 @@
 
 pub(crate) mod access;
 pub(crate) mod actor;
+pub(crate) mod auth;
 pub(crate) mod compress;
 pub(crate) mod conn;
 pub(crate) mod http;
@@ -101,6 +102,13 @@ pub struct WasiHost {
     pub(crate) timers: HashMap<u64, rusm_otp::TimerRef>,
     /// Monotonic handle source for this process's timers.
     pub(crate) next_timer: u64,
+    /// This process's **host-only claims context** (e.g. an `app_id` an auth hook
+    /// derived from a validated token). Seeded at spawn (inherited from the parent) and,
+    /// for a resident, refreshed per received message; read by host bridge code via
+    /// [`WasiHost::context`]. **No guest op reaches it** — the per-tenant-bridge security
+    /// rests on that. Each process owns its own, accessed serially (an instance never runs
+    /// reentrantly), so it needs no lock.
+    pub(crate) context: crate::context::ProcessContext,
 }
 
 /// The curated, **public** surface a custom application bridge reaches the calling
@@ -125,6 +133,33 @@ impl WasiHost {
     /// off these, exactly like every built-in capability (`storage`, `network`, …).
     pub fn caps(&self) -> &Capabilities {
         &self.caps
+    }
+
+    /// This process's **host-only claims context** — identity an auth hook attached to the
+    /// request (e.g. `self.context().get("app_id")`), inherited by every process it spawns
+    /// and carried on the messages it sends. A multi-tenant bridge reads it to act for the
+    /// right tenant. It is host-authoritative: no guest op can read, write, or forge it, so
+    /// a guest cannot claim an identity the operator didn't establish.
+    pub fn context(&self) -> &crate::context::ProcessContext {
+        &self.context
+    }
+
+    /// Mutable access to this process's claims context, for host code that derives or caches
+    /// a claim (e.g. a bridge memoising a minted per-tenant token). Host-only, like
+    /// [`context`](Self::context) — there is no guest path to it.
+    pub fn context_mut(&mut self) -> &mut crate::context::ProcessContext {
+        &mut self.context
+    }
+
+    /// Send `message` to `to` **carrying this process's claims context** as opaque mailbox
+    /// metadata, so the recipient (and any bridge *it* calls) acts for the same tenant. A
+    /// generated TS/Go bridge delegation shim uses this to forward the caller's context to its
+    /// resident runner — which is what lets a bridge that calls another bridge keep the tenant.
+    /// Host-only: the context is taken from this process, never from guest input. The empty
+    /// context sends no metadata (the zero-cost path).
+    pub fn send_with_context(&self, to: rusm_otp::Pid, message: Vec<u8>) {
+        self.rt
+            .send_with_meta(to, message, self.context.clone().into_meta());
     }
 
     /// Selective receive for a **bridge round-trip**: waits for a message whose bytes
@@ -239,7 +274,19 @@ mod tests {
             next_stream: 0,
             timers: HashMap::new(),
             next_timer: 0,
+            context: crate::context::ProcessContext::new(),
         }
+    }
+
+    #[test]
+    fn the_claims_context_is_host_readable_and_writable_and_starts_empty() {
+        // A bridge reaches the calling process's host-only claims context through the
+        // curated surface: empty by default, settable host-side, read back by the bridge.
+        let mut host = bare_host(Capabilities::nothing());
+        assert!(host.context().is_empty());
+        assert_eq!(host.context().get("app_id"), None);
+        host.context_mut().set("app_id", "acme");
+        assert_eq!(host.context().get("app_id"), Some("acme"));
     }
 
     #[test]

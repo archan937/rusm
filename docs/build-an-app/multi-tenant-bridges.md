@@ -1,111 +1,153 @@
 # Multi-tenant bridges
 
-A [custom bridge](/build-an-app/add-your-own-functions) is one shared host implementation,
-but it doesn't have to treat every caller the same. A single `gql()` can connect with client
-X's GraphQL credentials and client Y's — resolved **dynamically at call time** from your own
-source of truth, not baked in at deploy.
+A [custom bridge](/build-an-app/add-your-own-functions) is one shared host implementation, but
+it doesn't have to treat every caller the same. A single `gql()` can connect to client X's
+GraphQL backend with X's credentials and client Y's with Y's — and the part that decides *which
+tenant a request belongs to* is **host-authoritative**: established by the operator from a
+validated request, never asserted by the guest.
 
-The mechanism is easy; the part worth getting right is **which tenant the call belongs to**,
-and how trustworthy that answer has to be.
+The guest application code is **auth-unaware**. It never sees, sets, or forges the tenant. The
+host validates the request, derives the identity, and the bridge acts on it.
 
-## The capability profile gates access
+## The shape
 
-Access is gated by the [capability profile](/build-an-app/grant-capabilities): a component
-reaches `gql` only if its profile grants the bridge (`bridges = ["gql"]`), and the bridge
-gates default-deny on `self.caps().allows_bridge("gql")`. That decides *who may call* — the
-per-tenant credentials are the runtime concern below.
-
-## Resolve the credentials dynamically
-
-Whatever identifies the tenant, the bridge looks the credentials up **at the moment of the
-call** — a `kv` read, a database query, an internal credentials service — never a static
-env var:
-
-```rust
-struct Credentials {
-    endpoint: String,
-    token: String,
-}
-
-/// Your dynamic lookup: resolve `tenant` against whatever owns per-tenant config. Runs
-/// host-side; no guest ever sees it. Cache it if you like — the point is it's resolved now.
-async fn resolve_credentials(tenant: &str) -> Result<Credentials, String> {
-    // …look up `tenant` → endpoint + token…
-    todo!()
-}
+```
+request ──▶ auth hook (host) ──▶ handler (guest) ──▶ bridge (host)
+            validates token       runs your code      acts for the tenant
+            → claims context  ───────────────────────▶ reads the claims
+            → or 401
 ```
 
-The only open question is where `tenant` comes from.
+Two host-side pieces, one guest in the middle that knows nothing:
 
-## Pattern A — the caller passes its tenant (Rust, TypeScript, or Go host)
+1. An **auth hook** validates the incoming request (a JWT in a header, a token in a query
+   param) and produces **claims** — e.g. `app_id = "acme"` — or rejects it with `401`.
+2. The claims become the request's **host-only context**. It rides every message through the
+   call graph (handler → any sub-component it spawns and calls → the bridge), so the bridge
+   reads the tenant with `context()`.
 
-Make the tenant an argument of the bridge call. The component states which tenant it's
-acting for; the bridge resolves that tenant's credentials. This works for every host
-language (it's just a call argument) and needs nothing from the runtime:
+## The auth hook
 
-```rust
-// bridges/gql/bridge.wit:  query: func(tenant: string, q: string) -> result<string, string>;
-impl gql::Host for BridgeHost {
-    async fn query(&mut self, tenant: String, q: String) -> Result<String, String> {
-        let creds = resolve_credentials(&tenant).await?;
-        run_query(&creds.endpoint, &creds.token, &q).await
+An auth hook is host code at `auth/<name>/host.{rs,ts,go}` — scaffold one with
+[`rusm generate authentication`](/build-an-app/the-rusm-cli). It runs **before** the handler is
+spawned: a valid request seeds the claims context; an invalid one is `401` and no handler runs
+(fail-closed). Apply it to a listener in `rusm.toml`:
+
+```toml
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+authentication = "jwt"        # runs auth/jwt/host.* before every request on this listener
+
+[serve.routes]
+"GET /orders" = "orders#list"
+```
+
+A browser can't set `Authorization` on a WebSocket, so for `ws`/`sse` the token usually arrives
+as a query param — the hook sees both headers and the query.
+
+::: code-group
+
+```rust [auth/jwt/host.rs]
+use rusm_wasm::{AuthRequest, AuthVerdict};
+
+pub async fn authenticate(req: AuthRequest) -> AuthVerdict {
+    match req.header("authorization").and_then(verify) {
+        Some(app_id) => AuthVerdict::Allow(vec![("app_id".into(), app_id)]),
+        None => AuthVerdict::Deny, // → 401, the handler never runs
     }
 }
 ```
 
-```ts
-// the guest, in any language, just names its tenant:
-await gql.query("client-x", "{ orders { id } }");
+```ts [auth/jwt/host.ts]
+// req = { method, path, query, headers: [name, value][] }
+export async function authenticate(req) {
+  const auth = req.headers.find(([k]) => k.toLowerCase() === "authorization")?.[1];
+  const appId = verify(auth);
+  return appId ? { allow: { app_id: appId } } : { deny: true };
+}
 ```
 
-## Pattern B — the bridge reads the caller's identity (Rust host)
+```go [auth/jwt/host.go]
+package main
 
-If you'd rather not thread a tenant argument, a **Rust** host bridge can read it from the
-caller. `BridgeHost` hands you `self.pid()`, `self.runtime()`, and `self.caps()` on every
-call; map the caller to a tenant via a name it registers under an explicit convention (not
-"whatever name it happens to hold"):
+import rusm "github.com/archan937/rusm/packages/rusm-go"
 
-```rust
-use rusm_otp::Pid;   // add `rusm-otp` to the bridge crate to name Pid
+func Authenticate(req rusm.AuthRequest) rusm.AuthVerdict {
+	if appID, ok := verify(req.Header("authorization")); ok {
+		return rusm.Allow(map[string]string{"app_id": appID})
+	}
+	return rusm.Deny() // → 401
+}
+```
 
+:::
+
+A Rust hook compiles into the node's host binary (zero overhead). A TS/Go hook runs as a
+**resident dispatch runner**; the host round-trips each request to it. Either way, if the hook
+is missing, crashes, or returns anything that isn't an explicit allow, the request is **denied** —
+a broken hook never lets one through.
+
+## The bridge reads the tenant
+
+The claims context reaches the bridge with no cooperation from the guest — a bridge reads it
+through `context()`, in every host language:
+
+::: code-group
+
+```rust [bridges/gql/host.rs]
 impl gql::Host for BridgeHost {
     async fn query(&mut self, q: String) -> Result<String, String> {
-        let pid = Pid::from_raw(self.pid());
-        // A deliberate `tenant:` registry convention — discovery names are not identity.
-        let tenant = self
-            .runtime()
-            .info(pid)
-            .into_iter()
-            .flat_map(|info| info.names)
-            .find_map(|name| name.strip_prefix("tenant:").map(str::to_owned))
-            .ok_or("caller registered no tenant")?;
-        let creds = resolve_credentials(&tenant).await?;
+        // The tenant the auth hook established for this request — host-decided, not guest input.
+        let app_id = self.context().get("app_id").ok_or("no tenant")?;
+        let creds = credentials_for(app_id).await?;     // per-tenant, resolved now
         run_query(&creds.endpoint, &creds.token, &q).await
     }
 }
 ```
 
-```ts
-import { Process } from "rusm-ts";
-Process.register("tenant:client-x"); // once, at startup
+```ts [bridges/gql/host.ts]
+import { context } from "rusm-ts";
+
+export async function query(q: string): Promise<string> {
+  const appId = context().app_id;                 // host-decided tenant
+  const creds = await credentialsFor(appId);
+  return runQuery(creds.endpoint, creds.token, q);
+}
 ```
 
-A `host.ts` / `host.go` bridge can't do this — it runs behind a generated Rust shim and its
-function receives only the call's arguments, not the caller. Use Pattern A there.
+```go [bridges/gql/host.go]
+func Query(q string) string {
+	appID := rusm.Context()["app_id"]               // host-decided tenant
+	creds := credentialsFor(appID)
+	return runQuery(creds.endpoint, creds.token, q)
+}
+```
 
-## The trust model — read this before using it for secrets
+:::
 
-Both patterns are **guest-asserted**: the component chooses the tenant it claims, whether by
-the argument it passes or the name it registers. That is exactly right when the components
-are **your own**, deployed one-per-tenant and trusted to state their own identity — the
-common multi-tenant-app case.
+Client X's component and client Y's run the **same** `query("{ orders { id } }")`; the bridge
+connects to different backends because `context()` differs — and the components can't change
+that. (For a TS/Go bridge the host forwards the caller's context to the bridge's runner in-band;
+a non-bridge component's `context()` is empty, so guest application code still never sees it.)
 
-It is **not** an isolation boundary against a hostile component: nothing stops one from
-claiming another tenant and resolving its credentials. For credentials that must be
-unreachable across mutually-distrusting tenants, the identity has to be **unforgeable** —
-established by the operator, outside the guest's control. A bridge today sees the caller's
-`pid` and capability grant-flags but not its operator-declared identity, so hard isolation
-means binding pid → tenant authoritatively where you spawn the components (the
-[embedding](/deep-dive/embedding-rusm-as-a-library) model), rather than trusting a value the
-guest supplies. Pick the pattern that matches your threat model — don't reach for B's
-convenience when you actually need that boundary.
+## Why it's secure — by construction
+
+This is not a runtime check you can forget; it's structural:
+
+- **No guest op.** There is no WIT function to read, write, or forge the context. A guest
+  literally cannot reach it (a build-failing test guards that the actor world exposes none).
+- **Host-sourced.** The context is filled only by the auth hook (host code); a guest supplies
+  bytes, never the identity.
+- **Carried out-of-band.** It rides *beside* each message as opaque metadata, never inside the
+  payload — and is re-bound to its own request on every receive, so a shared resident handling
+  many tenants never leaks one tenant's identity into another's call.
+- **Per-request isolation.** Serving is process-per-request / process-per-connection: a fresh,
+  isolated instance per unit of work, dropped after.
+
+The guest may still *see* the raw request headers (handlers need them), but seeing the token
+doesn't let it pick a tenant — the bridge reads the host-only context, never guest input.
+
+Everything here works in all three host languages — the auth hook (`auth/<name>/host.{rs,ts,go}`)
+and the bridge that reads `context()` — so a multi-tenant `gql` bridge can be authored in Rust,
+TypeScript, or Go.

@@ -1,0 +1,13 @@
+/// A *custom application bridge* package — the kind an app defines in its own repo
+/// (`bridges/whoami/bridge.wit`), not part of `rusm:runtime`. The host impl is wired in
+/// at startup via `WasmRuntime::with_bridges`; here it is just a typed import the guest
+/// calls. This fixture exercises the serving auth hook + host-only claims context end to
+/// end: the bridge reflects the request's tenant, which only the host can know.
+package demo:bridge@0.1.0;
+
+interface whoami {
+    /// The tenant this call is acting for — read host-side from the process's host-only
+    /// claims context (an auth hook seeded it from the validated request token). The guest
+    /// passes nothing and cannot influence it; the host alone decides who it is.
+    tenant: func() -> string;
+}

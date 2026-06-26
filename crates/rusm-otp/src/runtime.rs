@@ -13,7 +13,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::exit::{ExitReason, MonitorRef};
-use crate::message::{Message, Received};
+use crate::message::{Envelope, Message, Meta, Received};
 use crate::pid::Pid;
 use crate::stream::StreamHandle;
 
@@ -21,16 +21,27 @@ use crate::stream::StreamHandle;
 /// **mailbox** — the receiving end of its message queue.
 pub struct Context {
     pid: Pid,
-    mailbox: UnboundedReceiver<Received>,
+    mailbox: UnboundedReceiver<Envelope>,
     /// Items pulled from the channel but skipped over by a selective
     /// [`recv_match`](Context::recv_match), kept in arrival order. A later
     /// receive sees them before anything still in the channel — the Erlang
     /// "save queue". Empty (and allocation-free) unless selective receive is used.
-    saved: VecDeque<Received>,
+    saved: VecDeque<Envelope>,
     /// Optional mailbox-depth counter (decrement side). `None` unless the runtime
     /// was built with [`Runtime::with_mailbox_depth`] — so the default hot path
     /// pays no allocation and no atomic.
     depth: Option<Arc<AtomicUsize>>,
+    /// The opaque [`Meta`] that rode with the most-recently-received item, refreshed
+    /// by every [`recv`](Self::recv)/[`recv_match`](Self::recv_match). `None` after a
+    /// plain send or a system signal. A host layer reads it via [`current_meta`](Self::current_meta).
+    current_meta: Meta,
+    /// Items a caller **stashed** ([`stash`](Self::stash)) while awaiting a specific reply,
+    /// each keeping its own [`Meta`]. Held aside (never re-read by `recv` mid-wait), then
+    /// [`unstash`](Self::unstash)ed to the front of `saved` so a later `recv` re-delivers
+    /// them — meta intact. This is what lets a host layer do selective receive **without
+    /// losing per-message metadata** on replay (the guest cannot carry host-only meta itself).
+    /// Empty (and allocation-free) unless a guest does an RPC-style selective receive.
+    deferred: VecDeque<Envelope>,
 }
 
 impl Context {
@@ -52,12 +63,51 @@ impl Context {
     /// process blocked here parks with zero cost until something arrives or a
     /// [`kill`](Runtime::kill) wakes it.
     pub async fn recv(&mut self) -> Received {
-        let item = match self.saved.pop_front() {
-            Some(item) => item,
+        let envelope = match self.saved.pop_front() {
+            Some(envelope) => envelope,
             None => self.next_from_mailbox().await,
         };
         self.note_consumed();
-        item
+        self.current_meta = envelope.meta;
+        envelope.received
+    }
+
+    /// The opaque [`Meta`] that accompanied the item the last [`recv`](Self::recv)/
+    /// [`recv_match`](Self::recv_match) returned, or `None` (a plain send, a system
+    /// signal, or before any receive). The runtime never interprets it — a host layer
+    /// downcasts the `Arc<dyn Any>` to its own type. Cheap to call (an `Arc` clone).
+    pub fn current_meta(&self) -> Meta {
+        self.current_meta.clone()
+    }
+
+    /// **Set aside** the message just received, keeping its [`Meta`], while continuing to
+    /// wait for a different one — the host primitive behind a guest SDK's RPC selective
+    /// receive (await a reply, hold unrelated mail). The stashed item is **not** re-read by
+    /// the intervening [`recv`](Self::recv)s; [`unstash`](Self::unstash) returns it (and any
+    /// siblings, in stash order) to the front of the queue for a later `recv`, which rebinds
+    /// its meta. Stashing here — not guest-side — is what keeps per-message metadata correct
+    /// across the deferral (a guest can't carry host-only meta). `message` is the bytes the
+    /// caller already received; its meta is the current one ([`current_meta`](Self::current_meta)).
+    pub fn stash(&mut self, message: Message) {
+        // Re-queued: it was counted consumed when `recv` returned it; balance that so the
+        // eventual `unstash` → `recv` decrement nets out (no-op unless depth is tracked).
+        if let Some(depth) = &self.depth {
+            depth.fetch_add(1, Ordering::Relaxed);
+        }
+        self.deferred.push_back(Envelope {
+            received: Received::Message(message),
+            meta: self.current_meta.clone(),
+        });
+    }
+
+    /// Return every [`stash`](Self::stash)ed item to the **front** of the queue, in stash
+    /// (arrival) order, so the next [`recv`](Self::recv)s re-deliver them — each rebinding its
+    /// own meta — before any newer mail. Called once the awaited reply has arrived. A no-op
+    /// when nothing was stashed.
+    pub fn unstash(&mut self) {
+        while let Some(envelope) = self.deferred.pop_back() {
+            self.saved.push_front(envelope);
+        }
     }
 
     /// Receives the next item for which `matches` is true, suspending until one
@@ -68,22 +118,24 @@ impl Context {
     where
         F: FnMut(&Received) -> bool,
     {
-        if let Some(pos) = self.saved.iter().position(&mut matches) {
-            let item = self.saved.remove(pos).expect("position is in bounds");
+        if let Some(pos) = self.saved.iter().position(|e| matches(&e.received)) {
+            let envelope = self.saved.remove(pos).expect("position is in bounds");
             self.note_consumed();
-            return item;
+            self.current_meta = envelope.meta;
+            return envelope.received;
         }
         loop {
-            let item = self.next_from_mailbox().await;
-            if matches(&item) {
+            let envelope = self.next_from_mailbox().await;
+            if matches(&envelope.received) {
                 self.note_consumed();
-                return item;
+                self.current_meta = envelope.meta;
+                return envelope.received;
             }
-            self.saved.push_back(item);
+            self.saved.push_back(envelope);
         }
     }
 
-    async fn next_from_mailbox(&mut self) -> Received {
+    async fn next_from_mailbox(&mut self) -> Envelope {
         // The sole sender lives in the process table, which the running task
         // keeps alive through its own `Arc<Inner>`; it is removed only after this
         // body returns. So while we are awaiting here the channel cannot close —
@@ -166,7 +218,7 @@ struct Monitor {
 /// process and cost no allocation — only fault-tolerant processes pay for them.
 struct ProcessEntry {
     abort: AbortHandle,
-    mailbox: UnboundedSender<Received>,
+    mailbox: UnboundedSender<Envelope>,
     /// When set, incoming exit signals arrive as [`Received::Exit`] messages
     /// instead of killing this process (Erlang's `process_flag(trap_exit, true)`).
     trap_exit: bool,
@@ -279,7 +331,7 @@ impl Inner {
     /// user sends, stream sends, and system deliveries alike. Returns whether it
     /// landed. (The exit cascade in [`propagate_exit`] enqueues inline because it
     /// already holds the entry lock.)
-    fn enqueue(&self, to: Pid, item: Received) -> bool {
+    fn enqueue(&self, to: Pid, item: Received, meta: Meta) -> bool {
         match self.table.get(&to.0) {
             Some(entry) => {
                 // Opt-in overload protection: once a bounded mailbox is at
@@ -292,7 +344,14 @@ impl Inner {
                         return false;
                     }
                 }
-                if entry.mailbox.send(item).is_ok() {
+                if entry
+                    .mailbox
+                    .send(Envelope {
+                        received: item,
+                        meta,
+                    })
+                    .is_ok()
+                {
                     entry.note_enqueued();
                     true
                 } else {
@@ -303,9 +362,10 @@ impl Inner {
         }
     }
 
-    /// Delivers a system item to `to`'s mailbox if it is still alive.
+    /// Delivers a system item to `to`'s mailbox if it is still alive. System items
+    /// carry no metadata — only host-originated user sends attach a [`Meta`].
     fn deliver(&self, to: Pid, item: Received) {
-        self.enqueue(to, item);
+        self.enqueue(to, item, None);
     }
 
     /// Removes `pid`, counts it finished, and fans its exit out to everyone who
@@ -372,7 +432,11 @@ impl Inner {
         };
         entry.links.retain(|&linked| linked != from);
         if entry.trap_exit {
-            if entry.mailbox.send(Received::Exit { from, reason }).is_ok() {
+            if entry
+                .mailbox
+                .send(Envelope::bare(Received::Exit { from, reason }))
+                .is_ok()
+            {
                 entry.note_enqueued();
             }
         } else if reason.is_abnormal() {
@@ -494,6 +558,8 @@ impl Runtime {
             mailbox: mailbox_rx,
             saved: VecDeque::new(),
             depth,
+            current_meta: None,
+            deferred: VecDeque::new(),
         });
         // The guard is moved *into* the task, so the process is deregistered on
         // every teardown path: completion, panic (drop runs during unwind), or a
@@ -510,7 +576,16 @@ impl Runtime {
     /// Delivers `message` to `pid`'s mailbox. Returns `false` if there is no such
     /// live process — sending to a dead process is a silent no-op, like Erlang.
     pub fn send(&self, pid: Pid, message: Message) -> bool {
-        self.inner.enqueue(pid, Received::Message(message))
+        self.inner.enqueue(pid, Received::Message(message), None)
+    }
+
+    /// Like [`send`](Self::send) but attaches opaque [`Meta`] that rides beside the
+    /// message and surfaces to the recipient via [`Context::current_meta`] after it
+    /// receives. The runtime never inspects `meta`; a host layer (`rusm-wasm`) boxes
+    /// its own value here and downcasts it there — the seam that carries a request's
+    /// claims context process-to-process without ever exposing it to guest code.
+    pub fn send_with_meta(&self, pid: Pid, message: Message, meta: Meta) -> bool {
+        self.inner.enqueue(pid, Received::Message(message), meta)
     }
 
     /// Delivers a byte `stream` to `pid` as a [`Received::Stream`]. Like
@@ -519,7 +594,7 @@ impl Runtime {
     /// writer (the channel is bounded). The stream itself is the Wasm-free
     /// substrate the p3 component bridge maps `stream<u8>` onto.
     pub fn send_stream(&self, pid: Pid, stream: StreamHandle) -> bool {
-        self.inner.enqueue(pid, Received::Stream(stream))
+        self.inner.enqueue(pid, Received::Stream(stream), None)
     }
 
     /// Number of currently-live processes.
@@ -970,6 +1045,26 @@ impl Runtime {
         }
     }
 
+    /// Like [`send_after`](Self::send_after) but the delivered message carries opaque
+    /// [`Meta`] (captured now, attached when the timer fires) — so a delayed message a
+    /// process schedules still arrives with the claims context current at schedule time.
+    pub fn send_after_with_meta(
+        &self,
+        pid: Pid,
+        delay: Duration,
+        message: Message,
+        meta: Meta,
+    ) -> TimerRef {
+        let runtime = self.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            runtime.send_with_meta(pid, message, meta);
+        });
+        TimerRef {
+            abort: task.abort_handle(),
+        }
+    }
+
     /// Stops every live process (each still runs its normal teardown — links and
     /// monitors are notified, names released). Returns how many were signalled.
     /// Teardown is asynchronous; poll [`process_count`](Runtime::process_count)
@@ -1281,6 +1376,125 @@ mod tests {
         let pid = handle.pid();
         handle.join().await; // finished and reaped — mailbox is gone
         assert!(!rt.send(pid, b"too late".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn meta_rides_beside_a_message_and_a_plain_send_carries_none() {
+        // The opaque-meta seam: `send_with_meta` surfaces to the recipient via
+        // `current_meta` (downcast to the sender's own type), while a plain `send`
+        // leaves it `None`. The runtime never interprets the value — it round-trips an
+        // `Arc<dyn Any>`. This is the Wasm-free mechanism a host layer uses to carry a
+        // request's claims context process-to-process, out of reach of the payload.
+        let rt = Runtime::new();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let p = rt.spawn(move |mut ctx| async move {
+            let first = ctx.recv().await.message().unwrap();
+            let first_meta = ctx.current_meta().is_none();
+            let second = ctx.recv().await.message().unwrap();
+            let second_meta = ctx
+                .current_meta()
+                .and_then(|m| m.downcast_ref::<String>().cloned());
+            let _ = tx.send((first, first_meta, second, second_meta));
+        });
+        rt.send(p.pid(), b"plain".to_vec());
+        rt.send_with_meta(
+            p.pid(),
+            b"tagged".to_vec(),
+            Some(Arc::new("acme".to_string())),
+        );
+        let (first, first_no_meta, second, second_meta) = rx.await.unwrap();
+        assert_eq!(first, b"plain");
+        assert!(first_no_meta, "a plain send carries no meta");
+        assert_eq!(second, b"tagged");
+        assert_eq!(second_meta.as_deref(), Some("acme"));
+    }
+
+    #[tokio::test]
+    async fn stash_then_unstash_redelivers_with_each_item_s_own_meta() {
+        // The host-side fix for the selective-receive leak: a guest SDK awaiting a reply
+        // receives an unrelated message (tenant B), stashes it, then gets the reply (tenant
+        // A). After `unstash`, the next `recv` must hand B back bound to **B's own** meta —
+        // not A's. (Guest-side stashing replayed bytes without the meta, so B would have been
+        // handled as A — a cross-tenant leak. Stashing host-side keeps the meta with the bytes.)
+        let rt = Runtime::new();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let p = rt.spawn(move |mut ctx| async move {
+            let read = |c: &Context| {
+                c.current_meta()
+                    .and_then(|m| m.downcast_ref::<String>().cloned())
+            };
+            // Awaiting the reply: first comes B's request — set it aside, keeping its meta.
+            let stashed = ctx.recv().await.message().unwrap();
+            let stashed_meta = read(&ctx);
+            ctx.stash(stashed);
+            // Then the reply (tenant A) — what we were waiting for.
+            let reply = ctx.recv().await.message().unwrap();
+            let reply_meta = read(&ctx);
+            // Done waiting: restore the stashed mail and receive it as the next message.
+            ctx.unstash();
+            let replayed = ctx.recv().await.message().unwrap();
+            let replayed_meta = read(&ctx);
+            let _ = tx.send((stashed_meta, reply_meta, replayed, replayed_meta));
+        });
+        rt.send_with_meta(
+            p.pid(),
+            b"b-request".to_vec(),
+            Some(Arc::new("tenant-b".to_string())),
+        );
+        rt.send_with_meta(
+            p.pid(),
+            b"reply".to_vec(),
+            Some(Arc::new("tenant-a".to_string())),
+        );
+        let (stashed_meta, reply_meta, replayed, replayed_meta) = rx.await.unwrap();
+        assert_eq!(stashed_meta.as_deref(), Some("tenant-b"));
+        assert_eq!(reply_meta.as_deref(), Some("tenant-a"));
+        assert_eq!(replayed, b"b-request");
+        assert_eq!(
+            replayed_meta.as_deref(),
+            Some("tenant-b"),
+            "the stashed message rebinds to its OWN tenant on replay, not the reply's"
+        );
+    }
+
+    #[tokio::test]
+    async fn selective_receive_preserves_each_saved_item_s_meta() {
+        // A skipped (saved) item keeps *its own* meta for the later receive — meta is
+        // never reordered or smeared across messages, even through the save queue.
+        let rt = Runtime::new();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let p = rt.spawn(move |mut ctx| async move {
+            // Take the second message first (skipping & saving the first), capturing meta.
+            let picked = ctx
+                .recv_match(|m| matches!(m, Received::Message(b) if b == b"second"))
+                .await
+                .message()
+                .unwrap();
+            let picked_meta = ctx
+                .current_meta()
+                .and_then(|m| m.downcast_ref::<String>().cloned());
+            // Now drain the saved first message — its own meta must still be intact.
+            let saved = ctx.recv().await.message().unwrap();
+            let saved_meta = ctx
+                .current_meta()
+                .and_then(|m| m.downcast_ref::<String>().cloned());
+            let _ = tx.send((picked, picked_meta, saved, saved_meta));
+        });
+        rt.send_with_meta(
+            p.pid(),
+            b"first".to_vec(),
+            Some(Arc::new("tenant-a".to_string())),
+        );
+        rt.send_with_meta(
+            p.pid(),
+            b"second".to_vec(),
+            Some(Arc::new("tenant-b".to_string())),
+        );
+        let (picked, picked_meta, saved, saved_meta) = rx.await.unwrap();
+        assert_eq!(picked, b"second");
+        assert_eq!(picked_meta.as_deref(), Some("tenant-b"));
+        assert_eq!(saved, b"first");
+        assert_eq!(saved_meta.as_deref(), Some("tenant-a"));
     }
 
     #[tokio::test]

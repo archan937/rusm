@@ -28,9 +28,11 @@ use tokio_tungstenite::WebSocketStream;
 
 use std::collections::HashMap;
 
+use super::auth::{AuthHook, AuthRequest, AuthVerdict};
 use super::conn::{Resolved, Source, WsOut};
 use super::routed::Resolver;
 use crate::caps::Capabilities;
+use crate::context::ProcessContext;
 use crate::{PreparedComponent, Spawner, WasmRuntime};
 
 /// Serve a WebSocket **echo** on `listener` until it closes — one supervised task
@@ -150,6 +152,15 @@ fn forbidden() -> hyper::Response<Empty<Bytes>> {
         .unwrap()
 }
 
+/// A `401` for a handshake the listener's auth hook rejected — refused before any process
+/// is spawned, exactly like an unauthenticated HTTP request.
+fn unauthorized() -> hyper::Response<Empty<Bytes>> {
+    hyper::Response::builder()
+        .status(401)
+        .body(Empty::new())
+        .unwrap()
+}
+
 /// Serves each WebSocket connection with a **WASM component process** — the actor
 /// way. A connection's inbound messages land in the component's mailbox (one
 /// message = one frame); its replies go to a per-connection **writer** process that
@@ -181,6 +192,12 @@ pub struct WsServer {
     /// TLS acceptor (the listener's `tls`); when set, each connection is TLS-terminated
     /// before the handshake (`wss`). `None` = plain `ws`.
     tls: Option<Arc<super::tls::TlsAcceptor>>,
+    /// The listener's auth hook (`[[serve]] authentication`); when set, the upgrade request
+    /// is validated before the handler spawns — claims seed the connection's host-only
+    /// context (carried on every message to the handler), a denial is `401` (no upgrade).
+    /// `None` = no authentication. A browser can't set `Authorization` on a WebSocket, so
+    /// the hook typically reads a token from the query string.
+    auth: Option<AuthHook>,
 }
 
 impl WasmRuntime {
@@ -201,6 +218,7 @@ impl WasmRuntime {
             allowed_origins: Arc::new(Vec::new()),
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 
@@ -223,6 +241,7 @@ impl WasmRuntime {
             allowed_origins: Arc::new(Vec::new()),
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 
@@ -249,6 +268,7 @@ impl WasmRuntime {
             allowed_origins: Arc::new(Vec::new()),
             compress: false,
             tls: None,
+            auth: None,
         }
     }
 }
@@ -312,6 +332,14 @@ impl WsServer {
     /// Terminate TLS on each connection with this acceptor (`wss`); `None` = plain `ws`.
     pub fn with_tls(mut self, tls: Option<Arc<super::tls::TlsAcceptor>>) -> Self {
         self.tls = tls;
+        self
+    }
+
+    /// Authenticate the handshake with this hook (`[[serve]] authentication`); `None` = no
+    /// authentication. The hook runs at upgrade: claims seed the connection's host-only
+    /// context (carried on every message to the handler), a denial is `401` (no upgrade).
+    pub fn with_auth(mut self, auth: Option<AuthHook>) -> Self {
+        self.auth = auth;
         self
     }
 
@@ -410,6 +438,16 @@ impl WsServer {
             log(403);
             return Ok(forbidden());
         }
+        // Authenticate the handshake before routing/upgrade: a denied request is `401` and
+        // never upgrades or spawns a handler. On success the claims seed the connection's
+        // host-only context, carried on every message the handler receives.
+        let context = match self.authenticate(&req).await {
+            Ok(context) => context,
+            Err(()) => {
+                log(401);
+                return Ok(unauthorized());
+            }
+        };
         // Resolve the route first: an unmatched path is a `404` (no handshake). An unrouted
         // listener always matches its single handler.
         let Some(Resolved {
@@ -453,11 +491,38 @@ impl WsServer {
             if let Ok(upgraded) = hyper::upgrade::on(req).await {
                 let conn = super::ws_codec::WsConn::new(TokioIo::new(upgraded), deflate, max_size);
                 server
-                    .run_connection(conn, prepared, bundle, caps, connection)
+                    .run_connection(conn, prepared, bundle, caps, connection, context)
                     .await;
             }
         });
         Ok(switching_protocols(accept, subprotocol, extensions))
+    }
+
+    /// Run the listener's auth hook on the handshake request, if configured. `Ok(context)`
+    /// carries the seeded claims (empty when no hook is set); `Err(())` is a rejection (the
+    /// caller answers `401`). The hook is host code; for a WebSocket the token usually
+    /// arrives as a query param, which the hook reads from [`AuthRequest::query`].
+    async fn authenticate(
+        &self,
+        req: &hyper::Request<hyper::body::Incoming>,
+    ) -> Result<ProcessContext, ()> {
+        let Some(hook) = &self.auth else {
+            return Ok(ProcessContext::new());
+        };
+        let request = AuthRequest {
+            method: req.method().as_str().to_string(),
+            path: req.uri().path().to_string(),
+            query: req.uri().query().unwrap_or("").to_string(),
+            headers: req
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect(),
+        };
+        match hook(request).await {
+            AuthVerdict::Allow(claims) => Ok(ProcessContext::from_iter(claims)),
+            AuthVerdict::Deny => Err(()),
+        }
     }
 
     /// Wire one upgraded connection to a fresh component process (the resolved handler).
@@ -468,9 +533,14 @@ impl WsServer {
         bundle: Option<Arc<Vec<u8>>>,
         caps: Capabilities,
         connection: crate::bridges::serve::ConnectionInfo,
+        context: ProcessContext,
     ) {
         let (mut sink, mut stream) = conn.split();
         let rt = self.spawner.rt.clone();
+        // The connection's claims context rides every message to the handler as opaque
+        // mailbox meta (computed once; an `Arc` clone per send), so a bridge the handler
+        // calls while handling any frame acts for the authenticated tenant.
+        let meta = context.into_meta();
 
         // Writer: a Wasm-free process owning the socket sink. It races the handler's outputs
         // and the keep-alive — **binary** frames arrive via its mailbox (a plain `send` to the
@@ -531,9 +601,13 @@ impl WsServer {
             self.spawner
                 .spawn_connection(&prepared, caps, connection, Some(out_tx), None);
         if let Some(bundle) = &bundle {
-            rt.send(component.pid(), bundle.as_ref().clone());
+            rt.send_with_meta(component.pid(), bundle.as_ref().clone(), meta.clone());
         }
-        rt.send(component.pid(), writer.pid().raw().to_string().into_bytes());
+        rt.send_with_meta(
+            component.pid(),
+            writer.pid().raw().to_string().into_bytes(),
+            meta.clone(),
+        );
 
         // Pump inbound messages into the component's mailbox (one message per WS message).
         // Control frames are handled here: a ping is answered with a pong (via the writer), a
@@ -542,7 +616,7 @@ impl WsServer {
         while let Some(result) = stream.recv().await {
             match result {
                 Ok(WsMessage::Text(data)) | Ok(WsMessage::Binary(data)) => {
-                    rt.send(component.pid(), data);
+                    rt.send_with_meta(component.pid(), data, meta.clone());
                 }
                 Ok(WsMessage::Ping(payload)) => {
                     // Answer via the writer (the sole socket owner); if it's gone, end.

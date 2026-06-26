@@ -6,11 +6,11 @@ use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use pico_args::Arguments;
 use rusm_cli::{
-    capabilities_for, command_help, exec_kv, generate_bridge, generate_component, host,
-    node_overrides, normalize_target, parse, parse_generate_args, parse_kv, parse_new_args,
-    prebuilt_wasm, render_message, scaffold, spawn_components, usage, version, wants_help,
-    wants_version, GenerateCommand, KvCommand, KvOutput, Protocol, ReplInput, WasmReplHost,
-    DEFAULT_HOST, HELP,
+    capabilities_for, command_help, exec_kv, generate_authentication, generate_bridge,
+    generate_component, host, node_overrides, normalize_target, parse, parse_generate_args,
+    parse_kv, parse_new_args, prebuilt_wasm, render_message, scaffold, spawn_components, usage,
+    version, wants_help, wants_version, GenerateCommand, KvCommand, KvOutput, Protocol, ReplInput,
+    WasmReplHost, DEFAULT_HOST, HELP,
 };
 use rusm_node::{serve, ClientCommand, Node, NodeConfig, ServerMessage};
 use rusm_otp::Runtime;
@@ -141,6 +141,18 @@ fn cmd_generate(args: Arguments) {
             println!("Then set capability = \"my-cap\" on the component(s) that call it.");
             println!("Run `rusm build` to regenerate the glue.");
         }
+        GenerateCommand::Authentication(gen) => {
+            let created = generate_authentication(root, &gen)
+                .unwrap_or_else(|e| die(format!("generate failed: {e}"), 1));
+            println!("added auth hook {}/", gen.name);
+            for f in &created {
+                println!("  {}", f.display());
+            }
+            println!("\nTo use this hook, add to a [[serve]] entry in rusm.toml:");
+            println!("  authentication = \"{}\"", gen.name);
+            println!();
+            println!("Implement `authenticate` in the generated host file, then `rusm build`.");
+        }
     }
 }
 
@@ -162,6 +174,13 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
         let names: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
         println!("custom bridge(s): {}", names.join(", "));
     }
+    // Auth hooks are host code too (compiled into the same generated host crate). An app with
+    // a Rust `auth/<name>/host.rs` needs the host binary even if it has no custom bridges.
+    let auth = rusm_cli::auth::discover(root)?;
+    if !auth.is_empty() {
+        let names: Vec<&str> = auth.iter().map(|a| a.name.as_str()).collect();
+        println!("auth hook(s): {}", names.join(", "));
+    }
     let built = build_components(root, &bridges)?;
     if built.is_empty() {
         println!("no component crates found under ./components");
@@ -176,8 +195,16 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
         build_js_runner_if_ts_uses_bridges(root, &bridges)?;
         build_ts_bridge_runners(root, &bridges)?;
         build_go_bridge_runners(root, &bridges)?;
+    }
+    if !auth.is_empty() {
+        // TS/Go auth hooks compile to resident dispatch runners (the Rust delegating hook
+        // round-trips to them); a Rust auth hook is compiled into the host binary directly.
+        build_ts_auth_runners(root, &auth)?;
+        build_go_auth_runners(root, &auth)?;
+    }
+    if !bridges.is_empty() || !auth.is_empty() {
         build_host_crate(root)?;
-        println!("built host binary (custom bridges compiled in)");
+        println!("built host binary (custom bridges + auth hooks compiled in)");
     }
     Ok(())
 }
@@ -189,39 +216,54 @@ fn build_ts_bridge_runners(
     bridges: &[rusm_cli::bridges::BridgeSpec],
 ) -> anyhow::Result<()> {
     use rusm_cli::bridges::HostImpl;
-    let wasm_dir = root.join("wasm");
-    std::fs::create_dir_all(&wasm_dir)?;
     for bridge in bridges
         .iter()
         .filter(|b| matches!(b.host_impl, HostImpl::TypeScript(_)))
     {
-        let runner_ts = bridge.dir.join("_runner.ts");
-        let bundle_name = format!("bridge-{}.js", bridge.name);
-        let dest = wasm_dir.join(&bundle_name);
-        let status = Command::new("bun")
-            .args([
-                "build",
-                "--target=browser",
-                "--format=cjs",
-                "--minify",
-                "--outfile",
-            ])
-            .arg(&dest)
-            .arg(&runner_ts)
-            .status()
-            .with_context(|| format!("bundling TS bridge runner `{}`", bridge.name))?;
-        if !status.success() {
-            return Err(anyhow!(
-                "`bun build` failed for bridge runner `{}`",
-                bridge.name
-            ));
-        }
-        println!("built bridge runner -> {}", dest.display());
+        bun_bundle_runner(root, &bridge.dir, &format!("bridge-{}", bridge.name))?;
     }
     Ok(())
 }
 
-/// Compile each **Go-hosted** bridge runner (`bridges/<name>/_runner.go` + `host.go`) to
+/// Bundle each **TS-hosted** auth runner (`auth/<name>/_runner.ts`) into `wasm/auth-<name>.js`
+/// with Bun — same machinery as a TS bridge runner. Skipped when no TS auth hook exists.
+fn build_ts_auth_runners(root: &Path, auth: &[rusm_cli::auth::AuthSpec]) -> anyhow::Result<()> {
+    use rusm_cli::bridges::HostImpl;
+    for hook in auth
+        .iter()
+        .filter(|h| matches!(h.host_impl, HostImpl::TypeScript(_)))
+    {
+        bun_bundle_runner(root, &hook.dir, &format!("auth-{}", hook.name))?;
+    }
+    Ok(())
+}
+
+/// Bundle a runner's `_runner.ts` (in `dir`) to `wasm/<output>.js` with Bun — the one place
+/// the TS runner bundle command lives, shared by bridge and auth runners.
+fn bun_bundle_runner(root: &Path, dir: &Path, output: &str) -> anyhow::Result<()> {
+    let wasm_dir = root.join("wasm");
+    std::fs::create_dir_all(&wasm_dir)?;
+    let dest = wasm_dir.join(format!("{output}.js"));
+    let status = Command::new("bun")
+        .args([
+            "build",
+            "--target=browser",
+            "--format=cjs",
+            "--minify",
+            "--outfile",
+        ])
+        .arg(&dest)
+        .arg(dir.join("_runner.ts"))
+        .status()
+        .with_context(|| format!("bundling TS runner `{output}`"))?;
+    if !status.success() {
+        return Err(anyhow!("`bun build` failed for runner `{output}`"));
+    }
+    println!("built runner -> {}", dest.display());
+    Ok(())
+}
+
+/// Compile each **Go-hosted** bridge runner (`bridges/<name>/rusm_runner.go` + `host.go`) to
 /// `wasm/bridge-<name>.wasm` with TinyGo. The runner + user's host.go share `package main` in
 /// the same directory, so TinyGo sees both. Skipped for Rust/TS bridge apps.
 fn build_go_bridge_runners(
@@ -229,50 +271,69 @@ fn build_go_bridge_runners(
     bridges: &[rusm_cli::bridges::BridgeSpec],
 ) -> anyhow::Result<()> {
     use rusm_cli::bridges::HostImpl;
-    let wasm_dir = root.join("wasm");
-    std::fs::create_dir_all(&wasm_dir)?;
     for bridge in bridges
         .iter()
         .filter(|b| matches!(b.host_impl, HostImpl::Go(_)))
     {
-        let bridge_dir = &bridge.dir;
-        let name = &bridge.name;
-        // go mod tidy to fetch the rusm-go SDK into the module cache.
-        let status = Command::new("go")
-            .args(["mod", "tidy"])
-            .current_dir(bridge_dir)
-            .status()
-            .with_context(|| format!("running `go mod tidy` for bridge `{name}`"))?;
-        if !status.success() {
-            return Err(anyhow!("`go mod tidy` failed for bridge `{name}`"));
-        }
-        // Locate the rusm-go SDK's `wit/` (TinyGo needs -wit-package for the actor ABI).
-        let sdk_wit = go_sdk_wit(bridge_dir)
-            .with_context(|| format!("locating rusm-go SDK for bridge `{name}`"))?;
-        let dest = std::fs::canonicalize(&wasm_dir)
-            .with_context(|| format!("resolving {}", wasm_dir.display()))?
-            .join(format!("bridge-{name}.wasm"));
-        let status = Command::new("tinygo")
-            .args([
-                "build",
-                "-target=wasip2",
-                "-no-debug",
-                "-panic=trap",
-                "-opt=z",
-            ])
-            .arg("-wit-package")
-            .arg(&sdk_wit)
-            .args(["-wit-world", "component", "-o"])
-            .arg(&dest)
-            .arg(".")
-            .current_dir(bridge_dir)
-            .status()
-            .with_context(|| format!("running tinygo for bridge `{name}`"))?;
-        if !status.success() {
-            return Err(anyhow!("`tinygo build` failed for bridge `{name}`"));
-        }
-        println!("built bridge runner -> {}", dest.display());
+        tinygo_build_runner(root, &bridge.dir, &format!("bridge-{}", bridge.name))?;
     }
+    Ok(())
+}
+
+/// Compile each **Go-hosted** auth runner (`auth/<name>/rusm_runner.go` + `host.go`) to
+/// `wasm/auth-<name>.wasm` with TinyGo — same machinery as a Go bridge runner. Skipped when no
+/// Go auth hook exists.
+fn build_go_auth_runners(root: &Path, auth: &[rusm_cli::auth::AuthSpec]) -> anyhow::Result<()> {
+    use rusm_cli::bridges::HostImpl;
+    for hook in auth
+        .iter()
+        .filter(|h| matches!(h.host_impl, HostImpl::Go(_)))
+    {
+        tinygo_build_runner(root, &hook.dir, &format!("auth-{}", hook.name))?;
+    }
+    Ok(())
+}
+
+/// Compile a Go runner (`dir`'s `rusm_runner.go` + `host.go`, same `package main`) to
+/// `wasm/<output>.wasm` with TinyGo — the one place the Go runner build lives, shared by bridge
+/// and auth runners. `go mod tidy` first (fetch the rusm-go SDK), then TinyGo against the SDK's WIT.
+fn tinygo_build_runner(root: &Path, dir: &Path, output: &str) -> anyhow::Result<()> {
+    let wasm_dir = root.join("wasm");
+    std::fs::create_dir_all(&wasm_dir)?;
+    let status = Command::new("go")
+        .args(["mod", "tidy"])
+        .current_dir(dir)
+        .status()
+        .with_context(|| format!("running `go mod tidy` for runner `{output}`"))?;
+    if !status.success() {
+        return Err(anyhow!("`go mod tidy` failed for runner `{output}`"));
+    }
+    // Locate the rusm-go SDK's `wit/` (TinyGo needs -wit-package for the actor ABI).
+    let sdk_wit =
+        go_sdk_wit(dir).with_context(|| format!("locating rusm-go SDK for runner `{output}`"))?;
+    let dest = std::fs::canonicalize(&wasm_dir)
+        .with_context(|| format!("resolving {}", wasm_dir.display()))?
+        .join(format!("{output}.wasm"));
+    let status = Command::new("tinygo")
+        .args([
+            "build",
+            "-target=wasip2",
+            "-no-debug",
+            "-panic=trap",
+            "-opt=z",
+        ])
+        .arg("-wit-package")
+        .arg(&sdk_wit)
+        .args(["-wit-world", "component", "-o"])
+        .arg(&dest)
+        .arg(".")
+        .current_dir(dir)
+        .status()
+        .with_context(|| format!("running tinygo for runner `{output}`"))?;
+    if !status.success() {
+        return Err(anyhow!("`tinygo build` failed for runner `{output}`"));
+    }
+    println!("built runner -> {}", dest.display());
     Ok(())
 }
 
@@ -498,9 +559,10 @@ async fn run_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<(
 /// benchmark: the node only serves; load is driven out-of-process (`rusm-loadtest`).
 async fn serve_app(config: Option<&str>, listen: Option<&str>) -> anyhow::Result<()> {
     let root = Path::new(".");
-    // A custom-bridge app serves via its OWN host binary, which has the bridge impls
-    // compiled in (the prebuilt `rusm` can't host them). Run it — `rusm build` produced it.
-    if rusm_cli::bridges::has_bridges(root) {
+    // A custom-bridge OR auth-hook app serves via its OWN host binary, which has the Rust
+    // bridge/auth impls compiled in (the prebuilt `rusm` can't host them). Run it — `rusm
+    // build` produced it.
+    if rusm_cli::bridges::has_bridges(root) || rusm_cli::auth::has_auth_hooks(root) {
         return run_host_binary(root);
     }
     let cfg = load_node_config(config, listen);

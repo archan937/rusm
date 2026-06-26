@@ -379,6 +379,7 @@ fn build_store(
         next_stream: 0,
         timers: HashMap::new(),
         next_timer: 0,
+        context: crate::context::ProcessContext::new(),
     };
     let mut store = Store::new(engine, host);
     // Enforce the per-process memory ceiling (WasiHost is the ResourceLimiter).
@@ -530,6 +531,18 @@ mod tests {
     /// A bare [`WasiHost`] wired to the runtime's spawner — stands in for a running
     /// guest so the capability-gated `spawn` host fn can be driven directly.
     fn test_host(wr: &WasmRuntime, rt: &Runtime, caps: Capabilities) -> WasiHost {
+        host_with(rt.clone(), Arc::clone(&wr.spawner), caps, None)
+    }
+
+    /// Builds a [`WasiHost`] from owned parts so a test running *inside* a spawned process
+    /// body (where a real [`Context`] is available) can wire it up. [`test_host`] is the
+    /// no-mailbox convenience over it.
+    fn host_with(
+        rt: Runtime,
+        spawner: Arc<Spawner>,
+        caps: Capabilities,
+        ctx: Option<Context>,
+    ) -> WasiHost {
         WasiHost {
             wasi: caps.build_wasi().unwrap(),
             table: ResourceTable::new(),
@@ -542,15 +555,120 @@ mod tests {
             ws_out: None,
             sse_out: None,
             caps,
-            rt: rt.clone(),
-            ctx: None,
-            spawner: Some(Arc::clone(&wr.spawner)),
+            rt,
+            ctx,
+            spawner: Some(spawner),
             out_streams: HashMap::new(),
             in_streams: HashMap::new(),
             next_stream: 0,
             timers: HashMap::new(),
             next_timer: 0,
+            context: crate::context::ProcessContext::new(),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_process_rebinds_its_context_per_message_and_never_leaks_across_tenants() {
+        // Security property #3 — call-scoped isolation. One process (one instance, serial
+        // dispatch) handles three messages in turn: tenant A, tenant B, then an untagged
+        // one. Its claims context must be exactly the *current* message's each time — B is
+        // not A leaked forward, and the untagged message resets to empty (a stale tenant
+        // never bleeds into untagged work). This is why a shared resident is safe.
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let spawner = Arc::clone(&wr.spawner);
+        let rtc = rt.clone();
+        let handle = rt.spawn(move |ctx| async move {
+            use crate::bindings::rusm::runtime::actor::Host;
+            let mut host = host_with(
+                rtc,
+                spawner,
+                CapabilityProfile::Trusted.capabilities(),
+                Some(ctx),
+            );
+            let read = |h: &WasiHost| h.context().get("app_id").map(str::to_owned);
+            host.receive().await;
+            let after_a = read(&host);
+            host.receive().await;
+            let after_b = read(&host);
+            host.receive().await;
+            let after_untagged = read(&host);
+            let _ = tx.send((after_a, after_b, after_untagged));
+        });
+        let tenant = |id: &str| {
+            Some(
+                std::sync::Arc::new(crate::context::ProcessContext::from_iter([(
+                    "app_id".to_string(),
+                    id.to_string(),
+                )])) as std::sync::Arc<dyn std::any::Any + Send + Sync>,
+            )
+        };
+        rt.send_with_meta(handle.pid(), b"a".to_vec(), tenant("tenant-a"));
+        rt.send_with_meta(handle.pid(), b"b".to_vec(), tenant("tenant-b"));
+        rt.send(handle.pid(), b"untagged".to_vec()); // no meta
+        let (after_a, after_b, after_untagged) = rx.await.unwrap();
+        assert_eq!(after_a.as_deref(), Some("tenant-a"));
+        assert_eq!(
+            after_b.as_deref(),
+            Some("tenant-b"),
+            "B rebinds; A never leaks forward"
+        );
+        assert_eq!(after_untagged, None, "an untagged message resets to empty");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stashed_message_rebinds_to_its_own_context_on_replay() {
+        // The selective-receive leak fix at the host seam. A process receives tenant A's
+        // message but sets it aside (`stash`) while it handles tenant B (the awaited reply),
+        // then `unstash`es. The replayed A message must rebind `context` to **A** — not stay
+        // B. (Guest-side stashing replayed the bytes without the host, so A would have run
+        // under B's identity; host-side `stash` keeps the meta, so `receive` rebinds it.)
+        let rt = Runtime::new();
+        let wr = WasmRuntime::new(rt.clone()).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let spawner = Arc::clone(&wr.spawner);
+        let rtc = rt.clone();
+        let handle = rt.spawn(move |ctx| async move {
+            use crate::bindings::rusm::runtime::actor::Host;
+            let mut host = host_with(
+                rtc,
+                spawner,
+                CapabilityProfile::Trusted.capabilities(),
+                Some(ctx),
+            );
+            let read = |h: &WasiHost| h.context().get("app_id").map(str::to_owned);
+            // Receive A, but set it aside — we're "awaiting" B.
+            let a = host.receive().await;
+            let saw_a = read(&host);
+            host.stash(a).await;
+            // Receive B (the awaited message).
+            host.receive().await;
+            let saw_b = read(&host);
+            // Done: restore A and receive it — it must rebind to A, not stay B.
+            host.unstash().await;
+            host.receive().await;
+            let saw_a_again = read(&host);
+            let _ = tx.send((saw_a, saw_b, saw_a_again));
+        });
+        let tenant = |id: &str| {
+            Some(
+                std::sync::Arc::new(crate::context::ProcessContext::from_iter([(
+                    "app_id".to_string(),
+                    id.to_string(),
+                )])) as std::sync::Arc<dyn std::any::Any + Send + Sync>,
+            )
+        };
+        rt.send_with_meta(handle.pid(), b"a".to_vec(), tenant("tenant-a"));
+        rt.send_with_meta(handle.pid(), b"b".to_vec(), tenant("tenant-b"));
+        let (saw_a, saw_b, saw_a_again) = rx.await.unwrap();
+        assert_eq!(saw_a.as_deref(), Some("tenant-a"));
+        assert_eq!(saw_b.as_deref(), Some("tenant-b"));
+        assert_eq!(
+            saw_a_again.as_deref(),
+            Some("tenant-a"),
+            "the stashed message rebinds to its OWN tenant on replay — no leak"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1649,9 +1767,13 @@ mod tests {
 
     impl greet_bridge::demo::bridge::greet::Host for crate::BridgeHost {
         async fn greet(&mut self, name: String) -> String {
-            // Reaches real process state through the curated public accessor — the custom
-            // bridge gets the same host context the built-in bridges do, nothing more.
-            format!("hello, {name} from {}", self.pid())
+            // Reaches real process state through the curated public accessors — the custom
+            // bridge gets the same host context the built-in bridges do: process identity
+            // and the host-only claims context (here the tenant `app_id` an auth hook would
+            // seed; `-` when unset). This is exactly how a multi-tenant bridge reads who it
+            // is acting for, with no cooperation from — or visibility to — the guest.
+            let app = self.context().get("app_id").unwrap_or("-");
+            format!("hello, {name} from {} app={app}", self.pid())
         }
     }
 
@@ -1681,8 +1803,49 @@ mod tests {
         rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
         assert_eq!(
             String::from_utf8(rx.await.unwrap()).unwrap(),
-            format!("hello, World from {}", guest.pid().raw()),
+            format!("hello, World from {} app=-", guest.pid().raw()),
             "the guest called the app-registered custom host bridge and got its typed reply"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_received_message_s_context_reaches_a_bridge_the_handler_calls() {
+        // Message-envelope propagation, end to end and the *only* mechanism: a claims
+        // context rides beside a message; binding on receive makes a bridge the recipient
+        // calls act for that tenant. The same fixture as above, spawned with no context —
+        // identical guest code, identical bytes — yet the bridge now sees `app=acme`
+        // purely because the *message* carried it. The guest never sees or sets it.
+        const CUSTOM_BRIDGE: &[u8] = include_bytes!("../../tests/fixtures/custom_bridge.wasm");
+        let rt = Runtime::new();
+        let wr = WasmRuntime::with_bridges(rt.clone(), |linker| {
+            greet_bridge::demo::bridge::greet::add_to_linker::<
+                _,
+                wasmtime::component::HasSelf<crate::BridgeHost>,
+            >(linker, |host| host)
+        })
+        .unwrap();
+        let pre = wr
+            .prepare_component(&wr.compile_component(CUSTOM_BRIDGE).unwrap(), "run")
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let collector = rt.spawn(move |mut ctx| async move {
+            let _ = tx.send(ctx.recv().await.message().unwrap());
+        });
+        let guest = wr.spawn_component(&pre); // spawned with an empty context
+                                              // Deliver the guest's first message with a tenant context riding beside it (exactly
+                                              // what a serving auth hook does for a request message — see the serving tests).
+        let context = crate::context::ProcessContext::from_iter([("app_id".into(), "acme".into())]);
+        let meta =
+            Some(std::sync::Arc::new(context) as std::sync::Arc<dyn std::any::Any + Send + Sync>);
+        rt.send_with_meta(
+            guest.pid(),
+            collector.pid().raw().to_string().into_bytes(),
+            meta,
+        );
+        assert_eq!(
+            String::from_utf8(rx.await.unwrap()).unwrap(),
+            format!("hello, World from {} app=acme", guest.pid().raw()),
+            "the message's claims context bound on receive, and the bridge read it"
         );
     }
 
@@ -1727,7 +1890,7 @@ mod tests {
         rt.send(guest.pid(), collector.pid().raw().to_string().into_bytes());
         assert_eq!(
             String::from_utf8(rx.await.unwrap()).unwrap(),
-            format!("hello, World from {}", guest.pid().raw()),
+            format!("hello, World from {} app=-", guest.pid().raw()),
             "the builder's custom bridge is callable alongside the store"
         );
         let _ = std::fs::remove_file(&path);

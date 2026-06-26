@@ -64,6 +64,15 @@ fn js_receive_timeout(ctx: Ctx<'_>, ms: f64) -> rquickjs::Result<Option<TypedArr
         None => Ok(None),
     }
 }
+// Set the just-received message aside host-side (keeping its metadata) while a typed call
+// awaits its reply; `__unstash` restores it. Host-side so a replayed message stays bound to its
+// own request — never the reply's (a guest-side buffer can't carry the host-only metadata).
+fn js_stash(data: TypedArray<u8>) {
+    actor::stash(data.as_bytes().unwrap_or(&[]));
+}
+fn js_unstash() {
+    actor::unstash();
+}
 fn js_stream_write(h: f64, data: TypedArray<u8>) -> bool {
     stream_iface::stream_write(h as u64, data.as_bytes().unwrap_or(&[]))
 }
@@ -582,6 +591,10 @@ fn boot_bridge(ctx: Ctx<'_>) {
         .unwrap_or_default());
     // `receive … after`: the next message, or `undefined` on timeout.
     def!("__receive_timeout", js_receive_timeout);
+    // Host-side selective-receive deferral (a typed call sets unrelated mail aside, metadata
+    // intact, then restores it) — the mailbox ops `__stash`/`__unstash`.
+    def!("__stash", js_stash);
+    def!("__unstash", js_unstash);
     def!("__register", |n: String| actor::register(&n));
     def!("__whereis", |n: String| actor::whereis(&n)
         .map(|p| p.to_string())

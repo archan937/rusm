@@ -14,7 +14,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rusm_otp::{Context, ExitReason, Pid, Received, Runtime, Strategy};
+use rusm_otp::{Context, ExitReason, Meta, Pid, Received, Runtime, Strategy};
 
 use wasmtime_wasi::p2::bindings::CommandPre;
 
@@ -168,15 +168,25 @@ impl actor::Host for WasiHost {
     }
 
     async fn send(&mut self, to: u64, message: Vec<u8>) {
-        self.rt.send(Pid::from_raw(to), message);
+        // The sender's claims context rides beside the message (never inside it), so the
+        // recipient acts for the same tenant — out of reach of, and invisible to, guest code.
+        self.rt
+            .send_with_meta(Pid::from_raw(to), message, self.meta());
     }
 
     async fn receive(&mut self) -> Vec<u8> {
-        let ctx = self
-            .ctx
-            .as_mut()
-            .expect("receive runs inside a spawned process");
-        next_message(ctx).await
+        let bytes = {
+            let ctx = self
+                .ctx
+                .as_mut()
+                .expect("receive runs inside a spawned process");
+            next_message(ctx).await
+        };
+        // The message just handled defines this process's claims context: bind the meta
+        // it carried (empty if none), so a bridge called while handling it acts for the
+        // right tenant and a stale identity never leaks into untagged work.
+        self.bind_context_from_mailbox();
+        bytes
     }
 
     /// Erlang's `receive … after`: the next message, or `none` if `timeout_ms`
@@ -189,9 +199,34 @@ impl actor::Host for WasiHost {
             .ctx
             .as_mut()
             .expect("receive-timeout runs inside a spawned process");
-        tokio::time::timeout(Duration::from_millis(timeout_ms), next_message(ctx))
+        let result = tokio::time::timeout(Duration::from_millis(timeout_ms), next_message(ctx))
             .await
-            .ok()
+            .ok();
+        // Bind the handled message's context only when one actually arrived; a timeout
+        // delivers nothing, so it leaves the current context untouched.
+        if result.is_some() {
+            self.bind_context_from_mailbox();
+        }
+        result
+    }
+
+    /// Set aside the just-received message (with its metadata) while a selective receive
+    /// awaits a different one — see the `stash`/`unstash` WIT docs. Thin call into the
+    /// mailbox; the metadata travels host-side so a replayed message rebinds to its own
+    /// request (never the awaited reply's), which is what closes the cross-tenant leak a
+    /// guest-side stash would open.
+    async fn stash(&mut self, message: Vec<u8>) {
+        if let Some(ctx) = self.ctx.as_mut() {
+            ctx.stash(message);
+        }
+    }
+
+    /// Return every stashed message to the front of the queue for re-delivery. Thin call
+    /// into the mailbox.
+    async fn unstash(&mut self) {
+        if let Some(ctx) = self.ctx.as_mut() {
+            ctx.unstash();
+        }
     }
 
     async fn list_processes(&mut self) -> Vec<u64> {
@@ -315,9 +350,14 @@ impl actor::Host for WasiHost {
     /// can cancel. If `to` is already gone when the timer fires, the delivery is a
     /// silent no-op (like a direct `send`).
     async fn send_after(&mut self, to: u64, delay_ms: u64, message: Vec<u8>) -> u64 {
-        let timer = self
-            .rt
-            .send_after(Pid::from_raw(to), Duration::from_millis(delay_ms), message);
+        // The delayed message carries the context current *now* (at schedule time), so a
+        // self-timer that later drives bridge work still acts for the right tenant.
+        let timer = self.rt.send_after_with_meta(
+            Pid::from_raw(to),
+            Duration::from_millis(delay_ms),
+            message,
+            self.meta(),
+        );
         let id = self.next_timer;
         self.next_timer = self.next_timer.wrapping_add(1);
         self.timers.insert(id, timer);
@@ -338,6 +378,28 @@ impl actor::Host for WasiHost {
 }
 
 impl WasiHost {
+    /// The opaque mailbox [`Meta`] for an outbound send: this process's current claims
+    /// context, boxed so the Wasm-free core carries it without interpreting it. `None`
+    /// when the context is empty, so a context-less send stays on the zero-cost meta path.
+    fn meta(&self) -> Meta {
+        self.context.clone().into_meta()
+    }
+
+    /// Adopt the claims context of the message just received: downcast the mailbox meta
+    /// to this layer's [`ProcessContext`](crate::context::ProcessContext), or reset to
+    /// empty when the message carried none. Called after every successful `receive`, so a
+    /// process's context is always exactly the context of the message it is handling —
+    /// never stale, never leaked across tenants.
+    fn bind_context_from_mailbox(&mut self) {
+        let meta = match self.ctx.as_ref() {
+            Some(ctx) => ctx.current_meta(),
+            None => return,
+        };
+        self.context = meta
+            .and_then(|m| m.downcast_ref::<crate::context::ProcessContext>().cloned())
+            .unwrap_or_default();
+    }
+
     /// Resolve the named bucket of the node's store, enforcing the **storage**
     /// capability (default-deny) and that a store is actually configured. Shared by the
     /// `kv` bridge ([`crate::bridges::kv`]) and `spawn-from`'s `kv:` source loader, so the
@@ -453,6 +515,7 @@ mod tests {
             next_stream: 0,
             timers: HashMap::new(),
             next_timer: 0,
+            context: crate::context::ProcessContext::new(),
         }
     }
 

@@ -1,10 +1,11 @@
 //! `rusm generate component <name> [--lang ts|rust|go] [--protocol http|sse|ws]`
 //! `rusm generate bridge <name> [--lang ts|rust|go]`
+//! `rusm generate authentication <name> [--lang ts|rust|go]`
 //!
-//! Adds a component or bridge to an **existing** RUSM project (a directory that already
-//! has a `rusm.toml`). Unlike `rusm new`, it never creates a project skeleton and never
-//! modifies files it did not create — only new `components/<name>/` or `bridges/<name>/`
-//! directories and a targeted append to `rusm.toml`.
+//! Adds a component, bridge, or auth hook to an **existing** RUSM project (a directory that
+//! already has a `rusm.toml`). Unlike `rusm new`, it never creates a project skeleton and never
+//! modifies files it did not create — only new `components/<name>/`, `bridges/<name>/`, or
+//! `auth/<name>/` directories and a targeted append to `rusm.toml`.
 
 use std::path::{Path, PathBuf};
 
@@ -32,10 +33,18 @@ pub struct GenerateBridge {
     pub lang: Lang,
 }
 
+/// A parsed `rusm generate authentication` invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenerateAuth {
+    pub name: String,
+    pub lang: Lang,
+}
+
 /// The result of parsing `rusm generate <subcommand> …`.
 pub enum GenerateCommand {
     Component(GenerateComponent),
     Bridge(GenerateBridge),
+    Authentication(GenerateAuth),
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
@@ -46,12 +55,15 @@ pub fn parse_generate_args(mut args: pico_args::Arguments) -> Result<GenerateCom
     match sub.as_deref() {
         Some("component") => Ok(GenerateCommand::Component(parse_component_args(args)?)),
         Some("bridge") => Ok(GenerateCommand::Bridge(parse_bridge_args(args)?)),
+        Some("authentication") | Some("auth") => {
+            Ok(GenerateCommand::Authentication(parse_auth_args(args)?))
+        }
         Some(other) => bail!(
-            "unknown generate subcommand `{other}` — use `component` or `bridge`\n\
-             usage: rusm generate component|bridge <name> [options]"
+            "unknown generate subcommand `{other}` — use `component`, `bridge`, or `authentication`\n\
+             usage: rusm generate component|bridge|authentication <name> [options]"
         ),
         None => bail!(
-            "usage: rusm generate component|bridge <name> [options]\n\
+            "usage: rusm generate component|bridge|authentication <name> [options]\n\
              Try `rusm generate --help` for details."
         ),
     }
@@ -118,6 +130,29 @@ fn parse_bridge_args(mut args: pico_args::Arguments) -> Result<GenerateBridge> {
     Ok(GenerateBridge { name, lang })
 }
 
+fn parse_auth_args(mut args: pico_args::Arguments) -> Result<GenerateAuth> {
+    let lang_str = args.opt_value_from_str::<_, String>("--lang")?;
+    let name: String = args
+        .free_from_str()
+        .map_err(|_| anyhow!("usage: rusm generate authentication <name> [--lang ts|rust|go]"))?;
+    validate_name(&name)?;
+    if let Some(extra) = args.finish().first() {
+        bail!(
+            "unexpected argument `{}` — the auth hook name is already `{name}`",
+            extra.to_string_lossy()
+        );
+    }
+    let lang = lang_str
+        .as_deref()
+        .map(parse_lang)
+        .transpose()?
+        .unwrap_or(Lang::TypeScript);
+    if matches!(lang, Lang::Generic) {
+        bail!("an auth hook must be a real language — use `--lang ts`, `rust`, or `go`");
+    }
+    Ok(GenerateAuth { name, lang })
+}
+
 // ── Generation ────────────────────────────────────────────────────────────────
 
 /// Add a component to an existing RUSM project at `root`.
@@ -181,6 +216,31 @@ pub fn generate_bridge(root: &Path, gen: &GenerateBridge) -> Result<Vec<PathBuf>
     Ok(created)
 }
 
+/// Add a serving **auth hook** to an existing RUSM project at `root`.
+///
+/// Creates `auth/<name>/host.<ext>` (a starter `authenticate`), then appends a comment to
+/// `rusm.toml` showing how to apply it to a listener (`authentication = "<name>"`). Errors if
+/// `rusm.toml` is missing or `auth/<name>/` already exists.
+pub fn generate_authentication(root: &Path, gen: &GenerateAuth) -> Result<Vec<PathBuf>> {
+    validate_project(root)?;
+    if root.join("auth").join(&gen.name).exists() {
+        bail!("auth/{} already exists", gen.name);
+    }
+
+    let rel = PathBuf::from("auth")
+        .join(&gen.name)
+        .join(host_filename(gen.lang));
+    let path = root.join(&rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&path, auth_host(gen.lang))
+        .with_context(|| format!("writing {}", path.display()))?;
+    patch_toml_auth(root, &gen.name)?;
+    Ok(vec![rel])
+}
+
 // ── File content ──────────────────────────────────────────────────────────────
 
 fn component_source_files(gen: &GenerateComponent) -> Vec<(PathBuf, String)> {
@@ -214,6 +274,56 @@ fn bridge_source_files(gen: &GenerateBridge) -> Vec<(PathBuf, String)> {
             bridge_host(&gen.name, gen.lang),
         ),
     ]
+}
+
+/// Starter `auth/<name>/host.<ext>` — an `authenticate` that denies by default (fail-closed),
+/// with the allow path shown. Host code: it validates the request and returns claims (the
+/// tenant a bridge then acts for) or a denial; guest components never see it.
+fn auth_host(lang: Lang) -> String {
+    match lang {
+        Lang::Rust => "// auth/<name>/host.rs — the only Rust an auth hook must add.\n\
+             // Validate the request and return claims (the tenant a bridge acts for) or a denial.\n\
+             use rusm_wasm::{AuthRequest, AuthVerdict};\n\
+             \n\
+             pub async fn authenticate(req: AuthRequest) -> AuthVerdict {\n\
+             \x20\x20\x20\x20// TODO: verify the token and derive the tenant. For example:\n\
+             \x20\x20\x20\x20//   match req.header(\"authorization\") {\n\
+             \x20\x20\x20\x20//       Some(tok) if verify(tok) => return AuthVerdict::Allow(\n\
+             \x20\x20\x20\x20//           vec![(\"app_id\".to_string(), tenant_of(tok))]),\n\
+             \x20\x20\x20\x20//       _ => {}\n\
+             \x20\x20\x20\x20//   }\n\
+             \x20\x20\x20\x20let _ = req;\n\
+             \x20\x20\x20\x20AuthVerdict::Deny\n\
+             }\n"
+            .to_string(),
+        Lang::Go => "// auth/<name>/host.go — the only Go an auth hook must write.\n\
+             // Validate the request and return claims (the tenant a bridge acts for) or a denial.\n\
+             package main\n\
+             \n\
+             import rusm \"github.com/archan937/rusm/packages/rusm-go\"\n\
+             \n\
+             func Authenticate(req rusm.AuthRequest) rusm.AuthVerdict {\n\
+             \t// TODO: verify the token and derive the tenant. For example:\n\
+             \t//   if ok, appID := verify(req.Header(\"authorization\")); ok {\n\
+             \t//       return rusm.Allow(map[string]string{\"app_id\": appID})\n\
+             \t//   }\n\
+             \treturn rusm.Deny()\n\
+             }\n"
+            .to_string(),
+        Lang::TypeScript => "// auth/<name>/host.ts — the only file a TypeScript auth hook must write.\n\
+             // Export `authenticate(req)`; return { allow: { app_id: \"…\" } } or { deny: true }.\n\
+             // `req` is { method, path, query, headers: [name, value][] } — a WebSocket token\n\
+             // usually arrives in `query` (browsers can't set Authorization on a WS).\n\
+             \n\
+             export async function authenticate(req) {\n\
+             \x20\x20// TODO: verify the token and derive the tenant. For example:\n\
+             \x20\x20//   const auth = req.headers.find(([k]) => k.toLowerCase() === \"authorization\")?.[1];\n\
+             \x20\x20//   if (verify(auth)) return { allow: { app_id: tenantOf(auth) } };\n\
+             \x20\x20return { deny: true };\n\
+             }\n"
+            .to_string(),
+        Lang::Generic => unreachable!("Generic rejected by parser"),
+    }
 }
 
 fn host_filename(lang: Lang) -> &'static str {
@@ -360,6 +470,21 @@ fn patch_toml_bridge(root: &Path, name: &str) -> Result<()> {
     std::fs::write(&toml_path, patched).with_context(|| format!("writing {}", toml_path.display()))
 }
 
+fn patch_toml_auth(root: &Path, name: &str) -> Result<()> {
+    let toml_path = root.join("rusm.toml");
+    let existing = std::fs::read_to_string(&toml_path)
+        .with_context(|| format!("reading {}", toml_path.display()))?;
+    let comment = format!(
+        "\n\
+         # Auth hook '{name}' — apply it to a listener by adding to its [[serve]] entry:\n\
+         #   authentication = \"{name}\"\n\
+         # It runs before each request: a valid token seeds the request's context (which a\n\
+         # bridge reads to act for the right tenant); an invalid one is rejected with 401.\n"
+    );
+    let patched = format!("{}\n{}", existing.trim_end(), comment);
+    std::fs::write(&toml_path, patched).with_context(|| format!("writing {}", toml_path.display()))
+}
+
 /// True for component shapes that use named handler actions dispatched via `[serve.routes]`.
 fn is_routed(lang: Lang, protocol: Protocol) -> bool {
     matches!(lang, Lang::Rust | Lang::Go) && protocol == Protocol::Http
@@ -422,14 +547,21 @@ mod tests {
     fn component(items: &[&str]) -> Result<GenerateComponent> {
         match parse(items)? {
             GenerateCommand::Component(c) => Ok(c),
-            GenerateCommand::Bridge(_) => panic!("expected component"),
+            _ => panic!("expected component"),
         }
     }
 
     fn bridge(items: &[&str]) -> Result<GenerateBridge> {
         match parse(items)? {
             GenerateCommand::Bridge(b) => Ok(b),
-            GenerateCommand::Component(_) => panic!("expected bridge"),
+            _ => panic!("expected bridge"),
+        }
+    }
+
+    fn auth(items: &[&str]) -> Result<GenerateAuth> {
+        match parse(items)? {
+            GenerateCommand::Authentication(a) => Ok(a),
+            _ => panic!("expected authentication"),
         }
     }
 
@@ -977,5 +1109,143 @@ mod tests {
         };
         let err = generate_bridge(dir.path(), &gen).unwrap_err();
         assert!(err.to_string().contains("already exists"), "dir conflict");
+    }
+
+    // ── generate authentication ────────────────────────────────────────────
+
+    #[test]
+    fn auth_defaults_to_ts() {
+        let a = auth(&["authentication", "jwt"]).unwrap();
+        assert_eq!(a.name, "jwt");
+        assert_eq!(a.lang, Lang::TypeScript);
+    }
+
+    #[test]
+    fn auth_alias_and_explicit_langs_parse() {
+        assert_eq!(auth(&["auth", "jwt"]).unwrap().name, "jwt"); // `auth` alias
+        assert_eq!(
+            auth(&["authentication", "j", "--lang", "rust"])
+                .unwrap()
+                .lang,
+            Lang::Rust
+        );
+        assert_eq!(
+            auth(&["authentication", "j", "--lang", "go"]).unwrap().lang,
+            Lang::Go
+        );
+    }
+
+    #[test]
+    fn auth_rejects_generic_missing_and_stray() {
+        assert!(auth(&["authentication", "j", "--lang", "generic"]).is_err());
+        assert!(auth(&["authentication"]).is_err());
+        assert!(auth(&["authentication", "j", "extra"]).is_err());
+    }
+
+    #[test]
+    fn auth_creates_the_host_file_per_language() {
+        for (lang, file) in [
+            (Lang::Rust, "host.rs"),
+            (Lang::TypeScript, "host.ts"),
+            (Lang::Go, "host.go"),
+        ] {
+            let dir = project_dir();
+            let gen = GenerateAuth {
+                name: "jwt".into(),
+                lang,
+            };
+            let created = generate_authentication(dir.path(), &gen).unwrap();
+            let path = dir.path().join("auth/jwt").join(file);
+            assert!(path.is_file(), "{lang:?}: {file} created");
+            assert_eq!(created, vec![PathBuf::from("auth/jwt").join(file)]);
+        }
+    }
+
+    #[test]
+    fn auth_host_files_expose_authenticate() {
+        let dir = project_dir();
+        generate_authentication(
+            dir.path(),
+            &GenerateAuth {
+                name: "jwt".into(),
+                lang: Lang::Rust,
+            },
+        )
+        .unwrap();
+        let rs = std::fs::read_to_string(dir.path().join("auth/jwt/host.rs")).unwrap();
+        assert!(rs.contains("pub async fn authenticate(req: AuthRequest) -> AuthVerdict"));
+        assert!(rs.contains("AuthVerdict::Deny"), "fail-closed default");
+
+        let dir = project_dir();
+        generate_authentication(
+            dir.path(),
+            &GenerateAuth {
+                name: "jwt".into(),
+                lang: Lang::Go,
+            },
+        )
+        .unwrap();
+        let go = std::fs::read_to_string(dir.path().join("auth/jwt/host.go")).unwrap();
+        assert!(go.contains("func Authenticate(req rusm.AuthRequest) rusm.AuthVerdict"));
+        assert!(go.contains("rusm.Deny()"));
+
+        let dir = project_dir();
+        generate_authentication(
+            dir.path(),
+            &GenerateAuth {
+                name: "jwt".into(),
+                lang: Lang::TypeScript,
+            },
+        )
+        .unwrap();
+        let ts = std::fs::read_to_string(dir.path().join("auth/jwt/host.ts")).unwrap();
+        assert!(ts.contains("export async function authenticate(req)"));
+        assert!(ts.contains("deny: true"));
+    }
+
+    #[test]
+    fn auth_appends_hint_and_toml_still_parses() {
+        use rusm_node::NodeConfig;
+        let dir = project_dir();
+        generate_authentication(
+            dir.path(),
+            &GenerateAuth {
+                name: "jwt".into(),
+                lang: Lang::Rust,
+            },
+        )
+        .unwrap();
+        let toml = std::fs::read_to_string(dir.path().join("rusm.toml")).unwrap();
+        assert!(
+            toml.contains("authentication = \"jwt\""),
+            "wiring hint present"
+        );
+        NodeConfig::from_toml(&toml).expect("rusm.toml must still parse after auth patch");
+    }
+
+    #[test]
+    fn auth_errors_without_rusm_toml_and_on_existing_dir() {
+        let bare = tempfile::tempdir().unwrap();
+        let err = generate_authentication(
+            bare.path(),
+            &GenerateAuth {
+                name: "jwt".into(),
+                lang: Lang::Rust,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("rusm.toml"));
+
+        let dir = project_dir();
+        std::fs::create_dir_all(dir.path().join("auth/jwt")).unwrap();
+        let err = generate_authentication(
+            dir.path(),
+            &GenerateAuth {
+                name: "jwt".into(),
+                lang: Lang::Rust,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already exists"));
     }
 }

@@ -7,7 +7,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::{me, receive_bytes, receive_bytes_timeout, send_bytes, unstash_front, Pid, Stream};
+use crate::{me, receive_bytes, receive_bytes_timeout, send_bytes, stash, unstash, Pid, Stream};
 
 /// A decoded service request.
 #[derive(serde::Deserialize)]
@@ -107,17 +107,18 @@ pub fn call_json<R: DeserializeOwned>(
     let req =
         serde_json::json!({ "op": op, "args": args, "from": me().0.to_string(), "ref": reference });
     send_bytes(to, &serde_json::to_vec(&req).expect("request serializes"));
-    // Selective receive: hold non-matching mail in a LOCAL buffer while we wait, then restore
-    // it to the inbox front. We must NOT re-stash mid-loop — `receive_bytes` drains the inbox
-    // first, so a re-stashed message would be re-read forever while the real reply waits in the
-    // mailbox behind it (a hang for any service that also makes calls).
-    let mut saved: Vec<Vec<u8>> = Vec::new();
+    // Selective receive: set non-matching mail aside **host-side** ([`stash`]) while we wait,
+    // then restore it ([`unstash`]). The host holds stashed mail apart from the live queue, so
+    // re-stashing mid-loop never re-reads it (no hang), and — crucially — each set-aside message
+    // keeps its host-managed metadata, so when the app handles it later it is still bound to its
+    // own request, not to this call's reply. (A guest-side buffer could not preserve that; doing
+    // so would let one request be handled under another's identity — a cross-tenant leak.)
     let outcome = loop {
         let raw = receive_bytes();
         let v = match serde_json::from_slice::<serde_json::Value>(&raw) {
             Ok(v) => v,
             Err(_) => {
-                saved.push(raw); // not even JSON — leave it for the app
+                stash(&raw); // not even JSON — leave it for the app
                 continue;
             }
         };
@@ -127,10 +128,10 @@ pub fn call_json<R: DeserializeOwned>(
             Disposition::Reply(Ok(ok)) => {
                 break serde_json::from_value(ok).map_err(|e| e.to_string())
             }
-            Disposition::NotMine => saved.push(raw), // a request/other message — for the app
+            Disposition::NotMine => stash(&raw), // a request/other message — for the app
         }
     };
-    unstash_front(saved);
+    unstash();
     outcome
 }
 
@@ -330,7 +331,7 @@ pub fn call_json_timeout<R: DeserializeOwned>(
         serde_json::json!({ "op": op, "args": args, "from": me().0.to_string(), "ref": reference });
     send_bytes(to, &serde_json::to_vec(&req).expect("request serializes"));
     let deadline = Instant::now() + std::time::Duration::from_millis(timeout_ms);
-    let mut saved: Vec<Vec<u8>> = Vec::new();
+    // Stash non-matching mail host-side (metadata preserved), restored on return — see `call_json`.
     let outcome = loop {
         let remaining_ms = deadline
             .saturating_duration_since(Instant::now())
@@ -344,7 +345,7 @@ pub fn call_json_timeout<R: DeserializeOwned>(
                 let v = match serde_json::from_slice::<serde_json::Value>(&raw) {
                     Ok(v) => v,
                     Err(_) => {
-                        saved.push(raw);
+                        stash(&raw);
                         continue;
                     }
                 };
@@ -354,12 +355,12 @@ pub fn call_json_timeout<R: DeserializeOwned>(
                     Disposition::Reply(Ok(ok)) => {
                         break serde_json::from_value(ok).map_err(|e| e.to_string())
                     }
-                    Disposition::NotMine => saved.push(raw),
+                    Disposition::NotMine => stash(&raw),
                 }
             }
         }
     };
-    unstash_front(saved);
+    unstash();
     outcome
 }
 

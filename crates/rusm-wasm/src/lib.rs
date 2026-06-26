@@ -27,7 +27,9 @@ mod bindings;
 mod bridges;
 mod bundle_cache;
 mod caps;
+mod context;
 
+pub use bridges::auth::{auth_hook, delegated_auth_hook, AuthHook, AuthRequest, AuthVerdict};
 pub use bridges::http::{HttpServer, PreparedHttp};
 pub use bridges::routed::{Resolver, Routed, RoutedHttpServer};
 pub use bridges::sse::SseServer;
@@ -36,15 +38,17 @@ pub use bridges::wasip1::PreparedModule;
 pub use bridges::wasip2::PreparedComponent;
 pub use bridges::ws::{serve_ws_echo, WsServer};
 pub use caps::{Capabilities, CapabilityProfile};
+pub use context::ProcessContext;
 
 /// The host state every bridge's `Host` impl is written against — including a
 /// **custom application bridge**. An app's own `bridges/<name>/host.rs` does
 /// `impl my_iface::Host for rusm_wasm::BridgeHost { … }` and reaches the calling
 /// process through [`BridgeHost`]'s public accessors ([`pid`](BridgeHost::pid) /
-/// [`runtime`](BridgeHost::runtime) / [`caps`](BridgeHost::caps)). The struct's
-/// fields stay private: a bridge gets process identity, the runtime handle, and its
-/// capabilities — the same surface the built-in bridges use, nothing more. Register
-/// it with [`WasmRuntime::with_bridges`].
+/// [`runtime`](BridgeHost::runtime) / [`caps`](BridgeHost::caps) /
+/// [`context`](BridgeHost::context)). The struct's fields stay private: a bridge gets
+/// process identity, the runtime handle, its capabilities, and its host-only claims
+/// context — the same surface the built-in bridges use, nothing more. Register it with
+/// [`WasmRuntime::with_bridges`].
 pub use bridges::WasiHost as BridgeHost;
 
 /// Re-exported so a custom bridge's `bindgen!` lowers against the **exact** Wasmtime
@@ -382,6 +386,13 @@ pub struct WasmRuntime {
     shared: Arc<Counters>,
     epoch_stop: Arc<AtomicBool>,
     epoch_ticker: Option<JoinHandle<()>>,
+    /// Serving **auth hooks** registered by name — the host code an app's `auth/<name>/`
+    /// compiles to. A `[[serve]] authentication = "<name>"` listener resolves its hook here
+    /// when [`serve`](crate::bridges) builds. Registered at startup via
+    /// [`register_auth_hook`](Self::register_auth_hook) (after the runtime exists, so a
+    /// TS/Go hook's resident runner is already up); empty by default. Read only at
+    /// listener-build time, never on the request hot path.
+    auth_hooks: RwLock<HashMap<String, AuthHook>>,
 }
 
 /// Composable construction for a [`WasmRuntime`] — created by [`WasmRuntime::builder`].
@@ -528,6 +539,37 @@ impl WasmRuntime {
     /// Tokio runtime (build starts the epoch ticker).
     pub fn builder(rt: Runtime) -> WasmRuntimeBuilder {
         WasmRuntimeBuilder::new(rt)
+    }
+
+    /// Register a serving **auth hook** under `name` (an app's `auth/<name>/`). A
+    /// `[[serve]] authentication = "<name>"` listener resolves its hook here when it builds,
+    /// running it before every request to validate the caller and seed the request's
+    /// host-only [claims context](crate::ProcessContext). Call at startup — for a Rust hook
+    /// right after construction, for a TS/Go hook once its resident runner is registered.
+    /// Re-registering a name replaces it. Host-only; no guest path reaches a hook.
+    pub fn register_auth_hook(&self, name: impl Into<String>, hook: AuthHook) {
+        self.auth_hooks
+            .write()
+            .expect("auth-hook registry lock is never held across a panic")
+            .insert(name.into(), hook);
+    }
+
+    /// The auth hook registered under `name`, or `None`. Used by the serving bridges to
+    /// resolve a listener's `authentication = "<name>"`.
+    pub fn auth_hook(&self, name: &str) -> Option<AuthHook> {
+        self.auth_hooks
+            .read()
+            .expect("auth-hook registry lock is never held across a panic")
+            .get(name)
+            .cloned()
+    }
+
+    /// A clone of the underlying process [`Runtime`]. For host code that needs the actor
+    /// runtime directly — e.g. a generated TS/Go auth hook registers
+    /// [`delegated_auth_hook`](crate::delegated_auth_hook)`(wasm.runtime_handle(), …)` to
+    /// round-trip to its resident runner.
+    pub fn runtime_handle(&self) -> Runtime {
+        self.spawner.rt.clone()
     }
 
     /// Builds a backend over an existing process [`Runtime`], with the default pool
@@ -723,6 +765,7 @@ impl WasmRuntime {
             shared: Arc::new(Counters::default()),
             epoch_stop,
             epoch_ticker: Some(epoch_ticker),
+            auth_hooks: RwLock::new(HashMap::new()),
         })
     }
 

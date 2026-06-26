@@ -142,44 +142,32 @@ pub fn send_bytes(to: Pid, msg: &[u8]) {
     abi::send(to.0, msg);
 }
 
-thread_local! {
-    /// Messages the RPC client set aside while awaiting a reply, so the app's own
-    /// `receive` still sees them (the guest is single-threaded — one mailbox).
-    static INBOX: std::cell::RefCell<std::collections::VecDeque<Vec<u8>>> =
-        std::cell::RefCell::new(std::collections::VecDeque::new());
+/// **Set aside** the message just received while an RPC client awaits its reply, keeping the
+/// host-managed metadata with it. The host holds it apart from the live queue (so the next
+/// [`receive_bytes`] never re-reads it), until [`unstash`] returns it. Stashing host-side —
+/// not in a guest buffer — is what keeps each set-aside message bound to its own request on
+/// replay; a guest cannot carry the host-only metadata itself.
+pub(crate) fn stash(message: &[u8]) {
+    abi::stash(message);
 }
 
-/// Return messages an RPC client set aside (in arrival order) to the **front** of the inbox,
-/// so the app's own `receive` sees them next, before any newer mail. The client holds them in a
-/// local buffer *during* the call — never re-inserting mid-call, since [`receive_bytes`] drains
-/// the inbox first and would otherwise re-read the same message forever (a spin/hang).
-pub(crate) fn unstash_front(saved: Vec<Vec<u8>>) {
-    INBOX.with(|q| {
-        let mut q = q.borrow_mut();
-        for raw in saved.into_iter().rev() {
-            q.push_front(raw);
-        }
-    });
+/// Return every [`stash`]ed message (in arrival order) to the front of the mailbox, so the
+/// app's own `receive` sees them next — each rebound to its own request — before newer mail.
+pub(crate) fn unstash() {
+    abi::unstash();
 }
 
-/// Block until the next message arrives; returns its raw bytes. Drains any mail
-/// the RPC client set aside first (FIFO preserved).
+/// Block until the next message arrives; returns its raw bytes. The host delivers any
+/// [`stash`]ed-then-[`unstash`]ed mail first (arrival order preserved, metadata intact).
 pub fn receive_bytes() -> Vec<u8> {
-    if let Some(raw) = INBOX.with(|q| q.borrow_mut().pop_front()) {
-        return raw;
-    }
     abi::receive()
 }
 
 /// Like [`receive_bytes`], but gives up after `timeout_ms` and returns `None` —
-/// Erlang's `receive … after`. Mail the RPC client set aside is delivered
-/// immediately (a pending message can't "time out"); otherwise this waits up to
-/// the deadline. The basis for an SSE heartbeat: wait for the next event *or* the
-/// tick, whichever comes first.
+/// Erlang's `receive … after`. Stashed-then-unstashed mail is delivered immediately
+/// (it can't "time out"); otherwise this waits up to the deadline. The basis for an SSE
+/// heartbeat: wait for the next event *or* the tick, whichever comes first.
 pub fn receive_bytes_timeout(timeout_ms: u64) -> Option<Vec<u8>> {
-    if let Some(raw) = INBOX.with(|q| q.borrow_mut().pop_front()) {
-        return Some(raw);
-    }
     abi::receive_timeout(timeout_ms)
 }
 
@@ -200,23 +188,7 @@ pub fn receive_timeout<T: DeserializeOwned>(timeout_ms: u64) -> Option<serde_jso
     receive_bytes_timeout(timeout_ms).map(|raw| serde_json::from_slice(&raw))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{receive_bytes, unstash_front};
-
-    #[test]
-    fn unstash_front_restores_set_aside_mail_in_arrival_order() {
-        // The selective-receive restore: mail set aside during a call returns to the front of
-        // the inbox, oldest first, ahead of newer mail — so the app's own `receive` sees it in
-        // order. (`receive_bytes` drains the inbox before the real mailbox, so these three pops
-        // never touch the runtime.)
-        unstash_front(vec![
-            b"first".to_vec(),
-            b"second".to_vec(),
-            b"third".to_vec(),
-        ]);
-        assert_eq!(receive_bytes(), b"first");
-        assert_eq!(receive_bytes(), b"second");
-        assert_eq!(receive_bytes(), b"third");
-    }
-}
+// `stash`/`unstash` are thin host-op wrappers (no guest-side state to unit-test); the
+// set-aside-and-replay behaviour — and that each replayed message keeps its own metadata — is
+// tested host-side in `rusm-otp` (`stash_then_unstash_redelivers_with_each_item_s_own_meta`)
+// and end to end through a guest in the `rusm-wasm` integration tests.

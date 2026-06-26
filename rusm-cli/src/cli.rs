@@ -105,19 +105,23 @@ const COMMANDS: &[CommandSpec] = &[
         name: "generate",
         usage:
             "rusm generate component <name> [--lang ts|rust|go] [--protocol http|sse|ws]\n       \
-                rusm generate bridge <name> [--lang ts|rust|go]",
-        summary: "add a component or bridge to an existing project",
+                rusm generate bridge <name> [--lang ts|rust|go]\n       \
+                rusm generate authentication <name> [--lang ts|rust|go]",
+        summary: "add a component, bridge, or auth hook to an existing project",
         details: "Adds to an existing project (must already have a rusm.toml). \
                   `generate component` creates components/<name>/ with the right source and \
                   appends the matching rusm.toml entry — ready to build immediately with \
                   `rusm build`. `generate bridge` creates bridges/<name>/bridge.wit and a host \
                   stub (host.ts by default, or host.rs/host.go with --lang); grant it in a \
-                  [capabilities.*] `bridges = [\"<name>\"]` list to expose it to components.",
+                  [capabilities.*] `bridges = [\"<name>\"]` list to expose it to components. \
+                  `generate authentication` creates auth/<name>/host.* (a serving auth hook); \
+                  apply it to a listener with `authentication = \"<name>\"`.",
         examples: &[
             "rusm generate component chat --lang ts --protocol ws",
             "rusm generate component feed --lang rust",
             "rusm generate bridge mailer",
             "rusm generate bridge payments --lang ts",
+            "rusm generate authentication jwt --lang rust",
         ],
     },
     CommandSpec {

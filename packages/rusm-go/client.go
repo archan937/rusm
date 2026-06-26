@@ -49,23 +49,24 @@ func Call[R any](to Pid, op string, args ...any) (R, error) {
 		return zero, err
 	}
 	SendBytes(to, req)
-	// Hold non-matching mail in a local buffer for the duration of the call, then restore it to
-	// the inbox front — never re-stashing mid-loop, since ReceiveBytes drains the inbox first and
-	// a re-stashed message would be re-read forever while the real reply waits behind it.
-	var setAside [][]byte
-	defer func() { unstashFront(setAside) }()
+	// Set non-matching mail aside HOST-SIDE while we wait, then restore it. The host holds
+	// stashed mail apart from the live queue (so re-stashing mid-loop never re-reads it) and
+	// keeps each message's metadata with it — so when the app handles it later it is still bound
+	// to its own request, not this call's reply. A guest-side buffer could not preserve that;
+	// doing so would let one request be handled under another's identity (a cross-tenant leak).
+	defer Unstash()
 	for {
 		raw := ReceiveBytes()
 		var env map[string]json.RawMessage
 		if json.Unmarshal(raw, &env) != nil {
-			setAside = append(setAside, raw) // not JSON we understand — leave it for the app
+			Stash(raw) // not JSON we understand — leave it for the app
 			continue
 		}
 		if dispatchCallback(env) {
 			continue // the service invoked a callback; keep awaiting the reply
 		}
 		if !replyMatches(env, ref) {
-			setAside = append(setAside, raw) // someone else's reply, request, or plain message
+			Stash(raw) // someone else's reply, request, or plain message
 			continue
 		}
 		if e, ok := env["err"]; ok {
@@ -97,8 +98,8 @@ func CallTimeout[R any](to Pid, op string, timeoutMs uint64, args ...any) (R, er
 	}
 	SendBytes(to, req)
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
-	var setAside [][]byte
-	defer func() { unstashFront(setAside) }()
+	// Stash non-matching mail host-side (metadata preserved), restored on return — see Call.
+	defer Unstash()
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -114,14 +115,14 @@ func CallTimeout[R any](to Pid, op string, timeoutMs uint64, args ...any) (R, er
 		}
 		var env map[string]json.RawMessage
 		if json.Unmarshal(raw, &env) != nil {
-			setAside = append(setAside, raw)
+			Stash(raw)
 			continue
 		}
 		if dispatchCallback(env) {
 			continue
 		}
 		if !replyMatches(env, ref) {
-			setAside = append(setAside, raw)
+			Stash(raw)
 			continue
 		}
 		if e, ok := env["err"]; ok {

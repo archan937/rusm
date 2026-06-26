@@ -1,0 +1,26 @@
+# A per-request HTTP handler fixture that imports a CUSTOM application bridge
+# (`demo:bridge/whoami`) — it proves the serving auth hook seeds a request's host-only
+# claims context and that a bridge the handler calls reads it (the multi-tenant seam),
+# end to end over real HTTP. Built for wasm32-wasip2, checked in as auth_demo.wasm.
+# Regenerate:
+#   cargo build --target wasm32-wasip2 --release
+#   cp target/wasm32-wasip2/release/auth_demo.wasm ../auth_demo.wasm
+[workspace]
+
+[package]
+name = "auth-demo"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "auth_demo"
+
+[profile.release]
+opt-level = "z"
+strip = true
+
+[dependencies]
+rusm-rs = { path = "../../../../rusm-rs" }
+wit-bindgen = "0.46"

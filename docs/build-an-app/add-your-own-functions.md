@@ -190,6 +190,12 @@ impl smtp::Host for BridgeHost {
 }
 ```
 
+A Rust bridge reaches the calling process through `BridgeHost`'s curated accessors:
+`self.pid()`, `self.runtime()`, `self.caps()` (gate yourself default-deny on a grant), and
+`self.context()` — the request's host-only **claims context**, which makes a bridge
+[multi-tenant](/build-an-app/multi-tenant-bridges) (act for client X vs Y) without the guest
+having any say. Nothing else of the host leaks in.
+
 ## 2 — Grant it (default-deny)
 
 A bridge is reachable only by a component whose capability profile lists it:
