@@ -1,0 +1,8 @@
+{
+  "name": "multi-tenant-auth-typescript",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "rusm-ts": "^0.7.0"
+  }
+}

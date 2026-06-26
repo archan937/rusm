@@ -54,6 +54,19 @@ Three standalone apps showing the same `mailer` bridge (Resend email) in each ho
 [`go/`](./mailer/go/) (`net/http`). Set `RESEND_API_KEY` in `.env` before serving. Scaffold
 your own with `rusm new <name> --template mailer`.
 
+### Multi-tenant — an [auth hook + per-tenant bridge](./multi-tenant-auth/)
+
+A host-authoritative auth hook validates each request and derives the tenant; a custom bridge
+then acts for that tenant — while the guest code stays auth-unaware (it never sees or chooses
+the identity). The [`typescript/`](./multi-tenant-auth/typescript/) flavour serves it over
+HTTP. Requires `rusm` ≥ 0.7.0 (serving auth hooks). The runnable companion to the docs
+guide *Multi-tenant bridges*.
+
+```sh
+cd examples/multi-tenant-auth/typescript
+bun install && rusm build && rusm serve
+```
+
 ### Runtime-chosen code — [dynamic WASM plugins](./dynamic-wasm/)
 
 Run **compiled WASM components chosen at runtime**, each in a sandbox the operator fixes. A

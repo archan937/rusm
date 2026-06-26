@@ -1,0 +1,26 @@
+# multi-tenant-auth/typescript — a host-authoritative auth hook + a per-tenant bridge.
+#
+#   request ─▶ auth/jwt (host) ─▶ components/api (guest) ─▶ bridges/tenants (host)
+#              verifies token       auth-unaware code         acts for the tenant
+#              → app_id claim   ───────────────────────────▶ reads context().app_id
+#              → or 401
+#
+# Run:  bun install && rusm build && rusm serve
+# Try:  curl -H 'authorization: Bearer acme-secret'   127.0.0.1:8080/   # → Acme's data
+#       curl -H 'authorization: Bearer globex-secret' 127.0.0.1:8080/   # → Globex's data
+#       curl -i 127.0.0.1:8080/                                          # → 401 (no token)
+[node]
+listen = "127.0.0.1:8080"
+
+[capabilities.tenant]
+inherits = "sandboxed"     # default-deny base
+bridges = ["tenants"]      # + may call the app's own `tenants` bridge
+
+[[serve]]
+protocol = "http"
+listen = "127.0.0.1:8080"
+component = "api"
+authentication = "jwt"     # runs auth/jwt/host.ts before every request; 401 on denial
+
+[components.api]
+capability = "tenant"

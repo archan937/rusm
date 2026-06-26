@@ -1,0 +1,11 @@
+// The custom bridge's contract — the app's OWN WIT package. The host impl
+// (host.ts) and the guest binding both derive from this single source.
+package tenants:bridge@0.1.0;
+
+interface backend {
+    /// Return the current tenant's data. Takes no tenant argument on purpose: the tenant
+    /// comes from the host-only claims context the auth hook established for this request
+    /// (read host-side via `context()`), never from guest input — so the guest can't pick
+    /// a tenant it isn't authorized for.
+    data: func() -> string;
+}

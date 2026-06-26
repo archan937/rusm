@@ -1,0 +1,14 @@
+# Build output. `bridges.d.ts` IS committed (typed ambient declarations for the guest); the
+# Cargo/src/wit host glue and the generated runners are produced by `rusm build`, git-ignored.
+/wasm/
+/target/
+/Cargo.toml
+/Cargo.lock
+/src/
+/wit/
+/bridges/tenants/_runner.ts
+/auth/jwt/_runner.ts
+/node_modules/
+/bun.lock
+/components/*/wit/
+/components/*/internal/
