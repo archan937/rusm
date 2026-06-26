@@ -181,6 +181,121 @@ impl WasiHost {
             _ => None,
         }
     }
+
+    /// Perform a full TS/Go custom-bridge round-trip to the resident `runner` actor and return
+    /// the reply payload JSON (the `callId:` tag stripped), or `None` if the runner isn't
+    /// registered or never answers. The **single place** the bridge wire protocol lives — the
+    /// generated delegation shim only (de)serializes around this call.
+    ///
+    /// Builds the request envelope (`fn`, JSON-array `args_json`, this caller's claims
+    /// `context`, a `replyTo` address), sends it carrying the context as metadata (so a bridge
+    /// the runner calls keeps the tenant), and awaits the tagged reply. The reply address
+    /// adapts to the caller: a process **with** a mailbox (`ctx`) replies to itself and
+    /// selective-receives (no extra process — the actor/WebSocket hot path); a **mailbox-less**
+    /// caller — a `wasi:http` per-request instance — routes the reply through a one-shot
+    /// **responder** process, so an HTTP/SSE handler calls a custom bridge exactly like any
+    /// other guest.
+    pub async fn call_bridge(
+        &mut self,
+        runner: &str,
+        fn_name: &str,
+        args_json: &str,
+    ) -> Option<Vec<u8>> {
+        self.call_bridge_with(runner, fn_name, args_json, BRIDGE_CALL_TIMEOUT)
+            .await
+    }
+
+    /// The core of [`call_bridge`], parameterised by `timeout` so a test can drive the
+    /// fail-soft-on-wedged-runner path without waiting the production backstop.
+    async fn call_bridge_with(
+        &mut self,
+        runner: &str,
+        fn_name: &str,
+        args_json: &str,
+        timeout: std::time::Duration,
+    ) -> Option<Vec<u8>> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let pid = self.runtime().whereis(runner)?;
+        static CALL_CTR: AtomicU64 = AtomicU64::new(0);
+        let call_id = format!(
+            "rusm-bridge:{}-{}",
+            self.pid(),
+            CALL_CTR.fetch_add(1, Ordering::Relaxed)
+        );
+        let ctx_json = serde_json::to_string(self.context()).unwrap_or_else(|_| "{}".to_string());
+        let tag = format!("{call_id}:");
+        let strip = |raw: Vec<u8>| raw.strip_prefix(tag.as_bytes()).unwrap_or(&raw).to_vec();
+
+        if self.ctx.is_some() {
+            // The caller owns a mailbox: reply to it, selective-receive (parks unrelated mail).
+            let req = bridge_envelope(fn_name, args_json, &ctx_json, self.pid(), &call_id);
+            self.send_with_context(pid, req);
+            // Bounded so a wedged runner can't hang the caller forever (fail-soft → the shim's
+            // default). `recv_bridge_reply` is cancel-safe, so a timeout leaves the mailbox intact.
+            tokio::time::timeout(timeout, self.recv_bridge_reply(&tag))
+                .await
+                .ok()
+                .flatten()
+                .map(strip)
+        } else {
+            // No mailbox (a `wasi:http` per-request instance): route the reply through a
+            // one-shot responder process, so the round-trip works without a host process.
+            let (tx, rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+            let responder = self.rt.spawn(move |mut ctx| async move {
+                if let rusm_otp::Received::Message(bytes) = ctx.recv().await {
+                    let _ = tx.send(bytes);
+                }
+            });
+            let req = bridge_envelope(
+                fn_name,
+                args_json,
+                &ctx_json,
+                responder.pid().raw(),
+                &call_id,
+            );
+            self.send_with_context(pid, req);
+            // Bounded; on timeout the responder is still reaped, so a wedged runner can't leak a
+            // process per stuck call.
+            let reply = tokio::time::timeout(timeout, rx)
+                .await
+                .ok()
+                .and_then(|r| r.ok());
+            responder.kill();
+            reply.map(strip)
+        }
+    }
+}
+
+/// A backstop on a single bridge round-trip: long enough never to sever a legitimately slow
+/// bridge (a host op doing real I/O), short enough that a *wedged* runner can't hang the caller
+/// — or, on the mailbox-less `wasi:http` path, leak a responder process — forever. A fail-soft
+/// bound (the call returns `None` → the shim's default), not a latency budget; a per-request
+/// wall-clock deadline (roadmap) will subsume it for serving.
+const BRIDGE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Build the JSON request envelope a TS/Go bridge runner expects:
+/// `{"fn":…,"args":…,"context":…,"replyTo":{"pid":…,"callId":…}}`. Assembled by concatenation
+/// (string literals, not a `format!` over literal JSON braces) so the already-JSON `args_json`
+/// and `ctx_json` embed verbatim. The one source for this shape (see [`WasiHost::call_bridge`]).
+fn bridge_envelope(
+    fn_name: &str,
+    args_json: &str,
+    ctx_json: &str,
+    reply_pid: u64,
+    call_id: &str,
+) -> Vec<u8> {
+    let mut s = String::from("{\"fn\":\"");
+    s.push_str(fn_name);
+    s.push_str("\",\"args\":");
+    s.push_str(args_json);
+    s.push_str(",\"context\":");
+    s.push_str(ctx_json);
+    s.push_str(",\"replyTo\":{\"pid\":\"");
+    s.push_str(&reply_pid.to_string());
+    s.push_str("\",\"callId\":\"");
+    s.push_str(call_id);
+    s.push_str("\"}}");
+    s.into_bytes()
 }
 
 impl WasiView for WasiHost {
@@ -297,6 +412,106 @@ mod tests {
         let view = host.ctx();
         let handle: Resource<u32> = view.table.push(7u32).unwrap();
         assert_eq!(*view.table.get(&handle).unwrap(), 7);
+    }
+
+    /// A mock TS/Go bridge runner registered as `bridge:double`: it echoes the exact wire
+    /// protocol the generated runners speak — `"<callId>:<json>"` — doubling `args[0]` and
+    /// reflecting the forwarded claims `context.app_id`, so a test can prove both the round-trip
+    /// and that the caller's context reached the runner.
+    fn spawn_doubling_runner(rt: &Runtime) {
+        let replier = rt.clone();
+        let runner = rt.spawn(move |mut ctx| async move {
+            loop {
+                let Some(bytes) = ctx.recv().await.message() else {
+                    continue;
+                };
+                let env: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                let pid: u64 = env["replyTo"]["pid"].as_str().unwrap().parse().unwrap();
+                let call_id = env["replyTo"]["callId"].as_str().unwrap();
+                let n = env["args"][0].as_i64().unwrap();
+                let tenant = env["context"]["app_id"].as_str().unwrap_or("none");
+                replier.send(
+                    rusm_otp::Pid::from_raw(pid),
+                    format!("{call_id}:{{\"n\":{},\"tenant\":\"{tenant}\"}}", n * 2).into_bytes(),
+                );
+            }
+        });
+        rt.register("bridge:double", runner.pid());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn call_bridge_round_trips_without_a_mailbox() {
+        // The `wasi:http` per-request path has no process mailbox (`ctx: None`); a TS/Go custom
+        // bridge call must still round-trip — via the one-shot responder. Prove a mailbox-less
+        // host gets the resident runner's reply (payload, `callId:` tag stripped), and that an
+        // unregistered runner yields `None` (the fail-soft default the shim turns into a default).
+        let mut host = bare_host(Capabilities::nothing());
+        assert_eq!(host.call_bridge("bridge:missing", "f", "[]").await, None);
+        // The caller's host-only claims context must reach the runner in-band (the multi-tenant
+        // seam) — set one and have the runner echo it back so we prove it's forwarded.
+        host.context_mut().set("app_id", "acme");
+        spawn_doubling_runner(host.runtime());
+
+        let reply = host.call_bridge("bridge:double", "double", "[21]").await;
+        assert_eq!(
+            reply.as_deref(),
+            Some(br#"{"n":42,"tenant":"acme"}"#.as_slice()),
+            "the reply round-trips and the runner saw the forwarded claims context"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn call_bridge_uses_the_caller_mailbox_when_present() {
+        // The actor/WebSocket path: a caller WITH a mailbox replies to itself and
+        // selective-receives — no responder spawn. Run `call_bridge` from inside a real process
+        // so `self.ctx` is that process's mailbox (and `self.rt` the same runtime as the runner).
+        let rt = Runtime::new();
+        spawn_doubling_runner(&rt);
+        let host_rt = rt.clone();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        rt.spawn(move |ctx| async move {
+            let mut host = bare_host(Capabilities::nothing());
+            host.rt = host_rt;
+            host.pid = ctx.pid().raw();
+            host.context.set("app_id", "globex");
+            host.ctx = Some(ctx);
+            let reply = host.call_bridge("bridge:double", "double", "[5]").await;
+            let _ = done_tx.send(reply);
+        });
+        assert_eq!(
+            done_rx.await.unwrap().as_deref(),
+            Some(br#"{"n":10,"tenant":"globex"}"#.as_slice()),
+            "the mailbox branch round-trips and forwards the context"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn call_bridge_fails_soft_when_the_runner_is_wedged() {
+        // A registered-but-silent runner must not hang the caller (nor, on the responder path,
+        // leak a process): the bounded round-trip returns `None` after the timeout, promptly.
+        let mut host = bare_host(Capabilities::nothing());
+        let rt = host.runtime().clone();
+        let wedged = rt.spawn(|mut ctx| async move {
+            loop {
+                let _ = ctx.recv().await; // receive the request, never reply
+            }
+        });
+        rt.register("bridge:double", wedged.pid());
+
+        let started = std::time::Instant::now();
+        let reply = host
+            .call_bridge_with(
+                "bridge:double",
+                "double",
+                "[1]",
+                std::time::Duration::from_millis(50),
+            )
+            .await;
+        assert_eq!(reply, None, "a wedged runner fails soft to None");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "it returned at the timeout, not the production backstop"
+        );
     }
 
     #[test]

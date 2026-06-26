@@ -193,6 +193,7 @@ fn build_all(root: &Path) -> anyhow::Result<()> {
     }
     if !bridges.is_empty() {
         build_js_runner_if_ts_uses_bridges(root, &bridges)?;
+        build_js_http_runner_if_ts_serves_with_bridges(root, &bridges)?;
         build_ts_bridge_runners(root, &bridges)?;
         build_go_bridge_runners(root, &bridges)?;
     }
@@ -359,6 +360,42 @@ fn build_js_runner_if_ts_uses_bridges(
     println!("building js-runner with custom bridges (TS guest) — first build compiles QuickJS…");
     let wasm = rusm_cli::jsbuild::build_app_js_runner(root, bridges)?;
     let dest = root.join("wasm/js_runner.wasm");
+    std::fs::write(&dest, wasm).with_context(|| format!("writing {}", dest.display()))?;
+    println!("built {} (custom bridges compiled in)", dest.display());
+    Ok(())
+}
+
+/// If a **TS** component served over HTTP/SSE via `[[serve]]` (the handler-less `fetch` path) is
+/// granted a custom bridge, rebuild the **js-http-runner** with every bridge's typed import +
+/// glue compiled in, and write it to `wasm/js_http_runner.wasm` for `host::build_runtime` to
+/// load — so a TS HTTP/SSE handler reaches a custom bridge exactly like a WebSocket one. Skipped
+/// otherwise (the slow build only runs when it must); the routed `#[handlers]` path is Rust/Go.
+fn build_js_http_runner_if_ts_serves_with_bridges(
+    root: &Path,
+    bridges: &[rusm_cli::bridges::BridgeSpec],
+) -> anyhow::Result<()> {
+    let granted = granted_bridges(bridges);
+    let cfg = load_node_config(None, None);
+    let ts_http_uses_a_bridge = cfg.serve.iter().any(|s| {
+        s.protocol.is_http() // Http or Sse — the `fetch` path that runs on the js-http-runner
+            && s.component.as_deref().is_some_and(|name| {
+                granted.get(name).is_some_and(|specs| !specs.is_empty())
+                    && ts_entrypoint(&root.join("components").join(name)).is_some()
+            })
+    });
+    if !ts_http_uses_a_bridge {
+        return Ok(());
+    }
+    // Ambient TS types so the guest calls the bridge typed (idempotent with the js-runner path;
+    // an HTTP-only app needs it written here).
+    let dts = root.join("bridges.d.ts");
+    std::fs::write(&dts, rusm_cli::bridges::gen_bridge_dts(bridges)?)
+        .with_context(|| format!("writing {}", dts.display()))?;
+    println!(
+        "building js-http-runner with custom bridges (TS HTTP/SSE guest) — first build compiles QuickJS…"
+    );
+    let wasm = rusm_cli::jsbuild::build_app_js_http_runner(root, bridges)?;
+    let dest = root.join("wasm/js_http_runner.wasm");
     std::fs::write(&dest, wasm).with_context(|| format!("writing {}", dest.display()))?;
     println!("built {} (custom bridges compiled in)", dest.display());
     Ok(())

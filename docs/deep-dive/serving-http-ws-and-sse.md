@@ -691,6 +691,11 @@ bridge are booted once at build time and snapshotted into the image, so each per
 instance starts *warm* and only evaluates your bundle + runs `fetch` (≈8× the cold
 per-request rate) — still a fresh, isolated instance per request, never resident.
 
+A TS HTTP/SSE handler can call a [custom bridge](/build-an-app/add-your-own-functions) too:
+`rusm build` rebuilds the js-http-runner with the app's bridges compiled in, and the host-side
+round-trip works without a process mailbox — so a per-request `fetch` handler reaches a bridge
+exactly like a WebSocket guest (the basis for [multi-tenant bridges](/build-an-app/multi-tenant-bridges)).
+
 **HTTP** — `export default` a request → response function:
 
 ```ts

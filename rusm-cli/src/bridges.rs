@@ -186,15 +186,16 @@ pub fn parse_contract(wit: &Path) -> Result<Contract> {
     })
 }
 
-/// Stage a per-app **js-runner** build: copy the runner crate `src` into `dest` (minus
-/// `target/`), overwrite `src/bridges_gen.rs` with the generated glue, and write a scoped
-/// `wit-bridges/` package — a synthesized `bridge-imports` world importing every custom bridge,
-/// with each contract vendored under `wit-bridges/deps/<name>/`. `bridges_gen`'s own
-/// `generate!` binds that world (serde-deriving, self-contained — no WASI types), keeping the
-/// runner's `process`-world bindings untouched. The staged crate then builds (cargo → wizer →
-/// wasm-tools) into a runner with the app's bridges compiled in. Idempotent (the dest is
-/// rebuilt).
-pub fn stage_js_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Result<()> {
+/// Stage a per-app runner build — the **js-runner** (actor/service/WS) or the
+/// **js-http-runner** (HTTP/SSE fetch); both share this staging since each owns an identical
+/// `src/bridges_gen.rs`. Copy the runner crate `src` into `dest` (minus `target/`), overwrite
+/// `src/bridges_gen.rs` with the generated glue, and write a scoped `wit-bridges/` package — a
+/// synthesized `bridge-imports` world importing every custom bridge, with each contract vendored
+/// under `wit-bridges/deps/<name>/`. `bridges_gen`'s own `generate!` binds that world
+/// (serde-deriving, self-contained — no WASI types), keeping the runner's `process`-world
+/// bindings untouched. The staged crate then builds (cargo → wizer → wasm-tools) into a runner
+/// with the app's bridges compiled in. Idempotent (the dest is rebuilt).
+pub fn stage_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Result<()> {
     if dest.exists() {
         std::fs::remove_dir_all(dest).with_context(|| format!("clearing {}", dest.display()))?;
     }
@@ -204,6 +205,26 @@ pub fn stage_js_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Resul
         gen_runner_bridges_gen(bridges)?,
     )?;
     stage_bridge_imports_wit(dest, bridges)
+}
+
+/// Stage a per-app **js-http-runner** build under `parent` (at `parent/js-http-runner`). Like
+/// [`stage_runner`], but the js-http-runner `include_str!`s the shared bridge JS from the sibling
+/// `../../js-runner/bridge`, so this also mirrors that directory to `parent/js-runner/bridge`,
+/// preserving the relative includes once the crate is staged out of the workspace. `js_src` is
+/// the js-runner crate source (for its `bridge/` dir).
+pub fn stage_http_runner(
+    http_src: &Path,
+    js_src: &Path,
+    parent: &Path,
+    bridges: &[BridgeSpec],
+) -> Result<()> {
+    stage_runner(http_src, &parent.join("js-http-runner"), bridges)?;
+    let shared = parent.join("js-runner/bridge");
+    if shared.exists() {
+        std::fs::remove_dir_all(&shared)
+            .with_context(|| format!("clearing {}", shared.display()))?;
+    }
+    copy_dir(&js_src.join("bridge"), &shared)
 }
 
 /// Write the scoped `wit-bridges/` package the runner's `bridges_gen` `generate!` binds: a
@@ -396,12 +417,12 @@ pub fn gen_bridge_dts(bridges: &[BridgeSpec]) -> Result<String> {
 }
 
 /// Generate the Rust **delegation shim** for a TS- or Go-hosted bridge: each WIT function
-/// JSON-encodes its arguments, sends a tagged request to the resident `bridge:<name>`
-/// actor, and awaits the tagged reply via [`rusm_wasm::BridgeHost::recv_bridge_reply`]
-/// (selective receive — unrelated mailbox messages are parked in the save queue and
-/// replayed by the next `receive`). The wire protocol is identical for TS and Go runners;
-/// only the runner language differs. Written to `src/bridge_<ident>_delegate.rs` and
-/// mounted from `src/bridges.rs` via a `#[path]` attribute.
+/// JSON-encodes its arguments, performs the round-trip to the resident `bridge:<name>` actor
+/// via [`rusm_wasm::BridgeHost::call_bridge`] (the one place the wire protocol + reply
+/// mechanism live — mailbox selective-receive for a process caller, a one-shot responder for a
+/// mailbox-less `wasi:http` per-request caller), and deserializes the reply. The wire protocol
+/// is identical for TS and Go runners; only the runner language differs. Written to
+/// `src/bridge_<ident>_delegate.rs` and mounted from `src/bridges.rs` via a `#[path]` attribute.
 pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<String> {
     let api = crate::witmap::bridge_api(&bridge.wit())?;
     let runner_name = bridge.runner_name();
@@ -432,7 +453,7 @@ pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<Str
             "impl {iface_path}::Host for ::rusm_wasm::BridgeHost {{\n"
         ));
         for f in iface_funcs {
-            host_impls.push_str(&delegate_fn_impl(f, &bridge.name, &runner_name));
+            host_impls.push_str(&delegate_fn_impl(f, &runner_name));
         }
         host_impls.push_str("}\n\n");
     }
@@ -461,7 +482,7 @@ pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<Str
 }
 
 /// Generate one async function body for the delegation shim.
-fn delegate_fn_impl(f: &crate::witmap::Func, bridge_name: &str, runner_name: &str) -> String {
+fn delegate_fn_impl(f: &crate::witmap::Func, runner_name: &str) -> String {
     let params = f
         .params
         .iter()
@@ -495,67 +516,45 @@ fn delegate_fn_impl(f: &crate::witmap::Func, bridge_name: &str, runner_name: &st
         )
     };
 
-    let parse_reply = if f.result_rust.is_some() {
-        format!("::rusm_wasm::serde_json::from_slice::<{ret}>(payload).unwrap_or_default()")
-    } else {
-        "()".to_string()
-    };
     let comma_params = if params.is_empty() {
         String::new()
     } else {
         format!(", {params}")
     };
 
+    // The whole round-trip — envelope, context forwarding, reply address (mailbox or
+    // responder), tagged receive — lives in `BridgeHost::call_bridge` (one source of truth).
+    // The shim only serializes the args and deserializes the reply payload.
+    let on_reply = if f.result_rust.is_some() {
+        format!(
+            "        match self.call_bridge(\"{runner_name}\", \"{fn_name}\", &args_json).await {{\n\
+             \x20           Some(payload) => ::rusm_wasm::serde_json::from_slice::<{ret}>(&payload).unwrap_or_default(),\n\
+             \x20           None => {ret_default},\n\
+             \x20       }}\n",
+            runner_name = runner_name,
+            fn_name = f.name,
+            ret = ret,
+            ret_default = ret_default,
+        )
+    } else {
+        format!(
+            "        // No return value: still await the reply (back-pressure + error surfacing), then discard.\n\
+             \x20       let _ = self.call_bridge(\"{runner_name}\", \"{fn_name}\", &args_json).await;\n",
+            runner_name = runner_name,
+            fn_name = f.name,
+        )
+    };
+
     format!(
         "    async fn {fn_name}(&mut self{comma_params}) -> {ret} {{\n\
-         \x20       static CALL_CTR: ::std::sync::atomic::AtomicU64 =\n\
-         \x20           ::std::sync::atomic::AtomicU64::new(0);\n\
-         \x20       let call_id = ::std::format!(\n\
-         \x20           \"rusm-bridge:{bridge_name}-{{}}-{{}}\",\n\
-         \x20           self.pid(),\n\
-         \x20           CALL_CTR.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed),\n\
-         \x20       );\n\
-         \x20       let Some(pid) = self.runtime().whereis(\"{runner_name}\") else {{\n\
-         \x20           return {ret_default};\n\
-         \x20       }};\n\
          \x20       let args_json = {args_json};\n\
-         \x20       // Forward this caller's host-only claims context in-band, so the runner can\n\
-         \x20       // expose it to host code via `context()` (the multi-tenant seam). Guest\n\
-         \x20       // components never receive this envelope, so they never see the context.\n\
-         \x20       let ctx_json = ::rusm_wasm::serde_json::to_string(self.context())\n\
-         \x20           .unwrap_or_else(|_| \"{{}}\".to_string());\n\
-         \x20       // Build the request envelope by concatenation (string literals, not a\n\
-         \x20       // `format!` over literal JSON braces) so `args_json`/`ctx_json` embed raw.\n\
-         \x20       let caller_pid = self.pid().to_string();\n\
-         \x20       let mut req = ::std::string::String::from(\"{{\\\"fn\\\":\\\"{fn_name}\\\",\\\"args\\\":\");\n\
-         \x20       req.push_str(&args_json);\n\
-         \x20       req.push_str(\",\\\"context\\\":\");\n\
-         \x20       req.push_str(&ctx_json);\n\
-         \x20       req.push_str(\",\\\"replyTo\\\":{{\\\"pid\\\":\\\"\");\n\
-         \x20       req.push_str(&caller_pid);\n\
-         \x20       req.push_str(\"\\\",\\\"callId\\\":\\\"\");\n\
-         \x20       req.push_str(&call_id);\n\
-         \x20       req.push_str(\"\\\"}}}}\");\n\
-         \x20       let req = req.into_bytes();\n\
-         \x20       // Forward the context as metadata too, so a bridge the runner calls keeps the\n\
-         \x20       // tenant (in-band above is what the runner's `context()` reads; this carries it).\n\
-         \x20       self.send_with_context(pid, req);\n\
-         \x20       let tag = ::std::format!(\"{{}}:\", call_id);\n\
-         \x20       let raw = match self.recv_bridge_reply(&tag).await {{\n\
-         \x20           Some(b) => b,\n\
-         \x20           None => return {ret_default},\n\
-         \x20       }};\n\
-         \x20       let payload = raw.strip_prefix(tag.as_bytes()).unwrap_or(&raw);\n\
-         \x20       {parse_reply}\n\
+         {on_reply}\
          \x20   }}\n\n",
         fn_name = f.name,
         comma_params = comma_params,
         ret = ret,
-        ret_default = ret_default,
         args_json = args_json,
-        parse_reply = parse_reply,
-        bridge_name = bridge_name,
-        runner_name = runner_name,
+        on_reply = on_reply,
     )
 }
 
@@ -1354,34 +1353,22 @@ mod tests {
             shim.contains("impl crate::bindings::weather::bridge::forecast::Host"),
             "impl: {shim}"
         );
-        // Function body: call_id, whereis runner, send request, recv_bridge_reply.
-        assert!(shim.contains("CALL_CTR"), "counter: {shim}");
-        assert!(shim.contains("\"bridge:weather\""), "runner name: {shim}");
-        // The selective receive tag includes the `:` separator so that call_id
-        // `rusm-bridge:weather-42-1` does not falsely match `rusm-bridge:weather-42-10:…`.
+        // Function body: serialize args, delegate the whole round-trip to the one host helper
+        // (`call_bridge` — wire protocol, context forwarding, reply mechanism), deserialize.
         assert!(
-            shim.contains("recv_bridge_reply(&tag)"),
-            "tagged recv: {shim}"
-        );
-        assert!(
-            shim.contains("format!(\"{}:\", call_id)"),
-            "tag includes separator: {shim}"
-        );
-        assert!(
-            shim.contains("strip_prefix(tag.as_bytes())"),
-            "strip tag prefix: {shim}"
+            shim.contains("self.call_bridge(\"bridge:weather\", \"lookup\", &args_json)"),
+            "delegates to call_bridge with runner + fn: {shim}"
         );
         assert!(
             shim.contains("rusm_wasm::serde_json::to_string"),
             "arg marshal: {shim}"
         );
         assert!(shim.contains("from_slice::<String>"), "reply deser: {shim}");
-        // Forwards the caller's host-only claims context in-band, so the runner exposes it to
-        // host.ts via `context()` (the multi-tenant seam for a TS/Go bridge).
+        // The shim must NOT hand-roll the wire protocol — that lives once in `call_bridge`, so a
+        // mailbox-less `wasi:http` caller round-trips the same way (no per-shim duplication/bugs).
         assert!(
-            shim.contains("::rusm_wasm::serde_json::to_string(self.context())")
-                && shim.contains(",\\\"context\\\":"),
-            "context forwarded in the envelope: {shim}"
+            !shim.contains("recv_bridge_reply") && !shim.contains("CALL_CTR"),
+            "wire protocol centralized in call_bridge, not duplicated in the shim: {shim}"
         );
     }
 
@@ -1457,12 +1444,12 @@ mod tests {
     }
 
     #[test]
-    fn stage_js_runner_writes_the_glue_and_the_scoped_bridge_world() {
+    fn stage_runner_writes_the_glue_and_the_scoped_bridge_world() {
         // Stage a per-app js-runner from the real runner source; the slow cargo→wizer build
         // itself is exercised by the example e2e — here we check the (fast) staging.
         let dir = app_dir("stage-runner");
         let dest = dir.join("runner");
-        stage_js_runner(
+        stage_runner(
             Path::new("../crates/rusm-wasm/js-runner"),
             &dest,
             std::slice::from_ref(&weather_bridge()),
@@ -1486,6 +1473,31 @@ mod tests {
         assert!(
             !dest.join("target").exists(),
             "target/ is skipped (build cache)"
+        );
+    }
+
+    #[test]
+    fn stage_runner_stages_the_js_http_runner_too() {
+        // The js-http-runner (TS HTTP/SSE `fetch` path) stages through the same `stage_runner` and
+        // owns its own `src/bridges_gen.rs` — so the per-app build wires the bridge glue into it
+        // exactly like the js-runner. Guards that its crate isn't missing the module target.
+        let dir = app_dir("stage-http-runner");
+        let dest = dir.join("runner");
+        stage_runner(
+            Path::new("../crates/rusm-wasm/js-http-runner"),
+            &dest,
+            std::slice::from_ref(&weather_bridge()),
+        )
+        .unwrap();
+        let gen = std::fs::read_to_string(dest.join("src/bridges_gen.rs")).unwrap();
+        assert!(gen.contains("__weather__lookup"));
+        assert!(dest.join("wit-bridges/deps/weather/bridge.wit").is_file());
+        // The crate declares `mod bridges_gen;` (its own copy, no cross-crate `#[path]` that would
+        // dangle once staged out of the workspace).
+        let lib = std::fs::read_to_string(dest.join("src/lib.rs")).unwrap();
+        assert!(
+            lib.contains("mod bridges_gen;") && !lib.contains("#[path = \"../../js-runner"),
+            "http-runner owns its bridges_gen (no dangling cross-crate path): {lib}"
         );
     }
 

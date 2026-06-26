@@ -19,22 +19,48 @@ use crate::bridges::{self, BridgeSpec};
 /// The js-runner crate source, located relative to where rusm-cli was built.
 const JS_RUNNER_SRC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/rusm-wasm/js-runner");
 
-/// Build a per-app js-runner with `bridges` compiled in (for an app's TS actor/service/WS
+/// The js-http-runner crate source (the HTTP/SSE `fetch` twin of the js-runner).
+const JS_HTTP_RUNNER_SRC: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../crates/rusm-wasm/js-http-runner"
+);
+
+/// Build a per-app **js-runner** with `bridges` compiled in (for an app's TS actor/service/WS
 /// guests); returns the component wasm. Stages a copy of the runner crate, injects the
 /// generated `bridges_gen.rs` + the custom WIT imports, then runs the build pipeline.
 pub fn build_app_js_runner(root: &Path, bridges: &[BridgeSpec]) -> Result<Vec<u8>> {
     let src = Path::new(JS_RUNNER_SRC);
+    require_runner_src(src, "js-runner")?;
+    let build = root.join("target/rusm-js-runner");
+    bridges::stage_runner(src, &build, bridges)?;
+    run_runner_build(&build, "js_runner")
+}
+
+/// Build a per-app **js-http-runner** with `bridges` compiled in (for an app's TS HTTP/SSE
+/// `fetch` handlers), so a TS HTTP handler reaches a custom bridge exactly like a WS one;
+/// returns the component wasm. Same pipeline as [`build_app_js_runner`]; staged with its sibling
+/// js-runner `bridge/` (the shared JS it `include_str!`s — see [`bridges::stage_http_runner`]).
+pub fn build_app_js_http_runner(root: &Path, bridges: &[BridgeSpec]) -> Result<Vec<u8>> {
+    let http_src = Path::new(JS_HTTP_RUNNER_SRC);
+    let js_src = Path::new(JS_RUNNER_SRC);
+    require_runner_src(http_src, "js-http-runner")?;
+    let parent = root.join("target/rusm-runners");
+    bridges::stage_http_runner(http_src, js_src, &parent, bridges)?;
+    run_runner_build(&parent.join("js-http-runner"), "js_http_runner")
+}
+
+/// Guard that a runner crate's source is present (a dev checkout / path-dep app) before a
+/// per-app build — the one error message both runner builds share.
+fn require_runner_src(src: &Path, name: &str) -> Result<()> {
     if !src.join("Cargo.toml").is_file() {
         bail!(
-            "the js-runner source isn't at {} — a TS guest that calls a custom bridge needs the \
-             RUSM source (a dev checkout / path-dep app) plus wasi-sdk + wizer + wasm-tools; call \
-             the bridge from a Rust or Go guest otherwise",
+            "the {name} source isn't at {} — a TS guest that calls a custom bridge needs the RUSM \
+             source (a dev checkout / path-dep app) plus wasi-sdk + wizer + wasm-tools; call the \
+             bridge from a Rust or Go guest otherwise",
             src.display()
         );
     }
-    let build = root.join("target/rusm-js-runner");
-    bridges::stage_js_runner(src, &build, bridges)?;
-    run_runner_build(&build, "js_runner")
+    Ok(())
 }
 
 /// The `cargo → wizer → wasm-tools` pipeline (mirrors `js-runner/build.sh`) in `dir`, for the

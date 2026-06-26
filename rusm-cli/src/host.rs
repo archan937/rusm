@@ -53,6 +53,15 @@ pub fn build_runtime(
             std::fs::read(runner).with_context(|| format!("reading {}", runner.display()))?,
         );
     }
+    // The HTTP/SSE twin — a TS `fetch` handler that calls a custom bridge runs on this per-app
+    // js-http-runner (bridges compiled in), so it reaches the bridge like a WebSocket guest.
+    let http_runner = Path::new("./wasm/js_http_runner.wasm");
+    if http_runner.is_file() {
+        builder = builder.js_http_runner(
+            std::fs::read(http_runner)
+                .with_context(|| format!("reading {}", http_runner.display()))?,
+        );
+    }
     let wasm = builder.build()?;
     // Platform lifecycle logging: explicit, off by default — declared via `[log] level`.
     wasm.set_log_level(cfg.log_level());

@@ -35,3 +35,7 @@ strip = true
 wit-bindgen = "0.46"
 rquickjs = "0.9"
 anyhow = "1"
+# Unused by the prebuilt runner; a per-app `rusm build` overwrites `bridges_gen.rs` with the
+# app's custom bridges, whose typed `generate!` + JSON-marshaling primitives derive/use serde.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
