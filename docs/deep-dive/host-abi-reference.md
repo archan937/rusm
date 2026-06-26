@@ -19,6 +19,7 @@ into the one `process` world:
 | `send(to: pid, msg: list<u8>)` | enqueue bytes into another process's mailbox |
 | `receive() -> list<u8>` | **async** — park the fiber until a message arrives |
 | `receive-timeout(timeout-ms) -> option<list<u8>>` | like `receive`, but gives up after a deadline — Erlang's `receive … after` (heartbeats, deadlines) |
+| `stash(msg) / unstash()` | set the just-received message aside (keeping its host-side metadata) while awaiting a different one, then return everything stashed to the front of the mailbox — the host primitive behind the SDKs' selective `call` (Erlang's selective `receive`); host-side so per-message metadata survives the deferral |
 | `list-processes() -> list<pid>` | all live pids |
 | `info(pid) -> option<process-info>` | links, monitors, names, label, mailbox depth, trap-exit |
 | `is-alive(pid) -> bool` / `kill(pid) -> bool` | liveness / forced termination |
