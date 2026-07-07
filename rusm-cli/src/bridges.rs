@@ -196,15 +196,39 @@ pub fn parse_contract(wit: &Path) -> Result<Contract> {
 /// bindings untouched. The staged crate then builds (cargo → wizer → wasm-tools) into a runner
 /// with the app's bridges compiled in. Idempotent (the dest is rebuilt).
 pub fn stage_runner(src: &Path, dest: &Path, bridges: &[BridgeSpec]) -> Result<()> {
-    if dest.exists() {
-        std::fs::remove_dir_all(dest).with_context(|| format!("clearing {}", dest.display()))?;
-    }
+    // Clear stale staged sources but KEEP `dest/target/`: it holds the compiled QuickJS C object
+    // and the (large) downloaded WASI SDK, expensive to redo. Reusing it makes a rebuild fast and
+    // avoids re-downloading the SDK every build (a slow, network-fragile step). `cargo`'s
+    // incremental build still recompiles the overwritten `bridges_gen.rs`.
+    clear_except_target(dest)?;
     copy_dir(src, dest)?;
     std::fs::write(
         dest.join("src/bridges_gen.rs"),
         gen_runner_bridges_gen(bridges)?,
     )?;
     stage_bridge_imports_wit(dest, bridges)
+}
+
+/// Remove everything under `dir` **except `target/`** (a no-op if `dir` is absent). Lets a
+/// re-stage refresh the runner source while preserving the expensive build cache.
+fn clear_except_target(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry?;
+        if entry.file_name() == "target" {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        }
+        .with_context(|| format!("clearing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// Stage a per-app **js-http-runner** build under `parent` (at `parent/js-http-runner`). Like
@@ -471,6 +495,11 @@ pub fn gen_delegate_host(bridge: &BridgeSpec, contract: &Contract) -> Result<Str
          //! selective receive. Overhead: ~1–10µs/call (actor round-trip + JSON). Regenerated\n\
          //! each build.\n\
          \n\
+         // Bring the generated WIT types (a bridge's `record`/`enum` params + results) into\n\
+         // scope so the impl signatures below resolve; unused for a bridge of only primitives.\n\
+         #[allow(unused_imports)]\n\
+         use crate::bindings::*;\n\
+         \n\
          pub fn add_to_linker(\n\
          \x20   linker: &mut ::rusm_wasm::BridgeLinker,\n\
          ) -> ::rusm_wasm::wasmtime::Result<()> {{\n\
@@ -490,11 +519,6 @@ fn delegate_fn_impl(f: &crate::witmap::Func, runner_name: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let ret = f.result_rust.as_deref().unwrap_or("()");
-    let ret_default = if f.result_rust.is_some() {
-        "::std::default::Default::default()"
-    } else {
-        "()"
-    };
 
     // args JSON array: `[<json0>, <json1>, …]`.
     let args_json = if f.params.is_empty() {
@@ -524,29 +548,39 @@ fn delegate_fn_impl(f: &crate::witmap::Func, runner_name: &str) -> String {
 
     // The whole round-trip — envelope, context forwarding, reply address (mailbox or
     // responder), tagged receive — lives in `BridgeHost::call_bridge` (one source of truth).
-    // The shim only serializes the args and deserializes the reply payload.
+    // The shim serializes the args, deserializes the reply, and (imports are trappable) **traps**
+    // on a failed round-trip — an absent/wedged runner or an undecodable reply — rather than
+    // fabricating a value (which is impossible for a non-`Default` record/enum result anyway).
     let on_reply = if f.result_rust.is_some() {
         format!(
             "        match self.call_bridge(\"{runner_name}\", \"{fn_name}\", &args_json).await {{\n\
-             \x20           Some(payload) => ::rusm_wasm::serde_json::from_slice::<{ret}>(&payload).unwrap_or_default(),\n\
-             \x20           None => {ret_default},\n\
+             \x20           Some(payload) => ::rusm_wasm::serde_json::from_slice::<{ret}>(&payload)\n\
+             \x20               .map_err(|e| ::rusm_wasm::wasmtime::Error::msg(::std::format!(\n\
+             \x20                   \"bridge `{runner_name}` reply from `{fn_name}` did not decode: {{e}}\"\n\
+             \x20               ))),\n\
+             \x20           None => ::std::result::Result::Err(::rusm_wasm::wasmtime::Error::msg(\n\
+             \x20               \"bridge `{runner_name}` call `{fn_name}` failed (runner absent, wedged, or errored)\",\n\
+             \x20           )),\n\
              \x20       }}\n",
             runner_name = runner_name,
             fn_name = f.name,
             ret = ret,
-            ret_default = ret_default,
         )
     } else {
         format!(
-            "        // No return value: still await the reply (back-pressure + error surfacing), then discard.\n\
-             \x20       let _ = self.call_bridge(\"{runner_name}\", \"{fn_name}\", &args_json).await;\n",
+            "        match self.call_bridge(\"{runner_name}\", \"{fn_name}\", &args_json).await {{\n\
+             \x20           Some(_) => ::std::result::Result::Ok(()),\n\
+             \x20           None => ::std::result::Result::Err(::rusm_wasm::wasmtime::Error::msg(\n\
+             \x20               \"bridge `{runner_name}` call `{fn_name}` failed (runner absent, wedged, or errored)\",\n\
+             \x20           )),\n\
+             \x20       }}\n",
             runner_name = runner_name,
             fn_name = f.name,
         )
     };
 
     format!(
-        "    async fn {fn_name}(&mut self{comma_params}) -> {ret} {{\n\
+        "    async fn {fn_name}(&mut self{comma_params}) -> ::rusm_wasm::wasmtime::Result<{ret}> {{\n\
          \x20       let args_json = {args_json};\n\
          {on_reply}\
          \x20   }}\n\n",
@@ -778,7 +812,12 @@ pub const BINDINGS_RS_SERDE: &str = "\
 wasmtime::component::bindgen!({
     path: \"wit\",
     world: \"host\",
-    imports: { default: async },
+    // `trappable` so the generated delegation shim can *fail* a call (return `Err`) — a wedged or
+    // absent runner, or an undecodable reply, traps the guest instead of fabricating a value
+    // (impossible for a non-`Default` record/enum result anyway). This is the delegation path
+    // only; a hand-written Rust bridge uses the non-trappable [`BINDINGS_RS`], so its impls keep
+    // returning the bare result type.
+    imports: { default: async | trappable },
     additional_derives: [serde::Serialize, serde::Deserialize],
 });
 ";
@@ -1364,6 +1403,21 @@ mod tests {
             "arg marshal: {shim}"
         );
         assert!(shim.contains("from_slice::<String>"), "reply deser: {shim}");
+        // Trappable: the method returns a `wasmtime::Result<T>` and fails (traps) on a bad
+        // round-trip — so a non-`Default` record/enum result compiles, and a dead runner surfaces.
+        assert!(
+            shim.contains("-> ::rusm_wasm::wasmtime::Result<String>"),
+            "trappable result type: {shim}"
+        );
+        assert!(
+            shim.contains("::rusm_wasm::wasmtime::Error::msg"),
+            "traps on failure: {shim}"
+        );
+        // Generated WIT types are brought into scope so record/enum signatures resolve.
+        assert!(
+            shim.contains("use crate::bindings::*;"),
+            "bindings types in scope: {shim}"
+        );
         // The shim must NOT hand-roll the wire protocol — that lives once in `call_bridge`, so a
         // mailbox-less `wasi:http` caller round-trips the same way (no per-shim duplication/bugs).
         assert!(

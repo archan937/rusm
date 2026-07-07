@@ -448,6 +448,8 @@ fn host_cargo_toml(name: &str) -> String {
          rusm-node = \"{SDK_VERSION}\"\n\
          wasmtime = \"{WASMTIME_VERSION}\"\n\
          anyhow = \"1\"\n\
+         # A TS/Go bridge's generated bindings derive serde on its `record`/`enum` value types.\n\
+         serde = {{ version = \"1\", features = [\"derive\"] }}\n\
          tokio = {{ version = \"1\", features = [\"rt-multi-thread\", \"macros\", \"signal\"] }}\n\
          \n\
          [workspace]\n"
