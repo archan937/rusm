@@ -3,10 +3,13 @@
 /wasm/
 /target/
 /Cargo.toml
+/Cargo.lock
 /src/
 /wit/
-/bridges/weather/_runner.go
+/bridges/weather/rusm_runner.go
 /bridges/weather/go.mod
+/bridges/weather/go.sum
 /node_modules/
 /components/*/wit/
 /components/*/internal/
+/components/*/go.sum

@@ -14,8 +14,10 @@ func Lookup(city string) string {
 }
 
 // Detailed returns a structured forecast.
-// WIT record params arrive as json.RawMessage in the generated dispatcher — unmarshal
-// into your own struct for full control over field naming and validation.
+// WIT record params arrive as json.RawMessage in the generated dispatcher — unmarshal into your
+// own struct for full control over field naming and validation. WIT `enum` values on the wire
+// are the variant names as the bindings render them (`Units` = "Celsius"/"Fahrenheit", `Sky` =
+// "Sunny"/"Cloudy"/"Rainy") — a bridge host must read/write those exact spellings.
 func Detailed(raw json.RawMessage) json.RawMessage {
 	var q struct {
 		City  string `json:"city"`
@@ -23,15 +25,15 @@ func Detailed(raw json.RawMessage) json.RawMessage {
 	}
 	if err := json.Unmarshal(raw, &q); err != nil {
 		q.City = "unknown"
-		q.Units = "celsius"
+		q.Units = "Celsius"
 	}
 	temp := int32(21)
-	if q.Units == "fahrenheit" {
+	if q.Units == "Fahrenheit" {
 		temp = 70
 	}
 	out, _ := json.Marshal(map[string]any{
 		"city": q.City,
-		"sky":  "sunny",
+		"sky":  "Sunny",
 		"temp": temp,
 	})
 	return out

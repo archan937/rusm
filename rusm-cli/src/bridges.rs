@@ -1190,6 +1190,15 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
         } else {
             std::fs::copy(&from, &to)
                 .with_context(|| format!("copying {} -> {}", from.display(), to.display()))?;
+            // `fs::copy` preserves the source mode, so copying from a **read-only** source (the
+            // Go module cache is mode 0444) yields a read-only copy that a later regenerate /
+            // overwrite / vendor step then can't replace. A staged working tree must be writable.
+            let mut perms = std::fs::metadata(&to)?.permissions();
+            if perms.readonly() {
+                perms.set_readonly(false);
+                std::fs::set_permissions(&to, perms)
+                    .with_context(|| format!("making {} writable", to.display()))?;
+            }
         }
     }
     Ok(())
@@ -1528,6 +1537,34 @@ mod tests {
             !dest.join("target").exists(),
             "target/ is skipped (build cache)"
         );
+    }
+
+    #[test]
+    fn copy_dir_makes_read_only_sources_writable() {
+        // Copying from a read-only source (the Go module cache is mode 0444) must yield writable
+        // copies, so a later regenerate/overwrite step — e.g. `generate_go_guest_wit` writing
+        // `component.wit` over the copied SDK one — doesn't hit permission-denied.
+        let base = app_dir("copy-readonly");
+        let src = base.join("src");
+        let dst = base.join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        let file = src.join("component.wit");
+        std::fs::write(&file, "sdk").unwrap();
+        let mut ro = std::fs::metadata(&file).unwrap().permissions();
+        ro.set_readonly(true);
+        std::fs::set_permissions(&file, ro).unwrap();
+
+        copy_dir(&src, &dst).unwrap();
+
+        assert!(
+            !std::fs::metadata(dst.join("component.wit"))
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "the copy must be writable, not inherit the source's read-only mode"
+        );
+        // The concrete failure the fix prevents: overwriting the copied file.
+        std::fs::write(dst.join("component.wit"), "regenerated").expect("copied file is writable");
     }
 
     #[test]

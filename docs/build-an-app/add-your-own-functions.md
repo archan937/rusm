@@ -292,6 +292,16 @@ send-with-attachment: func(msg: message, att: option<attachment>) -> bool;
 Rust and Go receive native generated types (`smtp::Message`, `smtp::Attachment`); a
 TypeScript guest gets fully typed objects (`{ filename: string; content: number[] }`).
 
+::: warning Enum/record names on the wire
+A TS or Go **bridge host** JSON-marshals its values, so it must use the WIT names exactly as
+the generated bindings render them: an `enum sunny` is `"Sunny"` on the wire (variant name),
+a `record` field `retry-count` is `retry_count`. The generated `bridges.d.ts` is the source of
+truth for a TS guest — it declares the precise literals (`type Sky = "Sunny" | "Cloudy" |
+"Rainy"`), so follow those spellings in `host.ts` too. A native Rust/Go **guest** never touches
+strings (it uses the generated typed values), so this only concerns the JSON-marshaling
+TS/Go bridge host and TS guest.
+:::
+
 ## What `rusm build` generates
 
 `rusm build` discovers `bridges/`, generates all host glue and per-guest bindings, vendors
@@ -303,7 +313,7 @@ into the serve loop — same `rusm serve` command, bridges included.
 - **TypeScript bridge** — additionally writes `src/bridge_<name>_delegate.rs` (the Rust
   delegation shim), `bridges/<name>/_runner.ts` (the resident actor), and `src/main.rs` (if
   absent). Bun bundles the runner to `wasm/bridge-<name>.js`.
-- **Go bridge** — additionally writes the delegation shim, `bridges/<name>/_runner.go`, a
+- **Go bridge** — additionally writes the delegation shim, `bridges/<name>/rusm_runner.go`, a
   minimal `go.mod` (if absent), and `src/main.rs` (if absent). TinyGo compiles the whole
   package to `wasm/bridge-<name>.wasm`.
 
