@@ -1,6 +1,6 @@
 {
   "name": "rusm-ts",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "The TypeScript guest API for RUSM: the Process actor API, the spawn typed-client, websocket(), and types.",
   "license": "MIT",
   "author": "Paul Engel",

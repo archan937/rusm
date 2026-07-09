@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-bench"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-cluster"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "quinn",
@@ -2719,7 +2719,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-jsc"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "rquickjs",
@@ -2727,7 +2727,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-kv"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "redb",
  "tempfile",
@@ -2735,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-loadtest"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "balter",
@@ -2748,11 +2748,11 @@ dependencies = [
 
 [[package]]
 name = "rusm-logfmt"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "rusm-metrics"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hdrhistogram",
  "serde",
@@ -2761,7 +2761,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-node"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "futures-util",
  "rusm-otp",
@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-observer"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rusm-metrics",
  "serde",
@@ -2784,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-otp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dashmap 6.2.1",
  "futures-util",
@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-wasm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2825,7 +2825,7 @@ dependencies = [
 
 [[package]]
 name = "rusm-wire"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "serde",

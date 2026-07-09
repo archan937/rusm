@@ -5,7 +5,7 @@
 # wasm32-wasip2; excluded from the host workspace (wasm-only).
 [package]
 name = "rusm-rs"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "MIT"
 description = "The ergonomic Rust guest crate for RUSM: the actor API, services, and components."
@@ -22,8 +22,8 @@ log = "0.4"
 # The HTTP request/response wire types (with base64 bodies) are shared verbatim with
 # the host (rusm-wasm) so the two can never drift. `version` (alongside `path`) is what
 # crates.io resolves against once published; the path is used in-repo.
-rusm-wire = { path = "../rusm-wire", version = "0.6.0" }
-rusm-rs-macros = { path = "../rusm-rs-macros", version = "0.6.0" }
+rusm-wire = { path = "../rusm-wire", version = "0.7.0" }
+rusm-rs-macros = { path = "../rusm-rs-macros", version = "0.7.0" }
 
 # Raw `wasi:http` bindings for the outbound `http::fetch` helper. Confined to wasm32 so the
 # host test build (which can't link the wasi imports) still builds + tests the pure modules.

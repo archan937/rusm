@@ -336,6 +336,7 @@ store = "data/app.redb"            # durable KV — backs `allow-storage` grants
 [[serve]]
 protocol = "http"
 listen = "127.0.0.1:8080"
+authentication = "jwt"             # optional: validate each request before the handler spawns (auth/jwt/host.*)
 
 # This listener's routes → actions on the `api` handler component (below)
 [serve.routes]

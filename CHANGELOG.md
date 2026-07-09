@@ -6,6 +6,60 @@ several crates plus the `rusm-ts` npm package; **as of 0.2.0 they version in loc
 shipped). Format follows [Keep a Changelog](https://keepachangelog.com/); the project is
 pre-1.0, so minor/patch numbers don't yet imply SemVer guarantees.
 
+## [0.7.0] — 2026-07-09
+
+Multi-tenant serving: a host-authoritative **claims context** and per-listener
+**authentication hooks**, plus custom bridges that now work from *every* serving path
+(HTTP/WS/SSE) in *all three* guest languages — including WIT `record`/`enum` value types.
+
+### Added
+- **Serving authentication hooks + host-only claims context** — a per-listener
+  `[[serve]] authentication = "<name>"` runs host code (`auth/<name>/host.{rs,ts,go}`) *before*
+  a handler is spawned: it validates the request (a token in a header, or `?token=…` for WS/SSE)
+  and either seeds a **host-only claims context** or rejects it with `401` (fail-closed). The
+  claims ride the call graph as opaque mailbox metadata — never in the payload, never readable
+  or forgeable by guest code — so a bridge acts for the authenticated tenant while the guest
+  stays auth-unaware. This is the basis for **multi-tenant bridges**: one
+  `gql()` bridge, per-tenant credentials, decided by the operator. New public API:
+  `AuthRequest`/`AuthVerdict`/`AuthHook`, `auth_hook`/`delegated_auth_hook`, `ProcessContext`,
+  `WasiHost::context`/`context_mut`/`send_with_context`/`call_bridge`,
+  `WasmRuntime::register_auth_hook`, the actor `stash`/`unstash` ops, and `[[serve]]
+  authentication` in the manifest.
+- **`rusm generate authentication <name> [--lang ts|rust|go]`** — scaffold an auth hook (Rust
+  compiled into the host binary; TS/Go as a resident dispatch runner) and print the wiring hint.
+- **Custom bridges from any serving path, in any guest language** — a TS/Go bridge host can now
+  be called from an HTTP `fetch` handler, a WebSocket handler, or an SSE stream (previously only
+  the per-connection WS runner exposed bridge globals). `rusm build` builds a per-app
+  **js-http-runner** with the app's bridges compiled in, and the round-trip works with or
+  without a process mailbox (a mailbox-less `wasi:http` instance routes the reply through a
+  one-shot responder). The wire protocol lives in one place (`BridgeHost::call_bridge`).
+- **`examples/multi-tenant-auth/`** — a runnable TypeScript app: a dummy JWT auth hook derives
+  the tenant, a per-tenant bridge reads `context()`, and the handler stays auth-unaware.
+
+### Changed
+- **Custom-bridge Host imports are now trappable.** A delegated bridge call that fails (an
+  absent/wedged runner or an undecodable reply) traps the guest instead of fabricating a value,
+  and a bounded timeout keeps a wedged runner from hanging the caller. The generated delegation
+  shim is reduced to (de)serializing around `call_bridge` (the fragile hand-rolled JSON envelope
+  is gone).
+
+### Fixed
+- **TS/Go custom bridges with WIT `record`/`enum` value types now compile.** The generated host
+  crate gains the `serde` dep its bindings derive, the shim brings the generated WIT types into
+  scope, and imports are trappable — so record/enum params and results build (only
+  primitive-typed bridges did before). Enum values on the wire use the generated binding names
+  (e.g. `sunny` → `"Sunny"`); documented, and the `weather-api` TS/Go bridge hosts corrected to
+  match.
+- **A Go bridge app built with published deps no longer fails on read-only files.** `copy_dir`
+  copied the SDK's WIT from the read-only Go module cache (mode 0444) preserving permissions, so
+  a later regenerate step hit "Permission denied"; copies are now made writable.
+
+### Docs
+- New **Multi-tenant bridges** guide (all three languages), the enum/record
+  wire-naming convention in *Add your own functions*, the `authentication` field in
+  *Configuration*, the `generate authentication` command in *The rusm CLI*, and `stash`/`unstash`
+  in the host-ABI reference.
+
 ## [0.6.0] — 2026-06-25
 
 A live JavaScript REPL into a running node, a `rusm generate` command, and a

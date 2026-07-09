@@ -17,6 +17,6 @@ opt-level = "z"
 strip = true
 
 [dependencies]
-rusm-rs = "0.6.0"
+rusm-rs = "0.7.0"
 wit-bindgen = "0.46"
 serde = { version = "1", features = ["derive"] }

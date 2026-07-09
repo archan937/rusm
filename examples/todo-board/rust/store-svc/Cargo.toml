@@ -13,6 +13,6 @@ publish = false
 name = "store_svc"
 
 [dependencies]
-rusm-rs = "0.6.0"
+rusm-rs = "0.7.0"
 todos = { path = "../todos" }
 log = "0.4"

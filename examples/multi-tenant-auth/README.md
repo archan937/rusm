@@ -8,8 +8,11 @@ sees, sets, or forges the identity).
 |---|---|---|---|
 | [`typescript/`](./typescript/) | `auth/jwt/host.ts` | `bridges/tenants/host.ts` — reads `context()` | HTTP :8080 |
 
-The same model works with a Rust or Go auth hook + bridge (`auth/<name>/host.{rs,go}`,
-`bridges/<name>/host.{rs,go}`); this example ships the TypeScript flavour.
+This example ships the **TypeScript** flavour. The identical model works with a Rust or Go
+auth hook + bridge (`auth/<name>/host.{rs,go}`, `bridges/<name>/host.{rs,go}`) — the
+[Multi-tenant bridges guide](../../docs/build-an-app/multi-tenant-bridges.md) shows the Rust and
+Go code side by side, and the [`weather-api`](../weather-api/) example ships bridge hosts in all
+three languages.
 
 ```sh
 cd examples/multi-tenant-auth/typescript

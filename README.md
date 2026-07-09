@@ -137,6 +137,11 @@ beat the runtime that inspired this.
 - **Serving** — a component runs as a high-throughput **HTTP / WS / SSE** server
   (`rusm serve` + `rusm.toml [[serve]]`), and `rusm new <name>` scaffolds a
   ready-to-serve app. Guests get a capability-gated, streaming **`fetch`** + **`crypto`**.
+- **Custom functions & multi-tenant serving** — extend a guest with an app-defined **bridge**
+  (`host.{rs,ts,go}`, callable from HTTP/WS/SSE handlers in any language, rich WIT types
+  included). A per-listener **auth hook** validates each request and seeds a **host-only claims
+  context**, so one bridge serves many tenants with per-tenant credentials the guest can't see
+  or forge.
 - **Distributed clusters** (`rusm-cluster`) — nodes connect over **QUIC + TLS**:
   cross-node `send`, a gossiped global registry, remote spawn, and live attach — including
   a **live JavaScript REPL** into a running node (RUSM's `iex --remsh` for Wasm).
